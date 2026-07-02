@@ -1,0 +1,18 @@
+name: tfm
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - openjdk=11          # requerido por PyFlink (JVM embebida)
+  - pip
+  - pandas
+  - numpy
+  - python-dotenv
+  - pytest
+  - pip:
+      - apache-flink==2.3.0
+      - paho-mqtt==2.1.0        # cliente MQTT para el simulador
+      - psycopg2-binary==2.9.9  # PostgreSQL / TimescaleDB
+      - fastavro==1.9.7         # serialización Avro
+      - requests==2.32.3        # llamadas REST a Apicurio Schema Registry
+      - kafka-python==2.0.2     # cliente Kafka (testing/debug, no para los jobs Flink)
