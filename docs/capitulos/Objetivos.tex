@@ -1,23 +1,61 @@
 \chapter{OBJETIVOS}
-En este capítulo se debe incluir la descripción detallada de los objetivos.
-Es recomendable reutilizar lo indicado en el anteproyecto.
-\section{Objetivos generales}
-Objetivo global, está relacionado con el título del proyecto y explica que hará el proyecto de manera general sin entrar en detalles.
-Intenta expresar en una frase lo que pretendes hacer en este trabajo.
-Se incluyen a continuación algunos ejemplos como referencia:
-Para proyectos con una orientación de investigación:
-“El objetivo general del presente trabajo consiste en ampliar el conocimiento actual sobre la fisiología del sistema somato-sensorial en la representación de las extremidades.”
-“El objetivo general del presente trabajo consiste en ampliar el conocimiento y proponer soluciones, a la problemática de la gestión del tráfico en ciudades mediante el paradigma Smart City”
-Para proyectos con una orientación de desarrollo de producto:
-“El objetivo del presente trabajo final de grado es analizar un rasomware siguiendo una metodología enfocada al mundo profesional.”
-“El objetivo principal del proyecto es crear un sistema conversacional que sea capaz de adaptarse al estado emocional del usuario.”
-\section{Objetivos específicos}
-Describe los objetivos concretos, relacionados con el objetivo general, y relacionados con las conclusiones y resultados del proyecto. Si observas los ejemplos, verás que empiezan con un verbo.
-Ejemplos:
-“Analizar los aspectos temporales del código neural mediante el análisis de información de registros electrofisiológicos, y la aplicación de experimentos computacionales.”
-“Implementar un sistema de clasificación que detecte en un texto la emoción de un usuario.”
-“Testear el sistema conversacional con un conjunto pequeño de usuarios (5-10) para verificar su capacidad de adaptación y empática.”
-“Estudiar de las alternativas de algoritmos de sistemas recomendadores, y de las técnicas de cálculo de similitudes que pueden llevar a la solución.”
-“Estudiar los distintos estándares que existen actualmente en la gestión de datos de dispositivos M2M en sectores comerciales profesionales.”
+
+\section{Alcance del proyecto}
+
+Este trabajo abarca el diseño, desarrollo y validación de un sistema desacoplado basado en microservicios para la ingesta, procesamiento, análisis y visualización de datos de dispositivos IoT, utilizando como caso de uso el análisis de la telemetría de sensores de consumo eléctrico en equipos de oficina e industriales.
+
+\section{Tareas a desarrollar}
+
+Para cubrir el alcance descrito, se plantean las siguientes tareas:
+
+\begin{itemize}
+    \item Analizar el estado del arte en las herramientas, estrategias y retos actuales en el análisis y procesamiento de datos de dispositivos IoT.
+    \item Analizar las tecnologías open-source disponibles para la implementación y orquestación de sistemas basados en microservicios.
+    \item Diseñar e implementar un simulador de comunicación IoT para la transmisión de datos de telemetría de sensores de consumo eléctrico.
+    \item Diseñar e implementar una arquitectura basada en contenedores para la orquestación y ejecución de los siguientes microservicios:
+    \begin{itemize}
+        \item Servicio de alta disponibilidad para la ingesta de datos, mediante un gestor de mensajería que acepte protocolos de telemetría estándar.
+        \item Servicio de filtrado y transformación de datos, almacenándolos en una base de datos optimizada para series temporales, y otra relacional para los metadatos.
+        \item Servicio de análisis que calcule índices de eficiencia energética, efectúe análisis operativo y detección de anomalías en datos de consumo eléctrico.
+    \end{itemize}
+    \item Diseñar un servicio de visualización mediante dashboards, para la visualización interactiva de los datos procesados.
+    \item Evaluar el rendimiento del sistema mediante pruebas de estrés y de carga para validar su capacidad de escalabilidad.
+\end{itemize}
+
+\section{Objetivos}
+
+Los objetivos concretos de este trabajo se definen a continuación, acompañados cada uno de un indicador clave de rendimiento (KPI) que permite verificar su cumplimiento y de las acciones necesarias para alcanzarlo. Los valores numéricos de cada KPI se han fijado a partir de rangos razonables de la práctica de ingeniería y de la literatura revisada en el estado del arte; se validarán y, si procede, se recalibrarán a partir de las pruebas piloto realizadas sobre la implementación.
+
+\subsection{Objetivo 1: Garantizar la ingesta fiable de telemetría en tiempo real}
+
+\textbf{KPI}: latencia extremo a extremo entre la publicación de un mensaje MQTT y su disponibilidad en TimescaleDB inferior a 2 segundos (percentil 95); tasa de pérdida de mensajes inferior al 0.1\,\%.
+
+\textbf{Acciones}: configurar NanoMQ con el puente nativo hacia Kafka; definir el nivel de calidad de servicio (QoS) y la topología de tópicos; instrumentar el simulador MQTT para medir la latencia extremo a extremo; ejecutar pruebas de ingesta sostenida con el simulador para verificar el cumplimiento del KPI.
+
+\subsection{Objetivo 2: Garantizar la gobernanza y evolución controlada del esquema de datos}
+
+\textbf{KPI}: el 100\,\% de los eventos ingeridos se validan correctamente contra el esquema Avro registrado; cero fallos de deserialización ante cambios de esquema compatibles hacia adelante o hacia atrás.
+
+\textbf{Acciones}: definir el esquema Avro inicial de telemetría; configurar las reglas de compatibilidad de esquema en Apicurio; diseñar y ejecutar al menos una prueba de evolución de esquema (por ejemplo, añadir un nuevo campo opcional) verificando que no se interrumpe el flujo ni se pierden mensajes.
+
+\subsection{Objetivo 3: Procesar y enriquecer los datos en streaming con baja latencia}
+
+\textbf{KPI}: latencia de procesamiento por ventana en PyFlink inferior a 3 segundos tras el cierre de cada ventana; throughput sostenido de al menos 1\,000 eventos por segundo sin generación de \textit{backpressure}.
+
+\textbf{Acciones}: implementar el job de PyFlink (DataStream API) con ventanas de agregación temporal; instrumentar métricas de throughput y backpressure del job; ejecutar pruebas de carga incremental hasta identificar el punto de saturación y verificar el cumplimiento del KPI dentro del rango objetivo.
+
+\subsection{Objetivo 4: Ofrecer visualización diferenciada operacional y analítica}
+
+\textbf{KPI}: los dashboards de Grafana muestran datos con una latencia de refresco inferior a 5 segundos; se dispone de al menos 3 reportes en Power BI que cubran, respectivamente, consumo energético, eficiencia operativa y detección de anomalías.
+
+\textbf{Acciones}: diseñar los dashboards operacionales de Grafana sobre TimescaleDB; conectar Power BI a los eventos enriquecidos de PostgreSQL; definir y calcular los índices de eficiencia energética requeridos por las tareas de análisis; validar la latencia de refresco de los dashboards.
+
+\subsection{Objetivo 5: Validar la escalabilidad y resiliencia del sistema}
+
+\textbf{KPI}: el sistema soporta al menos 500 sensores simulados concurrentes con una degradación de throughput inferior al 20\,\% respecto a la carga base; ante el fallo de un servicio individual, el sistema se recupera en menos de 60 segundos sin pérdida de datos.
+
+\textbf{Acciones}: diseñar un plan de pruebas de estrés y de carga con volumen creciente de sensores simulados; medir el throughput y la latencia bajo cada nivel de carga; simular la caída de un servicio (por ejemplo, un TaskManager de Flink) y medir el tiempo de recuperación y la integridad de los datos gracias a la retención en Kafka; documentar los resultados obtenidos.
+
 \section{Beneficios del proyecto}
-Incluye una descripción del beneficio que aporta tu proyecto, en relación a los objetivos.
+
+El desarrollo de este sistema aporta, por un lado, un artefacto académico evaluable que documenta con rigor una implementación completa de una arquitectura Kappa para IoT íntegramente basada en herramientas de código abierto, cerrando parcialmente los vacíos identificados en el estado del arte respecto a la gobernanza de esquemas y la separación de sumideros operacional y analítico. Por otro lado, el pipeline resultante queda disponible como referencia técnica reutilizable, replicable mediante contenedores y sin dependencia de proveedores propietarios, lo que facilita su adopción como base de partida en proyectos similares de monitorización energética industrial.
