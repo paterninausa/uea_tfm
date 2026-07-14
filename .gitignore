@@ -27,5 +27,11 @@ venv/
 *.env
 .env
 
+# Datos (se generan/descargan localmente, no se versionan)
+pipeline/data/raw/
+pipeline/data/*.xlsx
+pipeline/data/*.parquet
+pipeline/data/power_measurements_parquet/
+
 # Editor
 .vscode/
