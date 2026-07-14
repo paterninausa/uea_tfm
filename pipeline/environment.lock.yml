@@ -1,8 +1,11 @@
 # Snapshot de reproducibilidad del entorno conda "tfm"
 #
-# Generado a partir de `conda list` sobre Ubuntu (WSL), tras validar que el
-# simulador MQTT (pipeline/simulator/mqtt_simulator.py) funciona con este
-# arbol de dependencias resuelto por conda + apache-flink==2.3.0.
+# Generado a partir de `conda list` sobre Ubuntu (WSL), en el momento en que
+# se resolvio el conflicto de `pyarrow` duplicado (conda vs pip) descrito
+# mas abajo. NOTA: en este punto el arbol de dependencias se habia
+# verificado consistente y sin conflictos, pero el simulador MQTT
+# (pipeline/simulator/mqtt_simulator.py) aun NO se habia ejecutado contra
+# este entorno -- eso quedaba pendiente como siguiente paso.
 #
 # Este archivo es DOCUMENTACION/PROVENANCE, no un environment.yml ejecutable:
 # incluye builds especificos de conda-forge para Linux x86_64 (openssl,
@@ -10,7 +13,7 @@
 # plataformas (p. ej. macOS). Para recrear el entorno desde cero, usa
 # `pipeline/environment.yml` (las versiones de los paquetes pip clave ya
 # estan pineadas ahi). Este lock queda como referencia de que combinacion
-# exacta de versiones fue la que se probo y funciono.
+# exacta de versiones se resolvio en ese momento.
 #
 # Paquetes clave del proyecto (via pip, resueltos por las restricciones de
 # apache-flink==2.3.0):
@@ -43,6 +46,7 @@
 # tambien como paquete conda. Se retiraron: son los backends de sistemas de
 # archivos en la nube (S3/Azure/GCS) de Arrow, irrelevantes para este
 # proyecto, y duplicaban el pyarrow real (el de pip, 16.1.0) sin necesidad.
+# Confirmado tras el fix que `import pyarrow` resuelve al 16.1.0 de pip.
 #
 # Para regenerar un lock completo y exacto en el futuro:
 #   conda list --explicit > pipeline/environment.lock.txt   (solo paquetes conda)
