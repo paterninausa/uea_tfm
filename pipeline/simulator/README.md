@@ -28,14 +28,16 @@ Parquet a tu maquina con la CLI de Databricks:
 
     databricks fs cp -r "dbfs:/Volumes/tfm/data/data/power_measurements_parquet" ./pipeline/data/power_measurements_parquet
 
-Si tu version de la CLI no soporta rutas de Volumenes vía `dbfs:/Volumes/...`,
+Si tu version de la CLI no soporta rutas de Volumenes via `dbfs:/Volumes/...`,
 descarga los ficheros individuales desde Catalog Explorer > Volumes en la UI
 de Databricks.
 
 ## Uso
 
-Activa el entorno conda `tfm` (ver `../environment.yml`, incluye `pyarrow`
-para leer Parquet) y ejecuta:
+Activa el entorno conda `tfm` (ver `../environment.yml`). `pyarrow` (necesario
+para leer Parquet con pandas) no se declara ahi explicitamente: llega como
+dependencia transitiva de `apache-flink` -- ver `../environment.lock.yml`
+para el detalle de por que se resolvio asi.
 
     python mqtt_simulator.py \
         --parquet-path ../data/power_measurements_parquet \
@@ -47,16 +49,38 @@ Parametros:
 - `--limit`: numero de filas a publicar (omitir para publicar el dataset completo)
 - `--qos`: nivel de QoS MQTT (por defecto 1, ver justificacion en Objetivo 1)
 
-## Prueba rapida sin NanoMQ
+## Prueba rapida sin NanoMQ (smoke test)
 
-Hasta que NanoMQ este levantado (siguiente paso del plan), puedes validar el
-simulador contra un broker Mosquitto temporal:
+Hasta que NanoMQ este levantado (siguiente paso del plan), se valida el
+simulador contra un broker Mosquitto temporal. Requiere 3 terminales, **en
+este orden**:
+
+**Terminal 1 -- levantar el broker** (dejarla corriendo en primer plano):
 
     docker run -it --rm -p 1883:1883 eclipse-mosquitto
 
-y en otra terminal, para ver los mensajes llegar:
+**Terminal 2 -- suscribirse para ver llegar los mensajes:**
 
     mosquitto_sub -h localhost -t 'iot/#' -v
+
+**Terminal 3 -- ejecutar el simulador** (entorno conda `tfm` activado):
+
+    cd pipeline/simulator
+    python mqtt_simulator.py \
+        --parquet-path ../data/power_measurements_parquet \
+        --broker-host localhost --broker-port 1883 \
+        --rate 20 --limit 5000
+
+Si el simulador se ejecuta antes de que el broker de la Terminal 1 este
+escuchando, falla con `ConnectionRefusedError: [Errno 111] Connection
+refused` al intentar `client.connect()`. Es el error esperado en ese caso
+(no un bug del script) -- confirma que el broker no esta arriba todavia y
+hay que levantarlo primero (Terminal 1) antes de lanzar la Terminal 3.
+
+Con el broker arriba, en la Terminal 2 deberian verse los topicos
+`iot/{company_id}/{site_id}/{machine_id}/telemetry` con el payload JSON
+llegando al ritmo indicado por `--rate`, y al finalizar la Terminal 3
+imprime el resumen de publicados/fallidos y la tasa de perdida.
 
 ## Medicion de latencia extremo a extremo (Objetivo 1)
 
@@ -68,7 +92,7 @@ sim_publish_ts`.
 
 ## Pendiente (fases siguientes)
 
-- Serializacion Avro vía Apicurio (sustituye el JSON actual)
+- Serializacion Avro via Apicurio (sustituye el JSON actual)
 - Modo asincrono con pool de publishers para llegar a >=500 sensores
   concurrentes (Objetivo 5)
 - Modo de replay historico con factor de aceleracion temporal, preservando
