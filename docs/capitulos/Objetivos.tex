@@ -30,7 +30,7 @@ Los objetivos concretos de este trabajo se definen a continuación, acompañados
 
 \textbf{KPI}: latencia extremo a extremo entre la publicación de un mensaje MQTT y su disponibilidad en TimescaleDB inferior a 2 segundos (percentil 95); tasa de pérdida de mensajes inferior al 0.1\,\%.
 
-\textbf{Acciones}: configurar NanoMQ con el puente nativo hacia Kafka; definir el nivel de calidad de servicio (QoS) y la topología de tópicos; instrumentar el simulador MQTT para medir la latencia extremo a extremo; ejecutar pruebas de ingesta sostenida con el simulador para verificar el cumplimiento del KPI.
+\textbf{Acciones}: desplegar Mosquitto como broker MQTT y un microservicio de bridge MQTT-Kafka encargado de reenviar los eventos ingeridos al tópico de Kafka correspondiente; definir el nivel de calidad de servicio (QoS) y la topología de tópicos; instrumentar el simulador MQTT y el bridge para medir la latencia extremo a extremo; ejecutar pruebas de ingesta sostenida con el simulador para verificar el cumplimiento del KPI.
 
 \subsection{Objetivo 2: Garantizar la gobernanza y evolución controlada del esquema de datos}
 
