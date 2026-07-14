@@ -5,15 +5,22 @@ dependencies:
   - python=3.11
   - openjdk=11          # requerido por PyFlink (JVM embebida)
   - pip
-  - pandas
-  - pyarrow             # backend de lectura/escritura Parquet (simulador)
-  - numpy
   - python-dotenv
   - pytest
   - pip:
       - apache-flink==2.3.0
+      - numpy==2.1.3            # version resuelta por las restricciones de apache-flink
+      - pandas==2.2.3           # idem
+      # pyarrow NO se declara aqui a proposito: llega como dependencia
+      # transitiva de apache-flink (resuelve a 16.1.0). Declararlo tambien
+      # en conda-forge instala un "pyarrow-core" duplicado con soporte para
+      # S3/Azure/GCS que no usamos (Databricks fuera del pipeline).
       - paho-mqtt==2.1.0        # cliente MQTT para el simulador
       - psycopg2-binary==2.9.9  # PostgreSQL / TimescaleDB
       - fastavro==1.9.7         # serializacion Avro
       - requests==2.32.3        # llamadas REST a Apicurio Schema Registry
       - kafka-python==2.0.2     # cliente Kafka (testing/debug, no para los jobs Flink)
+      # apache-beam, apache-flink-libraries, avro, cloudpickle, httplib2,
+      # pemja, protobuf, py4j, python-dateutil, pytz, ruamel.yaml: dependencias
+      # transitivas declaradas por apache-flink==2.3.0, no se listan a mano.
+      # Snapshot completo y reproducible en pipeline/environment.lock.yml
