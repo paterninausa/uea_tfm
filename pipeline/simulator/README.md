@@ -10,27 +10,21 @@ del TFM.
     iot/{company_id}/{site_id}/{machine_id}/telemetry
 
 `sensor_id` no identifica un dispositivo estable (rota entre maquinas en el
-dataset: ~2000 sensor_id distintos frente a ~5000 machine_id y 951459 pares
-machine-sensor unicos sobre ~1M filas), por lo que la identidad del "sensor
-simulado" es `machine_id`, no `sensor_id`. `sensor_id` viaja como campo del
-payload, no como nivel del topico.
+dataset original de Kaggle: ~2000 sensor_id distintos frente a ~5000
+machine_id y 951459 pares machine-sensor unicos sobre ~1M filas), por lo que
+la identidad del "sensor simulado" es `machine_id`, no `sensor_id`.
+`sensor_id` viaja como campo del payload, no como nivel del topico.
 
 `country_code` y `energy_type` son constantes en el dataset actual (FR /
 ELECTRICITY) y por eso no se usan como niveles del topico; viajan tambien en
 el payload.
 
-## Obtener el dataset localmente
+## Obtener el dataset
 
-Los datos viven en Databricks (`/Volumes/tfm/data/data/power_measurements_parquet/`),
-usado solo como almacen de referencia -- Databricks no forma parte del
-pipeline final (ver restricciones del proyecto). Descarga el directorio
-Parquet a tu maquina con la CLI de Databricks:
-
-    databricks fs cp -r "dbfs:/Volumes/tfm/data/data/power_measurements_parquet" ./pipeline/data/power_measurements_parquet
-
-Si tu version de la CLI no soporta rutas de Volumenes via `dbfs:/Volumes/...`,
-descarga los ficheros individuales desde Catalog Explorer > Volumes en la UI
-de Databricks.
+Ver `../data/README.md`. En resumen: el dataset viene del Kaggle publico
+"Power Telemetry" (no depende de ninguna cuenta o recurso privado), y el
+script `../data/convert_to_parquet.py` lo convierte a
+`../data/power_measurements.parquet`, que es lo que espera este simulador.
 
 ## Uso
 
@@ -40,7 +34,7 @@ dependencia transitiva de `apache-flink` -- ver `../environment.lock.yml`
 para el detalle de por que se resolvio asi.
 
     python mqtt_simulator.py \
-        --parquet-path ../data/power_measurements_parquet \
+        --parquet-path ../data/power_measurements.parquet \
         --broker-host localhost --broker-port 1883 \
         --rate 20 --limit 5000
 
@@ -59,7 +53,8 @@ este orden**:
 
     docker run -it --rm -p 1883:1883 eclipse-mosquitto
 
-**Terminal 2 -- suscribirse para ver llegar los mensajes:**
+**Terminal 2 -- suscribirse para ver llegar los mensajes** (necesita
+`mosquitto-clients`, `sudo apt install mosquitto-clients` en Ubuntu/Debian):
 
     mosquitto_sub -h localhost -t 'iot/#' -v
 
@@ -67,7 +62,7 @@ este orden**:
 
     cd pipeline/simulator
     python mqtt_simulator.py \
-        --parquet-path ../data/power_measurements_parquet \
+        --parquet-path ../data/power_measurements.parquet \
         --broker-host localhost --broker-port 1883 \
         --rate 20 --limit 5000
 
