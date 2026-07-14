@@ -1,0 +1,49 @@
+# Snapshot de reproducibilidad del entorno conda "tfm"
+#
+# Generado a partir de `conda list` sobre Ubuntu (WSL), tras validar que el
+# simulador MQTT (pipeline/simulator/mqtt_simulator.py) funciona con este
+# arbol de dependencias resuelto por conda + apache-flink==2.3.0.
+#
+# Este archivo es DOCUMENTACION/PROVENANCE, no un environment.yml ejecutable:
+# incluye builds especificos de conda-forge para Linux x86_64 (openssl,
+# libgcc, aws-c-*, etc.) que no son portables directamente a otras
+# plataformas (p. ej. macOS). Para recrear el entorno desde cero, usa
+# `pipeline/environment.yml` (las versiones de los paquetes pip clave ya
+# estan pineadas ahi). Este lock queda como referencia de que combinacion
+# exacta de versiones fue la que se probo y funciono.
+#
+# Paquetes clave del proyecto (via pip, resueltos por las restricciones de
+# apache-flink==2.3.0):
+#   apache-flink            2.3.0
+#   apache-flink-libraries  2.3.0
+#   apache-beam             2.61.0   (dependencia transitiva de apache-flink)
+#   numpy                   2.1.3
+#   pandas                  2.2.3
+#   pyarrow                 16.1.0   (dependencia transitiva de apache-flink; NO declarar tambien via conda-forge)
+#   avro                    1.12.1
+#   fastavro                1.9.7
+#   cloudpickle             2.2.1
+#   protobuf                5.29.6
+#   py4j                    0.10.9.7
+#   pemja                   0.5.7
+#   httplib2                0.22.0
+#   python-dateutil         2.9.0.post0
+#   pytz                    2026.2
+#   ruamel-yaml             0.19.1
+#   paho-mqtt               2.1.0
+#   psycopg2-binary         2.9.9
+#   requests                2.32.3
+#   kafka-python            2.0.2
+#   python                  3.11.15
+#   openjdk                 11.0.30
+#
+# Nota sobre pyarrow-core (conda-forge, 24.0.0) y su cadena de dependencias
+# (libarrow, aws-c-*, azure-*, libgoogle-cloud, libgrpc, libopentelemetry-cpp):
+# aparecian en un intento anterior de environment.yml que declaraba `pyarrow`
+# tambien como paquete conda. Se retiraron: son los backends de sistemas de
+# archivos en la nube (S3/Azure/GCS) de Arrow, irrelevantes para este
+# proyecto, y duplicaban el pyarrow real (el de pip, 16.1.0) sin necesidad.
+#
+# Para regenerar un lock completo y exacto en el futuro:
+#   conda list --explicit > pipeline/environment.lock.txt   (solo paquetes conda)
+#   pip list --format=freeze > pipeline/requirements.lock.txt  (solo paquetes pip)
