@@ -1,0 +1,75 @@
+name: tfm-broker
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: tfm-mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+    restart: unless-stopped
+
+  kafka:
+    image: apache/kafka:4.3.1
+    container_name: tfm-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # --- KRaft, modo combinado (broker + controller en un solo nodo) ---
+      # Suficiente para desarrollo local; en un despliegue real se separarian
+      # broker y controller en nodos distintos (KRaft isolated mode).
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      # PLAINTEXT: listener interno para otros contenedores del compose (bridge, PyFlink)
+      # PLAINTEXT_HOST: listener expuesto al host, para depuracion desde WSL/Ubuntu
+      # CONTROLLER: listener interno del quorum KRaft
+      KAFKA_LISTENERS: PLAINTEXT://:19092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # Valores validos para un unico broker (replication factor > 1 fallaria)
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Creacion automatica de topics deshabilitada a proposito: los topics
+      # se crean explicitamente via el servicio kafka-init (mejor practica,
+      # evita depender de defaults implicitos de particionado).
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:19092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  kafka-init:
+    image: apache/kafka:4.3.1
+    container_name: tfm-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        echo "Creando topic iot.telemetry (12 particiones, replication-factor 1)..."
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 \
+          --create --if-not-exists \
+          --topic iot.telemetry \
+          --partitions 12 \
+          --replication-factor 1
+        echo "Topics existentes:"
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --list
+    restart: "no"
+
+volumes:
+  mosquitto_data:
+  kafka_data:
