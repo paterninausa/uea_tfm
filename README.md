@@ -8,12 +8,16 @@ Implementa una arquitectura Kappa para IoT, integramente open-source y
 containerizada, usando como caso de uso telemetria de consumo electrico en
 equipos de oficina e industriales:
 
-    Simulador MQTT -> NanoMQ -> Kafka (KRaft) -> Apicurio (Avro) -> PyFlink -> TimescaleDB / PostgreSQL -> Grafana / Power BI
+    Simulador MQTT -> Mosquitto -> microservicio bridge MQTT-Kafka -> Kafka (KRaft) -> Apicurio (Avro) -> PyFlink -> TimescaleDB / PostgreSQL -> Grafana / Power BI
+
+Nota: Mosquitto no trae bridge nativo a Kafka (esa capacidad, en el
+ecosistema EMQ, solo existe en EMQX Enterprise, de pago), por eso el puente
+MQTT->Kafka es un microservicio propio dentro del pipeline.
 
 ## Estado actual
 
 - [x] Simulador MQTT basico (sincrono), validado contra un broker Mosquitto local
-- [ ] Docker Compose con NanoMQ + Kafka (bridge MQTT -> Kafka)
+- [ ] Docker Compose con Mosquitto + Kafka + microservicio bridge MQTT-Kafka
 - [ ] Esquema Avro v1 + Apicurio Schema Registry
 - [ ] Job PyFlink (DataStream API) minimo end-to-end
 - [ ] Dashboards Grafana / Power BI
@@ -26,10 +30,10 @@ Linux nativo o macOS; en Windows nativo (fuera de WSL) no esta probado.
 
 | Herramienta | Para que se usa | Notas |
 |---|---|---|
-| Docker + Docker Compose v2 | Levantar NanoMQ, Kafka, Apicurio, PyFlink, TimescaleDB, PostgreSQL, Grafana | `docker compose version` >= 2.20 recomendado |
+| Docker + Docker Compose v2 | Levantar Mosquitto, Kafka, Apicurio, PyFlink, TimescaleDB, PostgreSQL, Grafana | `docker compose version` >= 2.20 recomendado |
 | Conda / Miniforge | Entorno Python del simulador y de los jobs PyFlink | Ver `pipeline/environment.yml` y `pipeline/setup_env.sh` |
 | Git | Clonar el repo | -- |
-| `mosquitto-clients` (`mosquitto_sub` / `mosquitto_pub`) | Solo para pruebas manuales del simulador antes de tener NanoMQ levantado | `sudo apt install mosquitto-clients` (Ubuntu/Debian) |
+| `mosquitto-clients` (`mosquitto_sub` / `mosquitto_pub`) | Inspeccionar manualmente los mensajes MQTT durante desarrollo/depuracion | `sudo apt install mosquitto-clients` (Ubuntu/Debian) |
 | Cuenta de Kaggle (gratuita) | Solo una vez, para descargar el dataset | Ver `pipeline/data/README.md` |
 | JDK 11 | Requerido por PyFlink | Gestionado automaticamente por conda (`openjdk=11`); no instalar aparte |
 
@@ -61,8 +65,9 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
        python convert_to_parquet.py --input ./raw/Power_measurements.xlsx --output ./power_measurements.parquet
        cd ../..
 
-4. Probar el simulador contra un broker Mosquitto temporal (detalle de las
-   3 terminales en `pipeline/simulator/README.md`):
+4. Probar el simulador contra un broker Mosquitto suelto (mismo broker que
+   luego forma parte del stack completo; detalle de las 3 terminales en
+   `pipeline/simulator/README.md`):
 
        docker run -it --rm -p 1883:1883 eclipse-mosquitto      # terminal 1
        mosquitto_sub -h localhost -t 'iot/#' -v                 # terminal 2
@@ -83,4 +88,5 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
       environment.lock.yml   Snapshot de reproducibilidad (documentacion)
       setup_env.sh           Crea el entorno conda + fix de PATH para Java
       data/                  Preparacion del dataset (Kaggle -> Parquet)
-      simulator/             Simulador MQTT de telemetria
+      simulator/              Simulador MQTT de telemetria
+      broker/                 (en desarrollo) Docker Compose Mosquitto + Kafka + bridge MQTT-Kafka
