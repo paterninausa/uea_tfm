@@ -15,6 +15,6 @@ Como trabajo futuro, se propone:
 
 \begin{enumerate}
     \item Migrar el stack de Docker Compose a manifiestos de Kubernetes (o Helm charts), comenzando por un clúster de un solo nodo sobre K3s o MicroK8s en el mismo entorno WSL/Ubuntu ya utilizado para el desarrollo.
-    \item Evaluar empíricamente el escalado horizontal de los task managers de PyFlink y de las particiones de Kafka bajo carga variable, replicando la metodología de estudios empíricos recientes que han comparado el rendimiento y la eficiencia de recursos de varias distribuciones ligeras de Kubernetes en escenarios de edge computing \cite{koziolek2023} y de trabajos que han evaluado herramientas de orquestación de contenedores específicamente en dichos entornos \cite{cilic2023}.
+    \item Evaluar el escalado horizontal de los task managers de PyFlink y de las particiones de Kafka bajo carga variable, midiendo consumo de CPU, memoria y latencia, replicando la metodología de estudios recientes que han comparado el rendimiento y la eficiencia de recursos de varias distribuciones ligeras de Kubernetes en escenarios de edge computing bajo esas mismas métricas \cite{koziolek2023} y de trabajos que han evaluado herramientas de orquestación de contenedores específicamente en dichos entornos \cite{cilic2023}.
     \item Explorar la incorporación de mecanismos de auto-recuperación y despliegue continuo (GitOps) sobre el clúster resultante, como extensión natural del repositorio actual del proyecto.
 \end{enumerate}
