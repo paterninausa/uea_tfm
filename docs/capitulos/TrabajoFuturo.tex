@@ -7,16 +7,14 @@ Una línea de evolución natural del sistema es la migración de la orquestació
 Entre las distribuciones evaluadas como candidatas destacan dos por su bajo consumo de recursos y su idoneidad para escenarios de IoT y edge computing:
 
 \begin{itemize}
-    \item \textbf{K3s} (Rancher/SUSE): una distribución certificada por la CNCF que sustituye \textit{etcd} por SQLite en despliegues de un solo nodo y reduce drásticamente el consumo de memoria frente a Kubernetes estándar, lo que la convierte en una de las opciones más utilizadas en estudios comparativos de orquestación de contenedores para entornos de recursos limitados.
+    \item \textbf{K3s} (Rancher/SUSE): una distribución certificada por la CNCF (Cloud Native Computing Foundation), lo que garantiza compatibilidad completa con la API estándar de Kubernetes, que sustituye \textit{etcd} por SQLite en despliegues de un solo nodo y reduce drásticamente el consumo de memoria frente a Kubernetes estándar, lo que la convierte en una de las opciones más utilizadas en estudios comparativos de orquestación de contenedores para entornos de recursos limitados.
     \item \textbf{MicroK8s} (Canonical): distribución empaquetada como snap, con fuerte integración en el ecosistema Ubuntu (el mismo utilizado en el entorno de desarrollo de este proyecto) y un sistema de complementos (\textit{addons}) que simplifica la activación de componentes como almacenamiento persistente o ingress.
 \end{itemize}
-
-Estudios empíricos recientes han comparado el rendimiento y la eficiencia de recursos de varias distribuciones ligeras de Kubernetes (MicroK8s, K3s, K0s y Microshift) en escenarios de edge computing, evaluando métricas de CPU, memoria y latencia bajo distintas cargas de trabajo \cite{koziolek2023}. En la misma línea, otros trabajos han evaluado herramientas de orquestación de contenedores específicamente en entornos de edge computing, comparando Kubernetes, K3s, KubeEdge e ioFog \cite{cilic2023}.
 
 Como trabajo futuro, se propone:
 
 \begin{enumerate}
     \item Migrar el stack de Docker Compose a manifiestos de Kubernetes (o Helm charts), comenzando por un clúster de un solo nodo sobre K3s o MicroK8s en el mismo entorno WSL/Ubuntu ya utilizado para el desarrollo.
-    \item Evaluar empíricamente el escalado horizontal de los task managers de PyFlink y de las particiones de Kafka bajo carga variable, replicando la metodología de los estudios de referencia citados.
+    \item Evaluar empíricamente el escalado horizontal de los task managers de PyFlink y de las particiones de Kafka bajo carga variable, replicando la metodología de estudios empíricos recientes que han comparado el rendimiento y la eficiencia de recursos de varias distribuciones ligeras de Kubernetes en escenarios de edge computing \cite{koziolek2023} y de trabajos que han evaluado herramientas de orquestación de contenedores específicamente en dichos entornos \cite{cilic2023}.
     \item Explorar la incorporación de mecanismos de auto-recuperación y despliegue continuo (GitOps) sobre el clúster resultante, como extensión natural del repositorio actual del proyecto.
 \end{enumerate}
