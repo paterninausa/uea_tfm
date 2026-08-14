@@ -32,14 +32,13 @@
   {Capítulo \thechapter.   } % Prefijo del título
   {0pt} % Espacio entre el prefijo y el título del capítulo
   {} % Antes del título
-\titlespacing*{\chapter}{0pt}{-10pt}{0pt}
+\titlespacing*{\chapter}{0pt}{-10pt}{20pt}
 
 \titleformat{\section}
   {\normalfont\fontsize{14pt}{14pt}\selectfont\bfseries}
   {\thesection}
   {1em}
   {}
-\titlespacing*{\section}{0pt}{0pt}{0pt} % Espacio antes y después del título de la sección
 
 \usepackage{enumitem}
 \setlist[itemize]{itemsep=0pt, parsep=0pt, label=\textbullet}
