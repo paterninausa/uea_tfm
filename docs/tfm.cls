@@ -6,6 +6,7 @@
 \RequirePackage[T1]{fontenc}
 \RequirePackage[english,spanish,es-lcroman, es-tabla]{babel}
 \RequirePackage{graphicx}
+\RequirePackage{float}
 \RequirePackage{geometry}
 \RequirePackage{fancyhdr}
 \RequirePackage[scaled]{helvet} % Usa la fuente Helvetica, que es similar a Arial
@@ -84,3 +85,7 @@
 % Configuración de la numeración y los títulos de figuras y tablas
 \captionsetup[figure]{labelfont=bf, name=Figura, labelsep=period}
 \captionsetup[table]{labelfont=bf, name=Tabla, labelsep=period}
+
+% Enlaces clicables en \cite{} hacia la entrada correspondiente en la bibliografía.
+% Debe cargarse después de biblatex y lo más tarde posible en el preámbulo.
+\RequirePackage[hidelinks]{hyperref}

@@ -40,9 +40,9 @@ Los objetivos concretos de este trabajo se definen a continuación, acompañados
 
 \subsection{Objetivo 3: Procesar y enriquecer los datos en streaming con baja latencia}
 
-\textbf{KPI}: latencia de procesamiento por ventana en PyFlink inferior a 3 segundos tras el cierre de cada ventana; throughput sostenido de al menos 1\,000 eventos por segundo sin generación de \textit{backpressure}.
+\textbf{KPI}: latencia de procesamiento por micro-lote en Spark Structured Streaming inferior a 3 segundos tras el cierre de cada ventana; throughput sostenido de al menos 1\,000 eventos por segundo sin acumulación de retraso entre lotes sucesivos.
 
-\textbf{Acciones}: implementar el job de PyFlink (DataStream API) con ventanas de agregación temporal; instrumentar métricas de throughput y backpressure del job; ejecutar pruebas de carga incremental hasta identificar el punto de saturación y verificar el cumplimiento del KPI dentro del rango objetivo.
+\textbf{Acciones}: implementar el job de Spark Structured Streaming (DataFrame API) con ventanas de agregación temporal y \textit{watermarking} para el tratamiento de datos tardíos; instrumentar métricas de throughput y de duración de cada micro-lote (\textit{batch duration}) del job; ejecutar pruebas de carga incremental hasta identificar el punto de saturación y verificar el cumplimiento del KPI dentro del rango objetivo.
 
 \subsection{Objetivo 4: Ofrecer visualización diferenciada operacional y analítica}
 
@@ -54,7 +54,7 @@ Los objetivos concretos de este trabajo se definen a continuación, acompañados
 
 \textbf{KPI}: el sistema soporta al menos 500 sensores simulados concurrentes con una degradación de throughput inferior al 20\,\% respecto a la carga base; ante el fallo de un servicio individual, el sistema se recupera en menos de 60 segundos sin pérdida de datos.
 
-\textbf{Acciones}: diseñar un plan de pruebas de estrés y de carga con volumen creciente de sensores simulados; medir el throughput y la latencia bajo cada nivel de carga; simular la caída de un servicio (por ejemplo, un TaskManager de Flink) y medir el tiempo de recuperación y la integridad de los datos gracias a la retención en Kafka; documentar los resultados obtenidos.
+\textbf{Acciones}: diseñar un plan de pruebas de estrés y de carga con volumen creciente de sensores simulados; medir el throughput y la latencia bajo cada nivel de carga; simular la caída de un servicio (por ejemplo, un executor de Spark) y medir el tiempo de recuperación y la integridad de los datos gracias a la retención en Kafka; documentar los resultados obtenidos.
 
 \section{Beneficios del proyecto}
 

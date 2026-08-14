@@ -1,8 +1,8 @@
 \chapter{FUTURAS LÍNEAS DE TRABAJO}
 
-La implementación actual del pipeline se ha desplegado íntegramente mediante Docker Compose, lo cual resulta adecuado para el alcance de este TFM (un entorno de desarrollo y validación en una única máquina), pero presenta limitaciones evidentes de cara a un despliegue productivo real: no ofrece escalado horizontal automático de los componentes con mayor carga (particiones de Kafka, task managers de PyFlink), ni mecanismos nativos de auto-recuperación ante fallos de nodo.
+La implementación actual del pipeline se ha desplegado íntegramente mediante Docker Compose, lo cual resulta adecuado para el alcance de este TFM (un entorno de desarrollo y validación en una única máquina), pero presenta limitaciones evidentes de cara a un despliegue productivo real: no ofrece escalado horizontal automático de los componentes con mayor carga (particiones de Kafka, ejecutores de Spark Structured Streaming), ni mecanismos nativos de auto-recuperación ante fallos de nodo.
 
-Una línea de evolución natural del sistema es la migración de la orquestación hacia una distribución ligera de Kubernetes, manteniendo el resto de la arquitectura (Mosquitto, Kafka en modo KRaft, Apicurio, PyFlink y los sinks duales TimescaleDB/PostgreSQL) sin cambios sustanciales, ya que todos los componentes están containerizados y son, en principio, portables a manifiestos de Kubernetes o a Helm charts.
+Una línea de evolución natural del sistema es la migración de la orquestación hacia una distribución ligera de Kubernetes, manteniendo el resto de la arquitectura (Mosquitto, Kafka en modo KRaft, Apicurio, Spark Structured Streaming y los sinks duales TimescaleDB/PostgreSQL) sin cambios sustanciales, ya que todos los componentes están containerizados y son, en principio, portables a manifiestos de Kubernetes o a Helm charts.
 
 Entre las distribuciones evaluadas como candidatas destacan dos por su bajo consumo de recursos y su idoneidad para escenarios de IoT y edge computing:
 
@@ -15,6 +15,6 @@ Como trabajo futuro, se propone:
 
 \begin{enumerate}
     \item Migrar el stack de Docker Compose a manifiestos de Kubernetes (o Helm charts), comenzando por un clúster de un solo nodo sobre K3s o MicroK8s en el mismo entorno WSL/Ubuntu ya utilizado para el desarrollo.
-    \item Evaluar el escalado horizontal de los task managers de PyFlink y de las particiones de Kafka bajo carga variable, midiendo consumo de CPU, memoria y latencia, replicando la metodología de estudios recientes que han comparado el rendimiento y la eficiencia de recursos de varias distribuciones ligeras de Kubernetes en escenarios de edge computing bajo esas mismas métricas \cite{koziolek2023} y de trabajos que han evaluado herramientas de orquestación de contenedores específicamente en dichos entornos \cite{cilic2023}.
+    \item Evaluar el escalado horizontal de los ejecutores de Spark Structured Streaming y de las particiones de Kafka bajo carga variable, midiendo consumo de CPU, memoria y latencia, replicando la metodología de estudios recientes que han comparado el rendimiento y la eficiencia de recursos de varias distribuciones ligeras de Kubernetes en escenarios de edge computing bajo esas mismas métricas \cite{koziolek2023} y de trabajos que han evaluado herramientas de orquestación de contenedores específicamente en dichos entornos \cite{cilic2023}.
     \item Explorar la incorporación de mecanismos de auto-recuperación y despliegue continuo (GitOps) sobre el clúster resultante, como extensión natural del repositorio actual del proyecto.
 \end{enumerate}
