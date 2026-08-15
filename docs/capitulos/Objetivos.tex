@@ -9,8 +9,8 @@ Este trabajo abarca el diseño, desarrollo y validación de un sistema desacopla
 Para cubrir el alcance descrito, se plantean las siguientes tareas:
 
 \begin{itemize}
-    \item Analizar el estado del arte en las herramientas, estrategias y retos actuales en el análisis y procesamiento de datos de dispositivos IoT.
-    \item Analizar las tecnologías open-source disponibles para la implementación y orquestación de sistemas basados en microservicios.
+    \item Analizar el estado del arte en las herramientas, estrategias y retos actuales en el procesamiento y análisis de datos en streaming.
+    \item Analizar las tecnologías open-source disponibles para el procesamiento y análisis de datos de dispositivos IoT.
     \item Diseñar e implementar un simulador de comunicación IoT para la transmisión de datos de telemetría de sensores de consumo eléctrico.
     \item Diseñar e implementar una arquitectura basada en contenedores para la orquestación y ejecución de los siguientes microservicios:
     \begin{itemize}
@@ -40,9 +40,9 @@ Los objetivos concretos de este trabajo se definen a continuación, acompañados
 
 \subsection{Objetivo 3: Procesar y enriquecer los datos en streaming con baja latencia}
 
-\textbf{KPI}: latencia de procesamiento por micro-lote en Spark Structured Streaming inferior a 3 segundos tras el cierre de cada ventana; throughput sostenido de al menos 1\,000 eventos por segundo sin acumulación de retraso entre lotes sucesivos.
+\textbf{KPI}: latencia de procesamiento por micro-lote en Spark Structured Streaming inferior a 3 segundos tras el cierre de cada ventana; throughput sostenido de al menos 50 eventos por segundo sin acumulación de retraso entre lotes sucesivos.
 
-\textbf{Acciones}: implementar el job de Spark Structured Streaming (DataFrame API) con ventanas de agregación temporal y \textit{watermarking} para el tratamiento de datos tardíos; instrumentar métricas de throughput y de duración de cada micro-lote (\textit{batch duration}) del job; ejecutar pruebas de carga incremental hasta identificar el punto de saturación y verificar el cumplimiento del KPI dentro del rango objetivo.
+\textbf{Acciones}: implementar el job de Spark Structured Streaming (DataFrame API) con ventanas de agregación temporal y \textit{watermarking} para el tratamiento de datos tardíos; instrumentar métricas de throughput y de duración de cada micro-lote (\textit{batch duration}) del job; ejecutar pruebas de carga incremental hasta identificar el punto de saturación y verificar el cumplimiento del KPI dentro del rango definido.
 
 \subsection{Objetivo 4: Ofrecer visualización diferenciada operacional y analítica}
 
@@ -52,10 +52,12 @@ Los objetivos concretos de este trabajo se definen a continuación, acompañados
 
 \subsection{Objetivo 5: Validar la escalabilidad y resiliencia del sistema}
 
-\textbf{KPI}: el sistema soporta al menos 500 sensores simulados concurrentes con una degradación de throughput inferior al 20\,\% respecto a la carga base; ante el fallo de un servicio individual, el sistema se recupera en menos de 60 segundos sin pérdida de datos.
+\textbf{KPI}: el sistema soporta al menos 500 sensores simulados concurrentes con una degradación de throughput inferior al 20\,\% respecto a una carga base de 100 sensores simulados concurrentes; ante el fallo de un servicio individual, el sistema se recupera en menos de 60 segundos sin pérdida de datos.
 
 \textbf{Acciones}: diseñar un plan de pruebas de estrés y de carga con volumen creciente de sensores simulados; medir el throughput y la latencia bajo cada nivel de carga; simular la caída de un servicio (por ejemplo, un executor de Spark) y medir el tiempo de recuperación y la integridad de los datos gracias a la retención en Kafka; documentar los resultados obtenidos.
 
 \section{Beneficios del proyecto}
 
-El desarrollo de este sistema aporta, por un lado, un artefacto académico evaluable que documenta con rigor una implementación completa de una arquitectura Kappa para IoT íntegramente basada en herramientas de código abierto, cerrando parcialmente los vacíos identificados en el estado del arte respecto a la gobernanza de esquemas y la separación de sumideros operacional y analítico. Por otro lado, el pipeline resultante queda disponible como referencia técnica reutilizable, replicable mediante contenedores y sin dependencia de proveedores propietarios, lo que facilita su adopción como base de partida en proyectos similares de monitorización energética industrial.
+El desarrollo de este sistema aporta, por un lado, un artefacto académico evaluable que documenta con rigor una implementación completa de una arquitectura Kappa para IoT basada en herramientas de código abierto, cerrando parcialmente los vacíos identificados en el estado del arte respecto a la gobernanza de esquemas y la separación de sumideros operacional y analítico. 
+
+Por otro lado, el pipeline resultante queda disponible como referencia técnica replicable mediante contenedores y sin dependencia de proveedores propietarios, lo que facilita su adopción como punto de partida en proyectos similares de monitorización energética industrial.
