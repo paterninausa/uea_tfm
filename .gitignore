@@ -38,4 +38,9 @@ pipeline/data/power_measurements_parquet/
 references/
 
 # Editor
-.vscode/
+# .vscode/settings.json SI se versiona: es configuracion del proyecto (apunta
+# al interprete de .venv para que Pylance resuelva los imports del pipeline),
+# no preferencias personales. El resto del directorio queda ignorado porque
+# puede contener estado local del editor.
+.vscode/*
+!.vscode/settings.json

@@ -1,0 +1,11 @@
+{
+    // El proyecto usa venv + pip (no conda). Apuntar explicitamente al
+    // interprete del repo hace que Pylance resuelva los imports del pipeline
+    // (paho.mqtt, pandas, pyspark...) contra .venv/ y no contra el Python
+    // del sistema.
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.terminal.activateEnvironment": true,
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/pipeline"
+    ]
+}
