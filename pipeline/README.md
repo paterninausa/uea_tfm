@@ -129,4 +129,14 @@ Python 3.11 + PySpark 4.2.0):
   MQTT→Kafka p95 de 2,2 ms, DLQ funcionando y recuperacion sin perdida tras
   reiniciar el servicio (ver [bridge/README.md](bridge/README.md)).
 
-Pendiente: job de Spark, sinks (TimescaleDB / PostgreSQL), Grafana.
+- Doble sumidero operativo: job de Spark Structured Streaming escribiendo
+  agregados por ventana en TimescaleDB y eventos enriquecidos en PostgreSQL.
+  739,8 ev/s de extremo a extremo con 0% de perdida; latencia de ingesta p95 de
+  1,26 s y de disponibilidad del agregado de 3,55 s (ver
+  [spark/README.md](spark/README.md), que explica por que el KPI de 2 s del
+  Objetivo 1 no se cumple tal como esta redactado).
+- Grafana con la fuente de datos de TimescaleDB aprovisionada de forma
+  declarativa y conexion verificada.
+
+Pendiente: dashboards de Grafana, informes de Power BI, pruebas de carga del
+Objetivo 5.

@@ -1,0 +1,28 @@
+# Fuente de datos aprovisionada de forma declarativa: Grafana la crea al
+# arrancar, sin configurarla a mano por la interfaz. Es lo que hace que el
+# dashboard sea reproducible al clonar el repositorio.
+
+apiVersion: 1
+
+datasources:
+  - name: TimescaleDB
+    type: postgres
+    uid: timescaledb
+    access: proxy
+    # Nombre del servicio y puerto INTERNO de la red de contenedores: Grafana
+    # corre dentro de tfm-net, no en el host, asi que no aplica el 5432
+    # publicado hacia fuera.
+    url: timescaledb:5432
+    user: tfm
+    database: tfm_metrics
+    secureJsonData:
+      password: tfm_dev_password
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1700
+      # Le indica a Grafana que el backend es TimescaleDB, lo que habilita las
+      # macros de agregacion por intervalo de tiempo en el constructor de
+      # consultas.
+      timescaledb: true
+    isDefault: true
+    editable: true

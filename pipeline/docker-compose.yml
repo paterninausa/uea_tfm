@@ -183,6 +183,93 @@ services:
       REGISTRY_API_URL: http://localhost:8080/apis/registry/v3
     networks: [tfm-net]
 
+  # ---------------------------------------------------------------------------
+  # TimescaleDB — metricas agregadas por ventana temporal -> Grafana
+  # ---------------------------------------------------------------------------
+  # Se usa la variante `-oss` (edicion Apache-2) y no la imagen por defecto:
+  # esta ultima incluye funciones bajo Timescale License, que es
+  # source-available pero NO open source segun la OSI, y el trabajo sostiene
+  # que el stack es integramente open-source. La edicion Apache-2 conserva las
+  # hypertables, que es lo que necesita el pipeline; lo que renuncia son las
+  # continuous aggregates y la compresion, irrelevantes aqui porque la
+  # agregacion la hace Spark.
+  timescaledb:
+    image: timescale/timescaledb:2.29.1-pg17-oss
+    container_name: tfm-timescaledb
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: tfm_metrics
+      POSTGRES_USER: tfm
+      POSTGRES_PASSWORD: tfm_dev_password
+    volumes:
+      - timescaledb-data:/var/lib/postgresql/data
+      # Los scripts de este directorio se ejecutan una unica vez, cuando el
+      # volumen de datos esta vacio. Si se cambia el DDL hay que recrear el
+      # volumen (docker compose down -v) para que se vuelvan a aplicar.
+      - ./docker/timescaledb/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tfm -d tfm_metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [tfm-net]
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — eventos individuales enriquecidos -> Power BI
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    container_name: tfm-postgres
+    restart: unless-stopped
+    ports:
+      # 5433 en el host: 5432 ya lo ocupa TimescaleDB, que tambien es un
+      # PostgreSQL. Dentro de la red de contenedores ambos escuchan en 5432.
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: tfm_analytics
+      POSTGRES_USER: tfm
+      POSTGRES_PASSWORD: tfm_dev_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tfm -d tfm_analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [tfm-net]
+
+  # ---------------------------------------------------------------------------
+  # Grafana — dashboards operativos sobre TimescaleDB (Objetivo 4)
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:13.0.6
+    container_name: tfm-grafana
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      # Entorno de desarrollo local: sin registro de usuarios ni telemetria.
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      # Aprovisionamiento declarativo: la fuente de datos se define en un
+      # fichero versionado, no pulsando en la interfaz. Asi el dashboard es
+      # reproducible al clonar el repo.
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks: [tfm-net]
+
 networks:
   tfm-net:
     driver: bridge
@@ -190,3 +277,6 @@ networks:
 volumes:
   mosquitto-data:
   kafka-data:
+  timescaledb-data:
+  postgres-data:
+  grafana-data:

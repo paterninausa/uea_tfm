@@ -44,3 +44,6 @@ references/
 # puede contener estado local del editor.
 .vscode/*
 !.vscode/settings.json
+
+# Checkpoints de Spark Structured Streaming (estado local, no versionable)
+pipeline/spark/checkpoints/
