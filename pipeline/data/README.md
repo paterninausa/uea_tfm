@@ -27,14 +27,15 @@ Necesitas una cuenta de Kaggle (gratuita):
 ## 2. Instalar las dependencias de este paso
 
 Estas dependencias (CLI de Kaggle + openpyxl) son solo para esta
-preparacion puntual de datos; no se anaden al `environment.yml` principal
-del pipeline para no cargarlo con herramientas que no se usan en el dia a
-dia de la simulacion/procesamiento.
+preparacion puntual de datos; no se anaden al `pipeline/requirements.txt`
+principal del pipeline para no cargarlo con herramientas que no se usan en
+el dia a dia de la simulacion/procesamiento.
 
     pip install -r requirements.txt
 
-(Puedes instalarlas en el propio entorno conda `tfm` activado, o en un
-venv aparte -- es indiferente, es un paso desacoplado del resto.)
+(Puedes instalarlas en el propio venv del pipeline -- `bash
+pipeline/setup_env.sh` y `source .venv/bin/activate` -- o en un venv aparte:
+es indiferente, es un paso desacoplado del resto.)
 
 ## 3. Descargar el dataset
 
@@ -49,9 +50,30 @@ Esto descarga `./raw/Power_measurements.xlsx` (~136 MB). El directorio
         --input ./raw/Power_measurements.xlsx \
         --output ./power_measurements.parquet
 
-El resultado (`power_measurements.parquet`, unos 15-30 MB comprimido, un
-solo fichero) tampoco se versiona (tambien en `.gitignore`) y es el que
-espera `pipeline/simulator/mqtt_simulator.py` via `--parquet-path`.
+El resultado (`power_measurements.parquet`, un solo fichero, sensiblemente
+mas pequeno que el `.xlsx` de partida) tampoco se versiona (tambien en
+`.gitignore`) y es el que espera `pipeline/simulator/mqtt_simulator.py` via
+`--parquet-path`.
+
+### Forma canonica y export antiguo de Spark
+
+La forma **canonica** del historico es el fichero unico
+`power_measurements.parquet` generado por `convert_to_parquet.py`: es la
+unica ruta reproducible a partir del Kaggle publico, sin depender de
+Databricks ni de ningun otro recurso privado.
+
+Durante el desarrollo tambien se genero el directorio
+`power_measurements_parquet/` (salida de un job de Spark, con su `_SUCCESS` y
+un fichero `part-...snappy.parquet` de ~62 MB). Puede seguir existiendo en
+copias de trabajo antiguas y **sigue siendo utilizable**: `pandas.read_parquet`
+—y por tanto `--parquet-path` del simulador— acepta indistintamente un
+fichero o un directorio Parquet. No es la forma a documentar ni a reproducir,
+solo un artefacto historico.
+
+`.gitignore` cubre las dos formas, de modo que ninguna se versiona:
+
+    pipeline/data/*.parquet
+    pipeline/data/power_measurements_parquet/
 
 ## Nota sobre la rotacion de `sensor_id`
 

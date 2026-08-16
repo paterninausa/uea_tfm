@@ -1,25 +1,32 @@
 # TFM -- Sistema escalable de microservicios para el procesamiento de datos IoT
 
-Trabajo de Fin de Master, Universidad Europea de Andalucia (UEM), Master en
-Analisis de Grandes Volumenes de Datos. Autor: Boris Renee Paternina Perez.
-Director: Victor Gomez Guirado. Curso 2025-2026.
+Trabajo de Fin de Master, Universidad Europea de Andalucia (UEA), Master
+Universitario en Analisis de Grandes Volumenes de Datos (Big Data). Autor:
+Boris Renee Paternina Perez. Director: Victor Gomez Guirado. Curso 2025-2026.
 
 Implementa una arquitectura Kappa para IoT, integramente open-source y
 containerizada, usando como caso de uso telemetria de consumo electrico en
 equipos de oficina e industriales:
 
-    Simulador MQTT -> Mosquitto -> microservicio bridge MQTT-Kafka -> Kafka (KRaft) -> Apicurio (Avro) -> PyFlink -> TimescaleDB / PostgreSQL -> Grafana / Power BI
+    Simulador MQTT -> Mosquitto -> microservicio bridge MQTT-Kafka -> Kafka (KRaft) -> Apicurio (Avro) -> Spark Structured Streaming -> TimescaleDB / PostgreSQL -> Grafana / Power BI
 
 Nota: Mosquitto no trae bridge nativo a Kafka (esa capacidad, en el
 ecosistema EMQ, solo existe en EMQX Enterprise, de pago), por eso el puente
 MQTT->Kafka es un microservicio propio dentro del pipeline.
 
+El motor de procesamiento es **Spark Structured Streaming** (DataFrame API,
+micro-batch), no Flink: la justificacion completa esta en la memoria
+(`docs/capitulos/EstadoArte.tex`, "Criterios de seleccion de herramientas de
+procesamiento streaming").
+
 ## Estado actual
 
-- [x] Simulador MQTT basico (sincrono), validado contra un broker Mosquitto local
-- [ ] Docker Compose con Mosquitto + Kafka + microservicio bridge MQTT-Kafka
-- [ ] Esquema Avro v1 + Apicurio Schema Registry
-- [ ] Job PyFlink (DataStream API) minimo end-to-end
+- [x] Simulador MQTT basico (sincrono), validado contra el broker Mosquitto del stack
+- [x] Docker Compose con Mosquitto + Kafka (KRaft) + Apicurio Schema Registry
+- [ ] Microservicio bridge MQTT-Kafka
+- [ ] Esquema Avro v1 registrado en Apicurio (el registro ya levanta; falta el esquema)
+- [ ] Job de Spark Structured Streaming minimo end-to-end
+- [ ] Sinks: TimescaleDB (metricas por ventana) y PostgreSQL (eventos enriquecidos)
 - [ ] Dashboards Grafana / Power BI
 - [ ] Pruebas de carga y de evolucion de esquema
 
@@ -30,12 +37,16 @@ Linux nativo o macOS; en Windows nativo (fuera de WSL) no esta probado.
 
 | Herramienta | Para que se usa | Notas |
 |---|---|---|
-| Docker + Docker Compose v2 | Levantar Mosquitto, Kafka, Apicurio, PyFlink, TimescaleDB, PostgreSQL, Grafana | `docker compose version` >= 2.20 recomendado |
-| Conda / Miniforge | Entorno Python del simulador y de los jobs PyFlink | Ver `pipeline/environment.yml` y `pipeline/setup_env.sh` |
+| Docker + Docker Compose v2 | Levantar Mosquitto, Kafka, Apicurio y (mas adelante) TimescaleDB, PostgreSQL, Grafana | `docker compose version` >= 2.20 recomendado |
+| Python 3.11 + venv | Entorno del simulador y de los jobs de Spark | Se crea con `bash pipeline/setup_env.sh`; dependencias en `pipeline/requirements.txt` |
+| JDK 21 LTS (Temurin) | Requerido por PySpark 4.x (Java 17 o superior) | Gestionado por SDKMAN, ver `.sdkmanrc`; es la unica fuente de JDK del proyecto |
 | Git | Clonar el repo | -- |
-| `mosquitto-clients` (`mosquitto_sub` / `mosquitto_pub`) | Inspeccionar manualmente los mensajes MQTT durante desarrollo/depuracion | `sudo apt install mosquitto-clients` (Ubuntu/Debian) |
+| `mosquitto-clients` (`mosquitto_sub` / `mosquitto_pub`) | Inspeccionar manualmente los mensajes MQTT durante desarrollo/depuracion | Opcional: el contenedor `tfm-mosquitto` ya los trae (`docker exec tfm-mosquitto mosquitto_sub ...`). Para tenerlos en el host: `sudo apt install mosquitto-clients` |
 | Cuenta de Kaggle (gratuita) | Solo una vez, para descargar el dataset | Ver `pipeline/data/README.md` |
-| JDK 11 | Requerido por PyFlink | Gestionado automaticamente por conda (`openjdk=11`); no instalar aparte |
+
+El proyecto usa **venv + pip**, no conda. La migracion se hizo al pivotar a
+Spark: con venv, SDKMAN es la unica fuente de Java y desaparece el conflicto
+de `PATH` que provocaba el JDK que instalaba conda.
 
 **No hace falta cuenta ni acceso a Databricks para ejecutar el pipeline.**
 Databricks se uso unicamente durante el desarrollo como almacen de
@@ -50,11 +61,13 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
        git clone https://github.com/paterninausa/uea_tfm.git
        cd uea_tfm
 
-2. Crear el entorno conda (incluye un fix de PATH necesario si tienes
-   SDKMAN u otro gestor de JDK -- ver comentarios en el propio script):
+2. Preparar Java 21 (si usas SDKMAN) y crear el entorno virtual. El script
+   no instala Java: solo verifica que este disponible antes de continuar.
 
+       sdk env install     # instala Java 21.0.9-tem si no la tienes
+       sdk env             # la activa para este repo
        bash pipeline/setup_env.sh
-       conda activate tfm
+       source .venv/bin/activate
 
 3. Obtener el dataset (una sola vez -- detalle completo en
    `pipeline/data/README.md`):
@@ -65,28 +78,31 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
        python convert_to_parquet.py --input ./raw/Power_measurements.xlsx --output ./power_measurements.parquet
        cd ../..
 
-4. Probar el simulador contra un broker Mosquitto suelto (mismo broker que
-   luego forma parte del stack completo; detalle de las 3 terminales en
-   `pipeline/simulator/README.md`):
+4. Levantar el stack de ingesta (detalle de servicios, puertos y
+   comprobaciones en `pipeline/README.md`):
 
-       docker run -it --rm -p 1883:1883 eclipse-mosquitto      # terminal 1
-       mosquitto_sub -h localhost -t 'iot/#' -v                 # terminal 2
-       cd pipeline/simulator                                    # terminal 3
+       docker compose -f pipeline/docker-compose.yml up -d
+       docker compose -f pipeline/docker-compose.yml ps -a
+
+5. Probar el simulador contra el broker del stack (detalle de las 2
+   terminales en `pipeline/simulator/README.md`):
+
+       docker exec tfm-mosquitto mosquitto_sub -h localhost -t 'iot/#' -v   # terminal 1
+       cd pipeline/simulator                                                 # terminal 2
        python mqtt_simulator.py \
            --parquet-path ../data/power_measurements.parquet \
            --broker-host localhost --broker-port 1883 \
            --rate 20 --limit 5000
 
-5. *(Pendiente)* Levantar el stack completo con Docker Compose -- se
-   documentara aqui en cuanto este disponible.
-
 ## Estructura del repo
 
     docs/                    Memoria del TFM (LaTeX)
+    references/              TFM de ejemplo usados como referencia de estilo
     pipeline/
-      environment.yml        Entorno conda del pipeline (simulador, PyFlink)
-      environment.lock.yml   Snapshot de reproducibilidad (documentacion)
-      setup_env.sh           Crea el entorno conda + fix de PATH para Java
+      README.md              Stack containerizado: servicios, puertos, comprobaciones
+      docker-compose.yml     Mosquitto + Kafka (KRaft) + Apicurio
+      docker/                Configuracion montada en los contenedores (mosquitto.conf)
+      requirements.txt       Dependencias Python del pipeline (venv + pip)
+      setup_env.sh           Crea el .venv e instala dependencias (verifica Java)
       data/                  Preparacion del dataset (Kaggle -> Parquet)
-      simulator/              Simulador MQTT de telemetria
-      broker/                 (en desarrollo) Docker Compose Mosquitto + Kafka + bridge MQTT-Kafka
+      simulator/             Simulador MQTT de telemetria

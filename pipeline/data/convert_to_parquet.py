@@ -5,9 +5,10 @@ Dataset: https://www.kaggle.com/datasets/khalilaraoui/power-telemetry
 Fichero: Power_measurements.xlsx
 
 Este script es un paso de preparacion de datos de UN SOLO USO: no forma
-parte del pipeline en ejecucion (simulador -> NanoMQ -> Kafka -> PyFlink).
-Solo convierte el .xlsx original a .parquet para que el simulador
-(pipeline/simulator/mqtt_simulator.py) lo lea eficientemente.
+parte del pipeline en ejecucion (simulador -> Mosquitto -> bridge -> Kafka
+-> Spark Structured Streaming). Solo convierte el .xlsx original a .parquet
+para que el simulador (pipeline/simulator/mqtt_simulator.py) lo lea
+eficientemente.
 
 Uso:
     python convert_to_parquet.py \

@@ -24,14 +24,28 @@ el payload.
 Ver `../data/README.md`. En resumen: el dataset viene del Kaggle publico
 "Power Telemetry" (no depende de ninguna cuenta o recurso privado), y el
 script `../data/convert_to_parquet.py` lo convierte a
-`../data/power_measurements.parquet`, que es lo que espera este simulador.
+`../data/power_measurements.parquet`, que es la forma canonica que espera este
+simulador.
+
+Si en tu copia de trabajo lo que hay es el directorio
+`../data/power_measurements_parquet/` (export anterior generado con Spark),
+tambien sirve: `--parquet-path` acepta tanto un fichero Parquet como un
+directorio, porque `pandas.read_parquet` resuelve ambos casos. Basta con
+apuntar `--parquet-path` a lo que tengas en disco.
 
 ## Uso
 
-Activa el entorno conda `tfm` (ver `../environment.yml`). `pyarrow` (necesario
-para leer Parquet con pandas) no se declara ahi explicitamente: llega como
-dependencia transitiva de `apache-flink` -- ver `../environment.lock.yml`
-para el detalle de por que se resolvio asi.
+Activa el entorno virtual del proyecto (venv + pip; el proyecto ya no usa
+conda):
+
+    bash pipeline/setup_env.sh      # solo la primera vez
+    source .venv/bin/activate
+
+`pyarrow` (necesario para leer Parquet con pandas) se declara
+**explicitamente** en `../requirements.txt` junto con `pandas`: se comprobo
+que `pip install pyspark==4.2.0` no los instala (solo llegan con extras como
+`pyspark[sql]`), asi que no puede darse por supuesto que lleguen como
+dependencia transitiva.
 
     python mqtt_simulator.py \
         --parquet-path ../data/power_measurements.parquet \
@@ -43,38 +57,44 @@ Parametros:
 - `--limit`: numero de filas a publicar (omitir para publicar el dataset completo)
 - `--qos`: nivel de QoS MQTT (por defecto 1, ver justificacion en Objetivo 1)
 
-## Prueba rapida sin NanoMQ (smoke test)
+## Prueba rapida contra el broker del stack (smoke test)
 
-Hasta que NanoMQ este levantado (siguiente paso del plan), se valida el
-simulador contra un broker Mosquitto temporal. Requiere 3 terminales, **en
-este orden**:
+El broker es **Mosquitto** y forma parte del stack containerizado
+(`pipeline/docker-compose.yml`, ver `../README.md`): no se levanta con un
+`docker run` suelto. Requiere 2 terminales, **en este orden**:
 
-**Terminal 1 -- levantar el broker** (dejarla corriendo en primer plano):
+**Terminal 1 -- levantar el broker** (desde la raiz del repo; basta el
+servicio `mosquitto`, no hace falta el stack completo para esta prueba):
 
-    docker run -it --rm -p 1883:1883 eclipse-mosquitto
+```bash
+docker compose -f pipeline/docker-compose.yml up -d mosquitto
+```
 
-**Terminal 2 -- suscribirse para ver llegar los mensajes** (necesita
-`mosquitto-clients`, `sudo apt install mosquitto-clients` en Ubuntu/Debian):
+Y suscribirse para ver llegar los mensajes (dejar la terminal corriendo):
 
-    mosquitto_sub -h localhost -t 'iot/#' -v
+```bash
+docker exec tfm-mosquitto mosquitto_sub -h localhost -t 'iot/#' -v
+```
 
-**Terminal 3 -- ejecutar el simulador** (entorno conda `tfm` activado):
+**Terminal 2 -- ejecutar el simulador** (con el venv activado):
 
-    cd pipeline/simulator
-    python mqtt_simulator.py \
-        --parquet-path ../data/power_measurements.parquet \
-        --broker-host localhost --broker-port 1883 \
-        --rate 20 --limit 5000
+```bash
+cd pipeline/simulator
+python mqtt_simulator.py \
+    --parquet-path ../data/power_measurements.parquet \
+    --broker-host localhost --broker-port 1883 \
+    --rate 20 --limit 5000
+```
 
-Si el simulador se ejecuta antes de que el broker de la Terminal 1 este
-escuchando, falla con `ConnectionRefusedError: [Errno 111] Connection
-refused` al intentar `client.connect()`. Es el error esperado en ese caso
-(no un bug del script) -- confirma que el broker no esta arriba todavia y
-hay que levantarlo primero (Terminal 1) antes de lanzar la Terminal 3.
+Si el simulador se ejecuta antes de que el broker este escuchando, falla con
+`ConnectionRefusedError: [Errno 111] Connection refused` al intentar
+`client.connect()`. Es el error esperado en ese caso (no un bug del script) --
+confirma que el broker no esta arriba todavia y hay que levantarlo primero
+(Terminal 1) antes de lanzar la Terminal 2.
 
-Con el broker arriba, en la Terminal 2 deberian verse los topicos
+Con el broker arriba, en la Terminal 1 deberian verse los topicos
 `iot/{company_id}/{site_id}/{machine_id}/telemetry` con el payload JSON
-llegando al ritmo indicado por `--rate`, y al finalizar la Terminal 3
+llegando al ritmo indicado por `--rate`, y al finalizar la Terminal 2
 imprime el resumen de publicados/fallidos y la tasa de perdida.
 
 ## Medicion de latencia extremo a extremo (Objetivo 1)

@@ -78,8 +78,8 @@ def load_dataset(parquet_path: str) -> pd.DataFrame:
     path = Path(parquet_path)
     if not path.exists():
         raise FileNotFoundError(
-            f"No se encontro {path}. Descarga primero el parquet desde "
-            "el volumen de Databricks (ver README del simulador)."
+            f"No se encontro {path}. Genera primero el Parquet a partir del "
+            "dataset de Kaggle (ver pipeline/data/README.md)."
         )
     df = pd.read_parquet(path)
     df = df.sort_values("timestamp").reset_index(drop=True)

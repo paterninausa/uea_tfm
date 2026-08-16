@@ -33,5 +33,9 @@ pipeline/data/*.xlsx
 pipeline/data/*.parquet
 pipeline/data/power_measurements_parquet/
 
+# Material de consulta (TFM de terceros usados como referencia de estilo).
+# No se versiona: este repositorio es publico y son trabajos ajenos.
+references/
+
 # Editor
 .vscode/
