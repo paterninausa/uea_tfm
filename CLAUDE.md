@@ -2,15 +2,17 @@
 
 Este archivo da contexto persistente a Claude Code para el desarrollo del pipeline de este trabajo. Léelo por completo antes de empezar a trabajar en cualquier tarea de código.
 
-Este proyecto se desarrolla íntegramente en español, no obstante, la buśqueda de citaciones, marco teórico, datos adicionales puede hacerse en inglés y posteriormente traducirlo si serán incorporados al trabajo.
+Este proyecto se desarrolla íntegramente en español, no obstante, las buśquedas de citaciones, marco teórico, datos adicionales, pueden hacerse en inglés y posteriormente traducirlos si serán incorporados al trabajo.
 
 ## Qué es este proyecto
 
-TFM (Trabajo Fin de Máster) del Máster Universitario en Análisis de Grandes Volúmenes de Datos (Big Data), Universidad Europea de Madrid. Título: "Desarrollo de un sistema escalable de microservicios para el análisis de datos IoT". Entrega: septiembre de 2026.
+TFM (Trabajo Fin de Máster) del Máster Universitario en Análisis de Grandes Volúmenes de Datos (Big Data), Universidad Europea de Andalucía (UEA). Título: "Desarrollo de un sistema escalable de microservicios para el análisis de datos IoT". Entrega: septiembre de 2026.
 
 El objetivo es implementar un pipeline IoT completo, containerizado y basado exclusivamente en herramientas open-source, siguiendo una **arquitectura Kappa** (flujo único reproducible, sin capa de lotes separada), aplicado a telemetría de consumo eléctrico industrial.
 
 La documentación LaTeX del trabajo vive en `docs/` (capítulos en `docs/capitulos/`) y **no debe modificarse** desde Claude Code — esa parte se gestiona aparte, en Claude.ai. El foco de Claude Code es exclusivamente el **desarrollo del pipeline/código** (previsiblemente en una carpeta `pipeline/` a crear).
+
+Dentro de `references/` hay una serie de trabajos finales TFM que pueden ser usados como referencias de estilo para el desarrollo del trabajo.
 
 ## Stack tecnológico definitivo (todo open-source, containerizado vía Docker)
 

@@ -17,8 +17,12 @@ python-dotenv==1.0.1
 pytest==8.3.3
 
 pyspark==4.2.0            # motor de procesamiento (Structured Streaming, DataFrame API)
-# pyarrow NO se fija aqui a proposito: llega como dependencia transitiva
-# de pyspark y pip resuelve la version compatible automaticamente.
+
+# pandas y pyarrow SI se declaran explicitamente: se comprobo que `pip install
+# pyspark==4.2.0` NO los instala (solo llegan con extras como pyspark[sql] o
+# pyspark[connect]). El simulador los necesita para leer el Parquet historico.
+pandas==2.3.3
+pyarrow==22.0.0
 
 paho-mqtt==2.1.0          # cliente MQTT para el simulador
 psycopg2-binary==2.9.9    # PostgreSQL / TimescaleDB
