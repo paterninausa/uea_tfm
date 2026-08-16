@@ -1,2 +1,23 @@
+# Dependencias del paso de preparacion de datos (Kaggle .xlsx -> Parquet).
+#
+# Cubren el procedimiento completo descrito en el README de este directorio,
+# no solo convert_to_parquet.py:
+#
+#   kaggle    -> CLI del paso de descarga (`kaggle datasets download ...`);
+#                el script Python no lo importa.
+#   openpyxl  -> motor que pandas carga en runtime para leer el .xlsx. No
+#                aparece como `import` en el script, se pasa por nombre en
+#                `pd.read_excel(..., engine="openpyxl")`.
+#   pandas    -> lectura del .xlsx y escritura del Parquet.
+#   pyarrow   -> backend que usa `df.to_parquet()`; sin el, falla.
+#
+# pandas y pyarrow se declaran aqui explicitamente para que este fichero sea
+# autosuficiente: el README permite instalarlo en un venv aparte del pipeline,
+# y sin ellos ese caso no funciona. Las versiones se mantienen alineadas a
+# proposito con pipeline/requirements.txt para que instalarlo encima del venv
+# del pipeline no provoque una reinstalacion ni un conflicto de versiones.
+
 kaggle==2.2.3
 openpyxl==3.1.5
+pandas==2.3.3
+pyarrow==22.0.0

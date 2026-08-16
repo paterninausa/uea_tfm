@@ -26,8 +26,9 @@ import signal
 import time
 from pathlib import Path
 
-import pandas as pd
 import paho.mqtt.client as mqtt
+import pandas as pd
+from paho.mqtt.enums import CallbackAPIVersion
 
 logging.basicConfig(
     level=logging.INFO,
@@ -107,7 +108,7 @@ def run(args: argparse.Namespace) -> None:
         df = df.head(args.limit)
 
     client = mqtt.Client(
-        mqtt.CallbackAPIVersion.VERSION2,
+        CallbackAPIVersion.VERSION2,
         client_id="tfm-simulator",
     )
     client.on_connect = lambda c, u, flags, reason_code, props=None: logger.info(
