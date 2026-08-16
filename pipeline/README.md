@@ -125,5 +125,8 @@ Python 3.11 + PySpark 4.2.0):
   comprobadas contra evoluciones compatibles e incompatibles (ver
   [schemas/README.md](schemas/README.md)).
 
-Pendiente: bridge MQTT→Kafka, job de Spark, sinks (TimescaleDB / PostgreSQL),
-Grafana.
+- Bridge MQTT→Kafka operativo: 300 eventos con 0% de perdida, latencia
+  MQTT→Kafka p95 de 2,2 ms, DLQ funcionando y recuperacion sin perdida tras
+  reiniciar el servicio (ver [bridge/README.md](bridge/README.md)).
+
+Pendiente: job de Spark, sinks (TimescaleDB / PostgreSQL), Grafana.

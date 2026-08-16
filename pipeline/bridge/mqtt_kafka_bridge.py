@@ -1,0 +1,362 @@
+"""
+Microservicio puente MQTT -> Kafka con validacion Avro (Objetivos 1 y 2).
+
+Se suscribe a la telemetria que publican los sensores simulados en Mosquitto,
+valida cada evento contra el esquema Avro registrado en Apicurio, lo serializa
+y lo publica en Kafka. Lo que no valida no se descarta: se desvia al topico de
+mensajes muertos (DLQ) junto con el motivo del rechazo.
+
+Existe porque Mosquitto no tiene puente nativo a Kafka. Se evaluo NanoMQ por
+tenerlo, pero se verifico que esa funcion es exclusiva de EMQX Enterprise (de
+pago), de modo que el puente es codigo propio.
+
+    iot/{company}/{site}/{machine}/telemetry          iot.telemetry.raw
+        (JSON, QoS 1)  --> [ bridge ] --> Avro + cabecera de esquema
+                                    \\
+                                     --> iot.telemetry.dlq (JSON + motivo)
+
+Uso:
+    python mqtt_kafka_bridge.py
+    python mqtt_kafka_bridge.py --report-interval 5 --verbose
+"""
+
+import argparse
+import json
+import logging
+import signal
+import sys
+import threading
+import time
+from collections import deque
+from datetime import datetime, timezone
+from io import BytesIO
+from pathlib import Path
+
+import paho.mqtt.client as mqtt
+from fastavro import parse_schema, schemaless_writer
+from kafka import KafkaProducer
+from kafka.errors import KafkaError
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.schema_registry import (  # noqa: E402
+    DEFAULT_ARTIFACT,
+    DEFAULT_GROUP,
+    DEFAULT_REGISTRY_URL,
+    ApicurioClient,
+    SchemaRegistryError,
+    encode_header,
+)
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("bridge")
+
+# Campos que el simulador publica como cadena ISO-8601 y que el esquema Avro
+# declara como long/timestamp-millis. La conversion es responsabilidad del
+# bridge: el simulador emite el formato del dataset original y el contrato Avro
+# exige epoch en milisegundos.
+ISO_TIMESTAMP_FIELDS = ("timestamp", "ingest_ts")
+
+MQTT_TOPIC_FILTER = "iot/#"
+
+
+def iso_to_epoch_millis(value: str) -> int:
+    """Convierte una marca de tiempo ISO-8601 a epoch en milisegundos.
+
+    Las marcas del dataset vienen sin zona horaria ("2025-01-01T00:00:00"). Se
+    interpretan como UTC de forma explicita: dejarlas a merced de la zona local
+    del contenedor haria que el mismo evento cayera en una ventana temporal
+    distinta segun la maquina donde corriera el bridge, lo que arruinaria la
+    reproducibilidad de las agregaciones de Spark.
+    """
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
+
+
+class Stats:
+    """Contadores del bridge, base de la evidencia de los KPIs.
+
+    Las actualizaciones van bajo lock porque los callbacks de entrega de Kafka
+    se ejecutan en el hilo de red del productor, no en el que recibe de MQTT.
+    """
+
+    def __init__(self, latency_window: int = 10000):
+        self._lock = threading.Lock()
+        self.recibidos = 0
+        self.publicados = 0
+        self.dlq = 0
+        self.fallos_kafka = 0
+        # Ventana deslizante de latencias: acotada para que un proceso de larga
+        # duracion no crezca en memoria sin limite.
+        self.latencias_ms = deque(maxlen=latency_window)
+        self._t0 = time.monotonic()
+
+    def recibido(self):
+        with self._lock:
+            self.recibidos += 1
+
+    def publicado(self, latencia_ms: float | None):
+        with self._lock:
+            self.publicados += 1
+            if latencia_ms is not None:
+                self.latencias_ms.append(latencia_ms)
+
+    def a_dlq(self):
+        with self._lock:
+            self.dlq += 1
+
+    def fallo_kafka(self):
+        with self._lock:
+            self.fallos_kafka += 1
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            lat = sorted(self.latencias_ms)
+            total = self.recibidos
+            # Perdida = lo recibido de MQTT que no llego a ningun topico de
+            # Kafka. Lo desviado a la DLQ NO cuenta como perdida: esta
+            # persistido y es recuperable; cuenta como evento invalido.
+            perdidos = max(0, total - self.publicados - self.dlq)
+            return {
+                "recibidos": total,
+                "publicados": self.publicados,
+                "dlq": self.dlq,
+                "fallos_kafka": self.fallos_kafka,
+                "perdidos": perdidos,
+                "tasa_perdida_pct": (perdidos / total * 100) if total else 0.0,
+                "eventos_por_segundo": total / max(1e-9, time.monotonic() - self._t0),
+                "latencia_p50_ms": lat[len(lat) // 2] if lat else None,
+                "latencia_p95_ms": lat[int(len(lat) * 0.95)] if lat else None,
+                "latencia_max_ms": lat[-1] if lat else None,
+            }
+
+
+class Bridge:
+    def __init__(self, args: argparse.Namespace):
+        self.args = args
+        self.stats = Stats()
+        self._parada = threading.Event()
+
+        registry = ApicurioClient(args.registry_url)
+        registry.check()
+        # El esquema se resuelve UNA vez al arrancar: el bridge produce siempre
+        # con la version vigente en ese momento. Si se registra una version
+        # nueva, se adopta reiniciando el servicio, no en caliente.
+        self.global_id, schema = registry.latest(args.group, args.artifact)
+        self.schema = parse_schema(schema)
+
+        self.producer = KafkaProducer(
+            bootstrap_servers=args.bootstrap_servers,
+            # acks="all": el lider espera confirmacion de todas las replicas en
+            # sincronia antes de dar por escrito el mensaje. Es la unica
+            # configuracion coherente con el objetivo de perdida < 0.1%.
+            acks="all",
+            retries=5,
+            linger_ms=args.linger_ms,
+            max_in_flight_requests_per_connection=5,
+            key_serializer=lambda k: k.encode("utf-8") if k else None,
+        )
+
+        self.mqtt_client = mqtt.Client(
+            mqtt.CallbackAPIVersion.VERSION2,
+            client_id=args.client_id,
+            # Sesion persistente: si el bridge cae, el broker retiene los
+            # mensajes QoS 1 de esta suscripcion y los entrega al reconectar.
+            # Es parte de la recuperacion sin perdida de datos del Objetivo 5.
+            clean_session=False,
+        )
+        self.mqtt_client.on_connect = self._on_connect
+        self.mqtt_client.on_disconnect = self._on_disconnect
+        self.mqtt_client.on_message = self._on_message
+
+    # ---------------------------------------------------------------- MQTT --
+    def _on_connect(self, client, userdata, flags, reason_code, properties=None):
+        if reason_code != 0:
+            logger.error("Fallo al conectar con el broker MQTT (reason_code=%s)", reason_code)
+            return
+        logger.info("Conectado a MQTT; suscribiendo a %s (QoS %d)", MQTT_TOPIC_FILTER, self.args.qos)
+        client.subscribe(MQTT_TOPIC_FILTER, qos=self.args.qos)
+
+    def _on_disconnect(self, client, userdata, disconnect_flags, reason_code=None, properties=None):
+        if not self._parada.is_set():
+            logger.warning("Desconectado de MQTT (reason_code=%s); paho reintentara", reason_code)
+
+    def _on_message(self, client, userdata, msg):
+        """Procesa el evento en el hilo de red de paho.
+
+        El trabajo por mensaje es corto (decodificar JSON, convertir dos
+        campos, serializar Avro) y `producer.send` es asincrono: encola en el
+        buffer del productor y vuelve. Por eso no se introduce una cola de
+        trabajo intermedia, que anadiria un punto donde perder mensajes ante
+        una caida. Si las pruebas de carga del Objetivo 5 muestran que este
+        hilo se satura, el siguiente paso seria un pool de trabajadores.
+        """
+        self.stats.recibido()
+        try:
+            evento = self._a_registro_avro(msg.payload)
+            self._publicar(evento, msg.topic)
+        except Exception as exc:
+            self._a_dlq(msg, exc)
+
+    # ----------------------------------------------------------- Transform --
+    def _a_registro_avro(self, payload: bytes) -> dict:
+        """JSON crudo de MQTT -> registro conforme al esquema Avro.
+
+        No se rellenan campos ausentes ni se corrigen valores fuera de dominio
+        a proposito: si el evento no cumple el contrato, debe fallar y acabar
+        en la DLQ. Ahi esta la evidencia del "100% de eventos validados contra
+        el esquema" del Objetivo 2; un bridge indulgente la haria imposible.
+        """
+        evento = json.loads(payload.decode("utf-8"))
+        for campo in ISO_TIMESTAMP_FIELDS:
+            if campo in evento and isinstance(evento[campo], str):
+                evento[campo] = iso_to_epoch_millis(evento[campo])
+        return evento
+
+    def _serializar(self, evento: dict) -> bytes:
+        """Cabecera de 5 bytes con el globalId + payload Avro schemaless.
+
+        schemaless_writer lanza si el evento no encaja en el esquema (campo
+        ausente, tipo incorrecto, simbolo de enum fuera del dominio): esa
+        excepcion es el mecanismo de validacion.
+        """
+        buf = BytesIO()
+        buf.write(encode_header(self.global_id))
+        schemaless_writer(buf, self.schema, evento)
+        return buf.getvalue()
+
+    # ------------------------------------------------------------- Salidas --
+    def _publicar(self, evento: dict, topico_mqtt: str) -> None:
+        datos = self._serializar(evento)
+
+        # La clave de Kafka es machine_id: garantiza que todos los eventos de
+        # una misma maquina caen en la misma particion y por tanto se procesan
+        # en orden, que es lo que necesitan las agregaciones por ventana de
+        # Spark. Usar event_id como clave los repartiria al azar.
+        clave = evento.get("machine_id")
+
+        latencia = None
+        sim_ts = evento.get("sim_publish_ts")
+        if isinstance(sim_ts, int):
+            latencia = time.time() * 1000 - sim_ts
+
+        futuro = self.producer.send(self.args.topic, key=clave, value=datos)
+        futuro.add_callback(lambda _meta, lat=latencia: self.stats.publicado(lat))
+        futuro.add_errback(lambda exc, t=topico_mqtt: self._error_kafka(exc, t))
+
+    def _error_kafka(self, exc: KafkaError, topico_mqtt: str) -> None:
+        """Un fallo de entrega tras agotar los reintentos es perdida real."""
+        self.stats.fallo_kafka()
+        logger.error("Kafka no acepto un evento de %s: %s", topico_mqtt, exc)
+
+    def _a_dlq(self, msg, exc: Exception) -> None:
+        """Desvia a la DLQ el evento que no supero la validacion.
+
+        Se envia como JSON, no como Avro: por definicion no cumple el esquema,
+        asi que no puede serializarse con el. Se conserva el payload original
+        intacto para poder reprocesarlo una vez corregida la causa.
+        """
+        self.stats.a_dlq()
+        motivo = f"{type(exc).__name__}: {exc}"
+        logger.warning("Evento rechazado de %s -> DLQ (%s)", msg.topic, motivo)
+
+        registro = {
+            "error": motivo,
+            "topico_mqtt": msg.topic,
+            "bridge_ts": int(time.time() * 1000),
+            "payload_original": msg.payload.decode("utf-8", errors="replace"),
+        }
+        try:
+            self.producer.send(self.args.dlq_topic, value=json.dumps(registro).encode("utf-8"))
+        except Exception as dlq_exc:
+            # Si tampoco se puede escribir en la DLQ, el evento se pierde: hay
+            # que dejar constancia explicita en el log.
+            logger.error("FALLO AL ESCRIBIR EN LA DLQ, evento perdido: %s", dlq_exc)
+
+    # -------------------------------------------------------------- Ciclo ---
+    def _informar(self) -> None:
+        s = self.stats.snapshot()
+        p95 = f"{s['latencia_p95_ms']:.0f}ms" if s["latencia_p95_ms"] is not None else "n/d"
+        p50 = f"{s['latencia_p50_ms']:.0f}ms" if s["latencia_p50_ms"] is not None else "n/d"
+        logger.info(
+            "recibidos=%d publicados=%d dlq=%d perdidos=%d (%.4f%%) | %.1f ev/s | latencia MQTT->Kafka p50=%s p95=%s",
+            s["recibidos"], s["publicados"], s["dlq"], s["perdidos"],
+            s["tasa_perdida_pct"], s["eventos_por_segundo"], p50, p95,
+        )
+
+    def run(self) -> int:
+        signal.signal(signal.SIGINT, self._senal_parada)
+        signal.signal(signal.SIGTERM, self._senal_parada)
+
+        logger.info("Conectando a MQTT %s:%d ...", self.args.broker_host, self.args.broker_port)
+        self.mqtt_client.connect(self.args.broker_host, self.args.broker_port, keepalive=30)
+        self.mqtt_client.loop_start()
+        logger.info("Bridge en marcha. Kafka=%s topico=%s dlq=%s",
+                    self.args.bootstrap_servers, self.args.topic, self.args.dlq_topic)
+
+        try:
+            while not self._parada.wait(self.args.report_interval):
+                self._informar()
+        finally:
+            self._cerrar()
+
+        s = self.stats.snapshot()
+        return 0 if s["perdidos"] == 0 else 1
+
+    def _senal_parada(self, *_args):
+        logger.info("Senal de parada recibida, cerrando...")
+        self._parada.set()
+
+    def _cerrar(self) -> None:
+        self.mqtt_client.loop_stop()
+        self.mqtt_client.disconnect()
+        # flush() bloquea hasta que se entrega lo que quede en el buffer del
+        # productor: sin esto, cerrar el proceso perderia los ultimos eventos.
+        logger.info("Vaciando el buffer del productor de Kafka...")
+        self.producer.flush(timeout=30)
+        self.producer.close(timeout=10)
+
+        s = self.stats.snapshot()
+        logger.info("--- Resumen final ---")
+        for k, v in s.items():
+            logger.info("  %-22s %s", k, f"{v:.4f}" if isinstance(v, float) else v)
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Bridge MQTT -> Kafka con validacion Avro (TFM)")
+    p.add_argument("--broker-host", default="localhost")
+    p.add_argument("--broker-port", type=int, default=1883)
+    p.add_argument("--qos", type=int, default=1, choices=[0, 1, 2],
+                   help="QoS de la suscripcion MQTT (1 = al menos una vez, por defecto)")
+    p.add_argument("--client-id", default="tfm-bridge",
+                   help="client_id MQTT. Debe ser estable: la sesion persistente se asocia a el")
+    p.add_argument("--bootstrap-servers", default="localhost:29092")
+    p.add_argument("--topic", default="iot.telemetry.raw")
+    p.add_argument("--dlq-topic", default="iot.telemetry.dlq")
+    p.add_argument("--linger-ms", type=int, default=5,
+                   help="Espera del productor para agrupar mensajes. Sube el throughput a "
+                        "costa de latencia; 5ms es despreciable frente al KPI de 2s")
+    p.add_argument("--registry-url", default=DEFAULT_REGISTRY_URL)
+    p.add_argument("--group", default=DEFAULT_GROUP)
+    p.add_argument("--artifact", default=DEFAULT_ARTIFACT)
+    p.add_argument("--report-interval", type=float, default=10.0,
+                   help="Segundos entre informes de metricas")
+    p.add_argument("--verbose", action="store_true")
+    return p.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+    try:
+        sys.exit(Bridge(args).run())
+    except SchemaRegistryError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
+    except ConnectionRefusedError:
+        logger.error("No se pudo conectar al broker MQTT en %s:%d. "
+                     "Levanta el stack: docker compose -f pipeline/docker-compose.yml up -d",
+                     args.broker_host, args.broker_port)
+        sys.exit(1)
