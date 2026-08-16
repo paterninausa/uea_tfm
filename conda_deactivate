@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# conda_deactivate — drop out of every conda env in the CURRENT shell.
+#
+# Use it before working on the uv-based course project, so that `python`,
+# `pip` and `uv pip install` can't silently resolve to a conda env.
+#
+# MUST BE SOURCED, not executed:
+#
+#     source ./conda_deactivate
+#
+# A script run as a subprocess gets its own copy of the environment, so
+# executing it could never affect the shell you are typing in.
+#
+# Nothing here is permanent: it changes only this terminal. Every new shell
+# still gets `dataEng` from ~/.bashrc as usual.
+
+# ---------------------------------------------------------------------------
+# Refuse to run as a subprocess, where we would be a no-op.
+# ---------------------------------------------------------------------------
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    echo "conda_deactivate must be sourced, not executed."
+    echo
+    echo "Running it as a subprocess cannot change this shell's environment."
+    echo "Use one of:"
+    echo
+    echo "    source ./conda_deactivate"
+    echo "    . ./conda_deactivate"
+    echo
+    exit 1
+fi
+
+if ! command -v conda >/dev/null 2>&1; then
+    echo "conda is not on PATH — nothing to deactivate."
+else
+    # conda stacks activations; CONDA_SHLVL counts how many are live.
+    # Pop them all. The counter guards against a deactivate that fails to
+    # decrement, which would otherwise spin forever.
+    __cd_guard=0
+    while [[ "${CONDA_SHLVL:-0}" -gt 0 && "${__cd_guard}" -lt 10 ]]; do
+        conda deactivate
+        __cd_guard=$((__cd_guard + 1))
+    done
+
+    if [[ "${CONDA_SHLVL:-0}" -gt 0 ]]; then
+        echo "warning: still inside conda after ${__cd_guard} deactivations" >&2
+        echo "         (CONDA_SHLVL=${CONDA_SHLVL})" >&2
+    fi
+    unset __cd_guard
+fi
+
+# ---------------------------------------------------------------------------
+# Activate this project's venv (pipeline/requirements.txt), now that conda
+# is out of the way and can't shadow it on PATH.
+# ---------------------------------------------------------------------------
+__cd_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+__cd_venv="${__cd_script_dir}/.venv/bin/activate"
+if [[ -f "${__cd_venv}" ]]; then
+    source "${__cd_venv}"
+else
+    echo "warning: ${__cd_venv} not found — run pipeline/setup_env.sh first" >&2
+fi
+unset __cd_script_dir __cd_venv
+
+echo "conda    : CONDA_SHLVL=${CONDA_SHLVL:-0} CONDA_DEFAULT_ENV='${CONDA_DEFAULT_ENV:-<none>}'"
+echo "python   : $(command -v python || echo '<none on PATH — expected; use uv run>')"
+echo "uv       : $(command -v uv || echo '<not found>')"
