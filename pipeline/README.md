@@ -120,4 +120,10 @@ Python 3.11 + PySpark 4.2.0):
   `iot/{company_id}/{site_id}/{machine_id}/telemetry` y 0% de perdida en la
   prueba corta.
 
-Pendiente: esquema Avro v1 en Apicurio, bridge MQTT→Kafka, job de Spark, sinks.
+- Esquema Avro v1 registrado en Apicurio como `iot/iot.telemetry.raw-value`,
+  con las reglas `VALIDITY=FULL` y `COMPATIBILITY=FULL_TRANSITIVE` activas y
+  comprobadas contra evoluciones compatibles e incompatibles (ver
+  [schemas/README.md](schemas/README.md)).
+
+Pendiente: bridge MQTT→Kafka, job de Spark, sinks (TimescaleDB / PostgreSQL),
+Grafana.

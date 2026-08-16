@@ -141,6 +141,14 @@ services:
     environment:
       APICURIO_STORAGE_KIND: kafkasql
       APICURIO_KAFKASQL_BOOTSTRAP_SERVERS: kafka:9092
+      # Apicurio 3.x deshabilita por defecto el borrado via API REST (devuelve
+      # HTTP 405). Se habilita porque el almacenamiento kafkasql es persistente:
+      # sin esto, un esquema registrado por error durante el desarrollo no se
+      # puede retirar ni reiniciando el contenedor. En un despliegue real se
+      # dejaria deshabilitado.
+      APICURIO_REST_DELETION_GROUP_ENABLED: "true"
+      APICURIO_REST_DELETION_ARTIFACT_ENABLED: "true"
+      APICURIO_REST_DELETION_ARTIFACT_VERSION_ENABLED: "true"
       # Permite que la UI (otro origen: localhost:8888) llame a la API REST.
       QUARKUS_HTTP_CORS_ENABLED: "true"
       QUARKUS_HTTP_CORS_ORIGINS: "*"

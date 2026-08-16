@@ -1,0 +1,137 @@
+{
+  "type": "record",
+  "name": "TelemetryEvent",
+  "namespace": "es.uea.tfm.iot",
+  "doc": "Version 2 del esquema de telemetria. Anade firmware_version como campo opcional. Existe para demostrar la evolucion de esquema compatible del Objetivo 2: un productor que escriba con v2 sigue siendo legible por un consumidor con v1, y un productor que escriba con v1 sigue siendo legible por un consumidor con v2.",
+  "fields": [
+    {
+      "name": "event_id",
+      "type": "string",
+      "doc": "Identificador unico del evento (UUID). Verificado 100% unico en el dataset de referencia; es la clave para detectar duplicados y calcular la tasa de perdida del Objetivo 1."
+    },
+    {
+      "name": "timestamp",
+      "type": {"type": "long", "logicalType": "timestamp-millis"},
+      "doc": "Instante de la medicion en el sensor (event time). Es el campo sobre el que Spark Structured Streaming aplica las ventanas temporales y el watermarking. NO sirve para medir la latencia del pipeline: es un timestamp historico del dataset."
+    },
+    {
+      "name": "company_id",
+      "type": "string",
+      "doc": "Empresa propietaria. Primer nivel de la jerarquia del topico MQTT."
+    },
+    {
+      "name": "site_id",
+      "type": "string",
+      "doc": "Planta o emplazamiento. Segundo nivel de la jerarquia del topico MQTT."
+    },
+    {
+      "name": "machine_id",
+      "type": "string",
+      "doc": "Maquina monitorizada. Tercer nivel del topico MQTT y clave de particionado en Kafka. Es la identidad real del sensor simulado: se usa machine_id y no sensor_id porque sensor_id rota entre maquinas en el dataset original."
+    },
+    {
+      "name": "machine_model",
+      "type": "string",
+      "doc": "Modelo del equipo (21 valores distintos). Se modela como string y no como enum: es un catalogo de negocio que crece al incorporar equipos nuevos."
+    },
+    {
+      "name": "department",
+      "type": "string",
+      "doc": "Departamento al que pertenece la maquina (IT, OPS, HR, FINANCE). Dimension de negocio para los informes de Power BI."
+    },
+    {
+      "name": "country_code",
+      "type": "string",
+      "doc": "Codigo ISO del pais. Constante (FR) en el dataset actual, pero se modela como string porque una expansion geografica es un cambio de datos esperable, no un cambio de esquema."
+    },
+    {
+      "name": "energy_type",
+      "type": "string",
+      "doc": "Tipo de energia medida. Constante (ELECTRICITY) en el dataset actual; mismo criterio que country_code."
+    },
+    {
+      "name": "power_watts",
+      "type": "double",
+      "doc": "Potencia activa instantanea en vatios. Distribucion muy sesgada en el dataset (rango observado 1.0 - 49999.76)."
+    },
+    {
+      "name": "voltage",
+      "type": "int",
+      "doc": "Tension en voltios. Constante a 230V en el dataset. Se declara int y no long a proposito: Avro permite promocionar int a long en una evolucion compatible, pero no al reves, asi que el tipo estrecho conserva el margen de cambio."
+    },
+    {
+      "name": "current_amp",
+      "type": "double",
+      "doc": "Intensidad de corriente en amperios (rango observado 0.0 - 217.39)."
+    },
+    {
+      "name": "power_factor",
+      "type": "double",
+      "doc": "Factor de potencia, adimensional (rango observado 0.7 - 1.0)."
+    },
+    {
+      "name": "sensor_id",
+      "type": "string",
+      "doc": "Identificador del sensor que tomo la medida. Viaja como campo y no como nivel del topico MQTT porque no identifica un dispositivo estable: rota entre maquinas distintas en el dataset original."
+    },
+    {
+      "name": "sensor_status",
+      "type": {
+        "type": "enum",
+        "name": "SensorStatus",
+        "symbols": ["OK", "WARN", "UNKNOWN"],
+        "default": "UNKNOWN",
+        "doc": "Estado del sensor. UNKNOWN no aparece en los datos: existe como simbolo por defecto para que un lector con este esquema pueda leer eventos escritos con un esquema futuro que anada estados nuevos, en lugar de fallar la deserializacion (Objetivo 2)."
+      },
+      "doc": "Estado reportado por el sensor (valores observados: OK, WARN)."
+    },
+    {
+      "name": "measurement_quality",
+      "type": {
+        "type": "enum",
+        "name": "MeasurementQuality",
+        "symbols": ["OK", "ESTIMATED", "UNKNOWN"],
+        "default": "UNKNOWN",
+        "doc": "Calidad de la medida. UNKNOWN cumple la misma funcion de simbolo por defecto que en SensorStatus."
+      },
+      "doc": "Calidad de la medida (valores observados: OK, ESTIMATED). ESTIMATED marca lecturas interpoladas, relevante para excluirlas de los KPIs de precision."
+    },
+    {
+      "name": "ingest_ts",
+      "type": {"type": "long", "logicalType": "timestamp-millis"},
+      "doc": "Instante de ingesta declarado en el dataset original. Es identico a timestamp en todas las filas (redundante), pero se conserva para no alterar el contrato de datos de origen."
+    },
+    {
+      "name": "cpu_load",
+      "type": "double",
+      "doc": "Carga de CPU del equipo en porcentaje (rango observado 0.0 - 100.0). Variable de contexto para correlacionar consumo electrico con actividad."
+    },
+    {
+      "name": "device_state",
+      "type": {
+        "type": "enum",
+        "name": "DeviceState",
+        "symbols": ["ON", "IDLE", "SLEEP", "UNKNOWN"],
+        "default": "UNKNOWN",
+        "doc": "Estado operativo del equipo. UNKNOWN cumple la misma funcion de simbolo por defecto que en SensorStatus."
+      },
+      "doc": "Estado operativo del equipo (valores observados: ON, IDLE, SLEEP). Base del calculo de eficiencia operativa."
+    },
+    {
+      "name": "user_count",
+      "type": "int",
+      "doc": "Numero de usuarios activos en el equipo (rango observado 0 - 200)."
+    },
+    {
+      "name": "sim_publish_ts",
+      "type": {"type": "long", "logicalType": "timestamp-millis"},
+      "doc": "Epoch en milisegundos del instante exacto del publish() en MQTT. Lo genera el simulador, no procede del dataset. Es el unico campo valido para medir la latencia extremo a extremo del Objetivo 1: latencia = hora_de_persistencia_en_TimescaleDB - sim_publish_ts."
+    },
+    {
+      "name": "firmware_version",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "UNICO CAMBIO RESPECTO A v1. Version de firmware del sensor. Es la evolucion de esquema que valida el Objetivo 2. La compatibilidad en ambos sentidos depende de las dos propiedades de esta declaracion: la union con null y el default null. Un consumidor con v1 puede leer eventos v2 porque simplemente ignora el campo que no conoce (compatibilidad hacia atras); un consumidor con v2 puede leer eventos v1 porque, al faltar el campo, aplica el default null en lugar de fallar (compatibilidad hacia adelante). Quitar el default rompe esta segunda direccion."
+    }
+  ]
+}
