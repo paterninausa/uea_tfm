@@ -18,6 +18,6 @@
 # del pipeline no provoque una reinstalacion ni un conflicto de versiones.
 
 kaggle==2.2.3
-openpyxl==3.1.5
+openpyxl==3.1.5          # solo necesario si se parte de un .xlsx; ASHRAE viene en CSV
 pandas==2.3.3
 pyarrow==22.0.0

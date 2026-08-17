@@ -1,86 +1,141 @@
-# Preparacion del dataset (Kaggle -> Parquet)
+# Preparacion del dataset (ASHRAE GEPIII -> Parquet)
 
-El dataset de telemetria electrica usado en el TFM proviene de Kaggle:
+El pipeline se alimenta del dataset de la competicion **ASHRAE Great Energy
+Predictor III**: consumo energetico horario real de 1.449 edificios en 16
+emplazamientos, medido durante 2016.
 
-    https://www.kaggle.com/datasets/khalilaraoui/power-telemetry
-    Fichero: Power_measurements.xlsx
+    https://www.kaggle.com/competitions/ashrae-energy-prediction
 
-Las columnas y valores -- incluida la rotacion de `sensor_id` entre
-`machine_id` distintos -- vienen tal cual del dataset original; no se
-modifican ni enriquecen en ningun paso posterior.
+Es un subconjunto del proyecto Building Data Genome 2 (BDG2). Son medidas
+reales de sistemas de contadores, con su error de medicion y sus problemas de
+calidad; no hay ningun dato sintetico.
 
-Este es un paso de preparacion de datos de un solo uso, independiente del
-pipeline en ejecucion. Su unico proposito es que cualquiera que clone el
-repo pueda obtener el mismo dataset sin depender de ninguna cuenta o
-recurso privado (en particular, sin necesitar acceso a Databricks, que se
-uso solo puntualmente durante el desarrollo como almacen de referencia y no
-forma parte de la arquitectura final).
+Este es un paso de preparacion de UN SOLO USO, independiente del pipeline en
+ejecucion, y no depende de ninguna cuenta ni recurso privado: partiendo de los
+ficheros publicos de Kaggle, cualquiera que clone el repositorio obtiene
+exactamente el mismo Parquet. (Databricks se uso puntualmente durante el
+analisis inicial como almacen de referencia; no forma parte de la arquitectura
+ni de este procedimiento.)
 
 ## 1. Credenciales de Kaggle
 
-Necesitas una cuenta de Kaggle (gratuita):
+Necesitas una cuenta de Kaggle (gratuita) y aceptar las condiciones de la
+competicion desde su pagina web:
 
 1. Entra en https://www.kaggle.com/settings/api y pulsa "Create New Token"
 2. Descarga `kaggle.json` y colocalo en `~/.kaggle/kaggle.json`
 3. Ajusta permisos: `chmod 600 ~/.kaggle/kaggle.json`
 
-## 2. Instalar las dependencias de este paso
+## 2. Obtener los ficheros originales
 
-Estas dependencias (CLI de Kaggle + openpyxl) son solo para esta
-preparacion puntual de datos; no se anaden al `pipeline/requirements.txt`
-principal del pipeline para no cargarlo con herramientas que no se usan en
-el dia a dia de la simulacion/procesamiento.
+Hacen falta dos ficheros de la competicion:
 
-    pip install -r requirements.txt
+| Fichero | Contenido |
+|---|---|
+| `train.csv` | Lecturas horarias: `building_id`, `meter`, `timestamp`, `meter_reading` |
+| `building_metadata.csv` | Ficha del edificio: `site_id`, `primary_use`, `square_feet`, `year_built`, `floor_count` |
 
-(Puedes instalarlas en el propio venv del pipeline -- `bash
-pipeline/setup_env.sh` y `source .venv/bin/activate` -- o en un venv aparte:
-es indiferente, es un paso desacoplado del resto.)
+```bash
+kaggle competitions download -c ashrae-energy-prediction -f train.csv -p ./raw
+```
 
-## 3. Descargar el dataset
+```bash
+kaggle competitions download -c ashrae-energy-prediction -f building_metadata.csv -p ./raw
+```
 
-    kaggle datasets download -d khalilaraoui/power-telemetry -f Power_measurements.xlsx -p ./raw
+El script acepta tanto CSV como Parquet: detecta el formato por la extension.
+El directorio `raw/` esta en `.gitignore` y no se versiona.
 
-Esto descarga `./raw/Power_measurements.xlsx` (~136 MB). El directorio
-`raw/` esta en `.gitignore`: no se versiona.
+## 3. Instalar las dependencias de este paso
 
-## 4. Convertir a Parquet
+```bash
+pip install -r requirements.txt
+```
 
-    python convert_to_parquet.py \
-        --input ./raw/Power_measurements.xlsx \
-        --output ./power_measurements.parquet
+Este `requirements.txt` es autosuficiente: declara `pandas` y `pyarrow` ademas
+de la CLI de Kaggle, de modo que funciona tambien en un venv aparte del
+pipeline. Las versiones estan alineadas con `pipeline/requirements.txt` para
+que instalarlo encima del venv principal no reinstale nada.
 
-El resultado (`power_measurements.parquet`, un solo fichero, sensiblemente
-mas pequeno que el `.xlsx` de partida) tampoco se versiona (tambien en
-`.gitignore`) y es el que espera `pipeline/simulator/mqtt_simulator.py` via
-`--parquet-path`.
+## 4. Generar el subconjunto
 
-### Forma canonica y export antiguo de Spark
+```bash
+python prepare_ashrae.py
+```
 
-La forma **canonica** del historico es el fichero unico
-`power_measurements.parquet` generado por `convert_to_parquet.py`: es la
-unica ruta reproducible a partir del Kaggle publico, sin depender de
-Databricks ni de ningun otro recurso privado.
+Produce `ashrae_telemetry.parquet` (~50 MB, 5.682.185 eventos), que es lo que
+espera el simulador MQTT. Tampoco se versiona.
 
-Durante el desarrollo tambien se genero el directorio
-`power_measurements_parquet/` (salida de un job de Spark, con su `_SUCCESS` y
-un fichero `part-...snappy.parquet` de ~62 MB). Puede seguir existiendo en
-copias de trabajo antiguas y **sigue siendo utilizable**: `pandas.read_parquet`
-—y por tanto `--parquet-path` del simulador— acepta indistintamente un
-fichero o un directorio Parquet. No es la forma a documentar ni a reproducir,
-solo un artefacto historico.
+## El subconjunto: emplazamientos 2, 3 y 5
 
-`.gitignore` cubre las dos formas, de modo que ninguna se versiona:
+De los 16 emplazamientos se usan tres. La eleccion salio de medir el dataset
+completo, no de la conveniencia:
 
-    pipeline/data/*.parquet
-    pipeline/data/power_measurements_parquet/
+| | Subconjunto | Dataset completo |
+|---|---|---|
+| Sensores (edificio × contador) | **652** | 2.380 |
+| Eventos | **5.682.185** | 20.216.100 |
+| Combinaciones de agregacion | **46** | 193 |
+| Reproduccion a 740 ev/s | **128 min** | 6,6 h |
 
-## Nota sobre la rotacion de `sensor_id`
+- **652 sensores** deja margen sobre los 500 concurrentes que exige el Objetivo
+  5, y permite muestrear la carga base de 100 para medir la degradacion de
+  throughput.
+- **Emplazamiento 3**: 274 sensores con la mejor calidad del dataset, apenas un
+  0,1% de lecturas a cero.
+- **Emplazamiento 2**: aporta la variedad de contadores (electricidad, agua
+  fria y agua caliente) y un ciclo estacional de refrigeracion muy marcado —el
+  consumo medio de agua fria pasa de 152 en enero a 528 en agosto—.
+- **Emplazamiento 5**: completitud del 100%, sirve de referencia limpia.
 
-El dataset original ya trae `sensor_id` rotando entre distintos
-`machine_id` (~2000 valores de `sensor_id` frente a ~5000 `machine_id`, con
-~951000 pares machine-sensor unicos sobre ~1M filas). No es un error
-introducido en la conversion ni en ningun paso posterior: es asi en el
-fichero original de Kaggle. Por eso el simulador identifica al "sensor
-simulado" por `machine_id`, no por `sensor_id` (ver
-`pipeline/simulator/README.md`).
+Se descarto anadir un emplazamiento con contador de vapor: en los candidatos
+mas limpios su perfil anual resulto anomalo (en el emplazamiento 13 se dispara
+de marzo a junio y cae casi a cero de julio a octubre, un factor 50x que no
+corresponde a ninguna demanda de calefaccion), y cada uno anadia entre 15 y 60
+minutos de reproduccion. El esquema Avro declara igualmente los cuatro simbolos
+de contador: describe el dominio, no la muestra concreta.
+
+## El emplazamiento 14 esta excluido
+
+Se comprobo por correlacion cruzada de los perfiles diarios de consumo que sus
+marcas de tiempo van **5 horas por delante** del resto: hace pico a las 18h
+frente a las 13-14h de los demas, con una correlacion de forma de 0,99 —misma
+curva, desplazada en bloque—. Es coherente con datos registrados en UTC cuando
+el resto esta en hora local.
+
+Los otros 15 emplazamientos tienen desfases de entre -1 y +2 horas, que es
+variacion normal de comportamiento y no de huso horario. Por eso **todas las
+marcas de tiempo se tratan como hora local, sin conversion ni dimension de
+timezone**. La contrapartida, que conviene tener presente: dos eventos de
+emplazamientos distintos marcados a las 14:00 no son el mismo instante fisico.
+Es irrelevante para los perfiles por hora del dia y las comparativas entre
+tipos de edificio, y solo importaria al cruzar con datos meteorologicos.
+
+## Decisiones de modelado
+
+**`event_id` derivado y legible** (`B{edificio}-M{contador}-{epoch}`). ASHRAE no
+trae identificador de evento y el pipeline lo necesita como clave primaria. Se
+deriva de (edificio, contador, instante) —unico, porque cada contador tiene como
+mucho una lectura por hora— en lugar de generar un UUID: con un UUID,
+reprocesar el log de Kafka duplicaria filas, porque cada reproceso inventaria
+identificadores nuevos.
+
+Se prefirio la forma legible a un hash truncado por dos razones: un
+identificador que aparece en el log de la DLQ dice de que sensor e instante
+procede sin cruzarlo con nada, y ademas **ocupa tres veces menos en disco** (50
+MB frente a 159 MB), porque los prefijos compartidos y los epochs casi
+secuenciales se comprimen muy bien y un hash, por diseno, no.
+
+**Un sensor es el par edificio-contador.** Un mismo edificio con contador de
+electricidad y de agua fria son dos sensores con series independientes. De ahi
+la topologia de topicos:
+
+    iot/{site_id}/{building_id}/{meter_type}/telemetry
+
+**Las lecturas a cero no se eliminan** (4,6% del subconjunto). Son parte del
+dato real y son material para el informe de deteccion de anomalias.
+
+**Los nulos se conservan**: `year_built` falta en el 32,2% de los eventos y
+`floor_count` en el 86,2%. Se declaran como uniones con `null` en el esquema
+Avro, lo que da un uso legitimo a la nulabilidad del contrato — algo que el
+dataset anterior no permitia, porque no tenia ni un solo nulo.
