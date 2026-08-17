@@ -322,6 +322,12 @@ def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str) -> Da
             "site_id", "primary_use", "meter_type",
             "event_count", "distinct_buildings",
             "avg_reading", "max_reading", "sum_reading",
+            # Se guarda sum_square_feet ademas del cociente para que Grafana
+            # pueda agregar la intensidad entre grupos como cociente de sumas.
+            # Con solo el cociente, un rollup por uso de edificio tendria que
+            # promediar cocientes, que no es lo mismo cuando las superficies van
+            # de 801 a 850.354 pies cuadrados.
+            "sum_square_feet",
             F.when(F.col("sum_square_feet") > 0,
                    F.col("sum_reading") / F.col("sum_square_feet"))
              .alias("avg_energy_intensity"),

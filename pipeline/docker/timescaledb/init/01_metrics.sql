@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS telemetry_metrics (
     -- Consumo por pie cuadrado: cociente de sumas, no media de cocientes, para
     -- que los edificios grandes pesen lo que les corresponde. Es la metrica del
     -- informe de eficiencia operativa, comparable solo dentro de un meter_type.
+    -- Se guarda tambien el denominador para que un panel que agregue varios
+    -- grupos pueda recalcular el cociente en vez de promediar cocientes.
+    sum_square_feet       DOUBLE PRECISION,
     avg_energy_intensity  DOUBLE PRECISION,
 
     -- Indicadores de calidad. zero_count es la senal que revela los contadores

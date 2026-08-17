@@ -135,8 +135,11 @@ Python 3.11 + PySpark 4.2.0):
   1,26 s y de disponibilidad del agregado de 3,55 s (ver
   [spark/README.md](spark/README.md), que explica por que el KPI de 2 s del
   Objetivo 1 no se cumple tal como esta redactado).
-- Grafana con la fuente de datos de TimescaleDB aprovisionada de forma
-  declarativa y conexion verificada.
+- Grafana con fuente de datos y **tres dashboards aprovisionados de forma
+  declarativa** desde ficheros versionados: estado del pipeline (con el KPI de
+  latencia dibujandose en vivo), consumo energetico (perfil de carga, demanda
+  pico, factor de carga, intensidad) y calidad/anomalias. Consultas medidas
+  entre 1,9 y 15,4 ms (ver [docker/grafana/README.md](docker/grafana/README.md)).
 
-Pendiente: dashboards de Grafana, informes de Power BI, pruebas de carga del
-Objetivo 5.
+Pendiente: informes de Power BI, pruebas de carga del Objetivo 5, y
+diagnosticar la latencia de disponibilidad del agregado.

@@ -1,0 +1,19 @@
+# Aprovisionamiento declarativo de dashboards: Grafana los carga de ficheros
+# versionados en git al arrancar, en lugar de que se construyan pulsando en la
+# interfaz. Mismo criterio que con la fuente de datos y con el esquema Avro: la
+# fuente de verdad es el repositorio y el estado de Grafana es reconstruible.
+
+apiVersion: 1
+
+providers:
+  - name: tfm
+    orgId: 1
+    folder: TFM
+    type: file
+    # Se permite editarlos en la interfaz para explorar, pero al reiniciar manda
+    # el fichero. Evita que un retoque temporal se quede sin versionar.
+    allowUiUpdates: true
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards

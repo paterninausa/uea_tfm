@@ -150,14 +150,19 @@ class GracefulShutdown:
 def run(args: argparse.Namespace) -> int:
     df = cargar(args.telemetry)
     df = filtrar_sensores(df, args.max_sensors)
-    if args.rebase_end:
-        df = rebasar(df, args.rebase_end)
 
     # Orden cronologico: el watermark de Spark asume que el tiempo de evento
     # avanza, y un flujo desordenado haria que se descartaran lecturas tardias.
     df = df.sort_values("timestamp").reset_index(drop=True)
     if args.limit:
         df = df.head(args.limit)
+
+    # El rebase va DESPUES del recorte, a proposito: se ancla la ultima marca de
+    # lo que realmente se va a publicar. Al reves, el offset se calculaba sobre
+    # el dataset completo y un prefijo corto acababa cayendo casi un ano atras,
+    # con lo que los paneles de "ultimas 24 horas" salian vacios igualmente.
+    if args.rebase_end:
+        df = rebasar(df, args.rebase_end)
 
     client = mqtt.Client(CallbackAPIVersion.VERSION2, client_id=args.client_id)
     client.on_connect = lambda c, u, f, rc, p=None: logger.info(
