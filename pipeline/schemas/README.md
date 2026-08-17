@@ -1,126 +1,146 @@
 # Esquemas Avro y gobernanza en Apicurio (Objetivo 2)
 
-Contrato de datos del pipeline. El esquema Avro es lo que convierte al topico
-de Kafka en un contrato explicito y verificable, en lugar de un flujo de JSON
-cuyo formato solo existe en la cabeza de quien escribio el productor.
+Contrato de datos del pipeline. El esquema Avro convierte el topico de Kafka en
+un contrato explicito y verificable, en lugar de un flujo cuyo formato solo
+existe en la cabeza de quien escribio el productor.
 
 ## Ficheros
 
 | Fichero | Papel |
 |---|---|
-| `telemetry_event_v1.avsc` | Esquema en produccion. 21 campos: las 20 columnas del dataset mas `sim_publish_ts`. |
-| `telemetry_event_v2.avsc` | Evolucion de prueba: anade `firmware_version` opcional. **No se registra en el uso normal**, existe para demostrar el Objetivo 2. |
-| `register_schema.py` | Registra un `.avsc` en Apicurio y configura las reglas de gobernanza. |
+| `telemetry_event_v1.avsc` | Esquema en produccion. 5 campos. |
+| `telemetry_event_v2.avsc` | Evolucion de prueba: anade `reading_quality` opcional. **No se registra en el uso normal**, existe para demostrar el Objetivo 2. |
+| `register_schema.py` | Registra un `.avsc` en Apicurio y aplica las reglas de gobernanza. |
+
+## El evento
+
+    building_id | meter_type | timestamp | meter_reading | sim_publish_ts
+
+23 bytes por evento, medidos con este esquema sobre datos reales. Los atributos
+del edificio no viajan aqui: viven en la tabla de dimension y Spark los
+incorpora con un broadcast join.
+
+`sim_publish_ts` es el unico campo que no emite el contador: es instrumentacion
+para medir la latencia del Objetivo 1. Los otros cuatro reproducen lo que
+enviaria el dispositivo.
 
 ## Identificacion en el registro
 
     grupo:      iot
     artefacto:  iot.telemetry.raw-value
 
-El sufijo `-value` sigue la convencion habitual: el esquema describe el *valor*
-de los mensajes del topico `iot.telemetry.raw` (la clave se serializa aparte,
-como string con el `machine_id`). Mantener esta convencion permite que el
-bridge y el job de Spark resuelvan el esquema a partir del nombre del topico,
-sin configuracion adicional.
+El sufijo `-value` sigue la convencion **TopicNameStrategy**: un esquema por
+topico, describiendo el *valor* de los mensajes de `iot.telemetry.raw`. Es la
+convencion adecuada aqui porque los cuatro tipos de contador comparten forma
+—identificador, instante y un numero—. Si el pipeline llegara a ingerir
+sensores estructuralmente distintos, habria que replantearlo hacia topicos
+separados por familia o hacia `RecordNameStrategy`.
 
 ## Reglas de gobernanza activas
 
-| Regla | Valor | Por que |
+| Regla | Valor | Quien la aplica |
 |---|---|---|
-| `VALIDITY` | `FULL` | El registro rechaza contenido que no sea Avro valido, en vez de almacenarlo y fallar despues en los consumidores. |
-| `COMPATIBILITY` | `FULL_TRANSITIVE` | Toda version nueva debe ser compatible hacia atras **y** hacia adelante, y no solo con la version anterior sino con **todas** las anteriores. |
+| `VALIDITY` | `FULL` | Apicurio |
+| `COMPATIBILITY` | `FULL_TRANSITIVE` | Apicurio |
+| Orden de simbolos de enum | Solo se permite anadir al final | **`register_schema.py`** |
 
-`FULL_TRANSITIVE` es lo que sostiene literalmente el Objetivo 2 ("evolucion
-compatible hacia adelante/atras"). Con `BACKWARD` a secas, un consumidor
-antiguo podria romperse ante un evento producido con el esquema nuevo.
+Las dos primeras son del registro. La tercera es nuestra, y hace falta.
+
+## El hallazgo: Apicurio no protege el orden de los enums
+
+Avro codifica un enum como el **indice del simbolo** dentro del array
+`symbols`, no como su nombre. `electricity` viaja como `00` porque es el primer
+simbolo; exactamente los mismos bytes que un `int` con valor 0.
+
+Se comprobo que la regla `COMPATIBILITY`, incluso en `FULL_TRANSITIVE`,
+**acepta** reordenar ese array e incluso insertar un simbolo en medio. Tiene su
+logica desde la especificacion de Avro: la resolucion de esquemas empareja los
+simbolos por nombre, siempre que el lector use el esquema del *escritor*.
+
+Pero este pipeline no hace eso. El job de Spark deserializa todo el flujo con
+un unico esquema, porque `from_avro` recibe uno solo. Y entonces el indice
+manda. Comprobado, escribiendo con v1 y leyendo con el array reordenado
+alfabeticamente:
+
+```
+Escrito con v1  : meter_type='electricity'
+Leido reordenado: meter_type='chilledwater'
+```
+
+Sin excepcion, sin aviso, y con el resto de campos intactos. Corrupcion
+silenciosa.
+
+Por eso `register_schema.py` compara los enums de la version propuesta con los
+de la registrada y **exige que los simbolos existentes conserven su indice**:
+solo admite anadir al final. Cuando rechaza, dice que indice cambia y que
+lectura se malinterpretaria.
 
 ## Decisiones de modelado
 
-**Enums con simbolo por defecto.** `sensor_status`, `measurement_quality` y
-`device_state` son enums Avro con un simbolo `UNKNOWN` que no aparece en los
-datos y un `default` que apunta a el. Esto da las dos mitades del Objetivo 2:
+**`meter_type` como enum y no como entero crudo.** No es un campo derivado sino
+una decodificacion biyectiva documentada por la competicion, y en el cable
+ocupa lo mismo (`00`, `02`, `04`, `06`). A cambio da validacion de dominio
+gratis: un codigo fuera del dominio falla al serializar y va a la DLQ, mientras
+que un entero aceptaria un `7` sin rechistar. Es la misma estructura que usa el
+precedente industrial del dominio —BACnet, ANSI/ASHRAE 135— con su tipo de
+objeto y su catalogo normalizado: el codigo en el mensaje, el significado en el
+registro.
 
-- *Validacion estricta al escribir*: si un sensor emitiera `device_state="OFF"`,
-  la serializacion falla y el evento va a la DLQ, en vez de colarse un valor
-  fuera del dominio. Es lo que hace medible el "100% de eventos validados".
-- *Lectura tolerante*: un consumidor con v1 que reciba un evento escrito con un
-  esquema futuro que anada simbolos nuevos lo lee como `UNKNOWN` en lugar de
-  fallar la deserializacion ("cero fallos ante evolucion compatible").
+**Los cuatro medios se declaran aunque solo haya tres en los datos.** El
+subconjunto en uso no contiene `steam`. El contrato describe el dominio, no la
+muestra.
 
-**Lo que NO es enum.** `machine_model`, `department`, `country_code` y
-`energy_type` se modelan como `string` aunque hoy tengan pocos valores
-distintos (incluso uno solo, en los dos ultimos). Son catalogos de negocio:
-incorporar un equipo o un pais nuevo es un cambio de *datos*, no de contrato.
-Convertirlos en enum obligaria a una version de esquema por cada alta.
+**`unknown` como simbolo por defecto.** No aparece en los datos: existe para
+que un consumidor con este esquema pueda leer eventos escritos con una version
+futura que anada medios nuevos, en lugar de fallar la deserializacion.
 
-**`voltage` es `int`, no `long`.** Avro permite promocionar `int` a `long` en
-una evolucion compatible, pero no al reves. Empezar con el tipo estrecho
-conserva margen de cambio; empezar con `long` lo cierra para siempre.
-
-**Timestamps como `long` con `logicalType: timestamp-millis`.** El simulador
-publica `timestamp` e `ingest_ts` como cadenas ISO-8601: la conversion a epoch
-en milisegundos es responsabilidad del bridge.
-
-**Todos los campos de v1 son obligatorios.** Se verifico que el dataset no
-tiene ni un solo nulo en ninguna de las 20 columnas, asi que un esquema
-estricto describe la realidad. Un esquema laxo (todo nullable) haria pasar la
-validacion a cualquier cosa y vaciaria de contenido el Objetivo 2.
+**La unidad de `meter_reading` depende de `meter_type`** y queda advertido en el
+`doc` del campo. Los cuatro medios no son comparables: la mediana es 43,6 en
+electricidad, 146,0 en agua fria y 8,8 en agua caliente. Toda agregacion debe
+incluir `meter_type` en la clave de agrupacion.
 
 ## Uso
 
-Registrar el esquema v1 (idempotente: repetirlo no crea versiones nuevas):
+Registrar el esquema (idempotente):
 
 ```bash
 python pipeline/schemas/register_schema.py --schema pipeline/schemas/telemetry_event_v1.avsc
 ```
 
-Ver lo que hay registrado:
+Ver lo registrado:
 
 ```bash
 python pipeline/schemas/register_schema.py --show
 ```
 
-Comprobar si una evolucion seria aceptada, **sin registrarla**:
+Comprobar una evolucion **sin registrarla**:
 
 ```bash
 python pipeline/schemas/register_schema.py --schema pipeline/schemas/telemetry_event_v2.avsc --dry-run
 ```
 
-El script devuelve codigo de salida 0 si el esquema es valido y aceptado, y 1
-si es rechazado, si el `.avsc` esta mal formado o si el registro no responde;
-es utilizable tal cual desde un script de automatizacion.
-
-Tambien se puede inspeccionar todo desde la UI: <http://localhost:8888>
+Codigo de salida 0 si el esquema es valido y aceptado, 1 si es rechazado, si el
+`.avsc` esta mal formado o si el registro no responde. UI: <http://localhost:8888>
 
 ## Estado verificado
 
-Comprobado contra Apicurio 3.3.1 con almacenamiento KafkaSQL:
+Contra Apicurio 3.3.1 con almacenamiento KafkaSQL:
 
-**Esquema contra datos reales**
+- 5.000 lecturas reales serializadas y releidas con `fastavro` sin error, a
+  **23 B por evento**.
+- Enum y entero crudo producen **bytes identicos** (`00`, `02`, `04`, `06`); el
+  enum ademas rechaza un simbolo fuera del dominio, el entero acepta un `7`.
 
-- 2000 filas del dataset serializadas y releidas con `fastavro` sin un solo error.
-- Payload Avro de **153 B** frente a **513 B** del JSON equivalente que publica
-  hoy el simulador: **70,2% menos** por evento.
-- `device_state="OFF"` (fuera del dominio del enum) es rechazado al serializar
-  -> el evento acabaria en la DLQ, que es el comportamiento buscado.
-- Un evento escrito con un esquema que anade el simbolo `OFF` y leido con v1 se
-  deserializa como `UNKNOWN`, sin fallar.
-
-**Reglas del registro**
-
-| Caso probado | Resultado | Codigo de salida |
+| Caso probado | Resultado | Quien lo rechaza |
 |---|---|---|
-| v1 ya registrado, se vuelve a ejecutar | Sin cambios, sigue en version 1 | 0 |
-| v2: campo opcional con `default: null` | **Aceptado** | 0 |
-| v2 sin `default` | **Rechazado** (`firmware_version` en `/fields/21`) | 1 |
-| `voltage` de `int` a `string` | **Rechazado** (reader/writer incompatibles) | 1 |
-| `.avsc` con un tipo inexistente | Rechazado en local, sin llegar al registro | 1 |
-| Registro no accesible | Error explicito con la orden para levantar el stack | 1 |
+| v1 registrado de nuevo, sin cambios | Aceptado, sigue en version 1 | — |
+| v2: campo opcional con `default: null` | **Aceptado** | — |
+| Simbolo de enum anadido al final | **Aceptado** | — |
+| Enum reordenado alfabeticamente | **Rechazado** | `register_schema.py` |
+| Simbolo insertado en medio del enum | **Rechazado** | `register_schema.py` |
+| v2 sin `default` | **Rechazado** | Apicurio |
+| `.avsc` con un tipo inexistente | Rechazado en local, sin llegar al registro | `fastavro` |
+| Registro no accesible | Error explicito con la orden para levantar el stack | — |
 
-El caso de v2 sin `default` es el mas instructivo: anadir un campo **no** es
-compatible por si solo. Lo que da la compatibilidad hacia adelante es el
-`default`, porque permite que un consumidor con el esquema nuevo lea eventos
-antiguos a los que les falta el campo.
-
-Ninguna de las comprobaciones `--dry-run` dejo rastro: el registro permanece en
-la version 1.
+Ninguna comprobacion `--dry-run` dejo rastro: el registro permanece en la
+version 1.

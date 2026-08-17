@@ -2,130 +2,38 @@
   "type": "record",
   "name": "TelemetryEvent",
   "namespace": "es.uea.tfm.iot",
-  "doc": "Evento de telemetria de consumo electrico industrial publicado por un sensor simulado. Version 1 del esquema: reproduce fielmente las 20 columnas del dataset de referencia mas sim_publish_ts, anadido por el simulador para medir la latencia extremo a extremo.",
+  "doc": "Lectura de un contador de energia de edificio. Reproduce lo que emitiria el propio contador: quien es, cuando midio y cuanto midio. Los atributos del edificio (emplazamiento, uso, superficie, ano de construccion, plantas) NO viajan en el evento: son estaticos y viven en la tabla de dimension, que Spark incorpora con un broadcast join. La clave natural del evento es la terna (building_id, meter_type, timestamp), verificada unica sobre las 5.682.185 lecturas del subconjunto; es lo que hace idempotente el reprocesamiento del log de Kafka.",
   "fields": [
     {
-      "name": "event_id",
-      "type": "string",
-      "doc": "Identificador unico del evento (UUID). Verificado 100% unico en el dataset de referencia; es la clave para detectar duplicados y calcular la tasa de perdida del Objetivo 1."
+      "name": "building_id",
+      "type": "int",
+      "doc": "Identificador del edificio que aloja el contador. Junto con meter_type forma la identidad del sensor, y es tambien la clave del mensaje en Kafka: mantiene en la misma particion y en orden todas las lecturas de un contador, que es lo que necesitan las ventanas de agregacion de Spark."
+    },
+    {
+      "name": "meter_type",
+      "type": {
+        "type": "enum",
+        "name": "MeterType",
+        "symbols": ["electricity", "chilledwater", "steam", "hotwater", "unknown"],
+        "default": "unknown",
+        "doc": "Medio que mide el contador. EL ORDEN DE LOS SIMBOLOS ES EL FORMATO DE CABLE: Avro serializa un enum como el indice del simbolo dentro de este array, de modo que 'electricity' viaja como 0, 'chilledwater' como 1, etc. Ese orden coincide a proposito con los codigos 0..3 del dataset de origen. REORDENAR ESTE ARRAY CORROMPE EN SILENCIO TODOS LOS DATOS YA ESCRITOS: una lectura de electricidad pasaria a interpretarse como agua fria, sin ningun error. Anadir simbolos AL FINAL es seguro. 'unknown' no aparece en los datos: es el simbolo por defecto que permite a un consumidor con este esquema leer eventos escritos con una version futura que anada medios nuevos, en lugar de fallar la deserializacion (Objetivo 2)."
+      },
+      "doc": "Tipo de contador. Se declaran los cuatro medios del dominio aunque el subconjunto en uso (emplazamientos 2, 3 y 5) solo contenga electricity, chilledwater y hotwater: el contrato describe el dominio, no la muestra."
     },
     {
       "name": "timestamp",
       "type": {"type": "long", "logicalType": "timestamp-millis"},
-      "doc": "Instante de la medicion en el sensor (event time). Es el campo sobre el que Spark Structured Streaming aplica las ventanas temporales y el watermarking. NO sirve para medir la latencia del pipeline: es un timestamp historico del dataset."
+      "doc": "Instante de la medicion (event time). Es la columna sobre la que Spark aplica las ventanas temporales y el watermarking. Se interpreta como HORA LOCAL del emplazamiento: se comprobo que los emplazamientos del subconjunto estan en hora local y son mutuamente comparables sin conversion. Consecuencia a tener presente: dos eventos de emplazamientos distintos con la misma marca no son el mismo instante fisico. NO sirve para medir la latencia del pipeline, porque es una marca historica de 2016 y el replay ocurre hoy: para eso esta sim_publish_ts."
     },
     {
-      "name": "company_id",
-      "type": "string",
-      "doc": "Empresa propietaria. Primer nivel de la jerarquia del topico MQTT."
-    },
-    {
-      "name": "site_id",
-      "type": "string",
-      "doc": "Planta o emplazamiento. Segundo nivel de la jerarquia del topico MQTT."
-    },
-    {
-      "name": "machine_id",
-      "type": "string",
-      "doc": "Maquina monitorizada. Tercer nivel del topico MQTT y clave de particionado en Kafka. Es la identidad real del sensor simulado: se usa machine_id y no sensor_id porque sensor_id rota entre maquinas en el dataset original."
-    },
-    {
-      "name": "machine_model",
-      "type": "string",
-      "doc": "Modelo del equipo (21 valores distintos). Se modela como string y no como enum: es un catalogo de negocio que crece al incorporar equipos nuevos."
-    },
-    {
-      "name": "department",
-      "type": "string",
-      "doc": "Departamento al que pertenece la maquina (IT, OPS, HR, FINANCE). Dimension de negocio para los informes de Power BI."
-    },
-    {
-      "name": "country_code",
-      "type": "string",
-      "doc": "Codigo ISO del pais. Constante (FR) en el dataset actual, pero se modela como string porque una expansion geografica es un cambio de datos esperable, no un cambio de esquema."
-    },
-    {
-      "name": "energy_type",
-      "type": "string",
-      "doc": "Tipo de energia medida. Constante (ELECTRICITY) en el dataset actual; mismo criterio que country_code."
-    },
-    {
-      "name": "power_watts",
+      "name": "meter_reading",
       "type": "double",
-      "doc": "Potencia activa instantanea en vatios. Distribucion muy sesgada en el dataset (rango observado 1.0 - 49999.76)."
-    },
-    {
-      "name": "voltage",
-      "type": "int",
-      "doc": "Tension en voltios. Constante a 230V en el dataset. Se declara int y no long a proposito: Avro permite promocionar int a long en una evolucion compatible, pero no al reves, asi que el tipo estrecho conserva el margen de cambio."
-    },
-    {
-      "name": "current_amp",
-      "type": "double",
-      "doc": "Intensidad de corriente en amperios (rango observado 0.0 - 217.39)."
-    },
-    {
-      "name": "power_factor",
-      "type": "double",
-      "doc": "Factor de potencia, adimensional (rango observado 0.7 - 1.0)."
-    },
-    {
-      "name": "sensor_id",
-      "type": "string",
-      "doc": "Identificador del sensor que tomo la medida. Viaja como campo y no como nivel del topico MQTT porque no identifica un dispositivo estable: rota entre maquinas distintas en el dataset original."
-    },
-    {
-      "name": "sensor_status",
-      "type": {
-        "type": "enum",
-        "name": "SensorStatus",
-        "symbols": ["OK", "WARN", "UNKNOWN"],
-        "default": "UNKNOWN",
-        "doc": "Estado del sensor. UNKNOWN no aparece en los datos: existe como simbolo por defecto para que un lector con este esquema pueda leer eventos escritos con un esquema futuro que anada estados nuevos, en lugar de fallar la deserializacion (Objetivo 2)."
-      },
-      "doc": "Estado reportado por el sensor (valores observados: OK, WARN)."
-    },
-    {
-      "name": "measurement_quality",
-      "type": {
-        "type": "enum",
-        "name": "MeasurementQuality",
-        "symbols": ["OK", "ESTIMATED", "UNKNOWN"],
-        "default": "UNKNOWN",
-        "doc": "Calidad de la medida. UNKNOWN cumple la misma funcion de simbolo por defecto que en SensorStatus."
-      },
-      "doc": "Calidad de la medida (valores observados: OK, ESTIMATED). ESTIMATED marca lecturas interpoladas, relevante para excluirlas de los KPIs de precision."
-    },
-    {
-      "name": "ingest_ts",
-      "type": {"type": "long", "logicalType": "timestamp-millis"},
-      "doc": "Instante de ingesta declarado en el dataset original. Es identico a timestamp en todas las filas (redundante), pero se conserva para no alterar el contrato de datos de origen."
-    },
-    {
-      "name": "cpu_load",
-      "type": "double",
-      "doc": "Carga de CPU del equipo en porcentaje (rango observado 0.0 - 100.0). Variable de contexto para correlacionar consumo electrico con actividad."
-    },
-    {
-      "name": "device_state",
-      "type": {
-        "type": "enum",
-        "name": "DeviceState",
-        "symbols": ["ON", "IDLE", "SLEEP", "UNKNOWN"],
-        "default": "UNKNOWN",
-        "doc": "Estado operativo del equipo. UNKNOWN cumple la misma funcion de simbolo por defecto que en SensorStatus."
-      },
-      "doc": "Estado operativo del equipo (valores observados: ON, IDLE, SLEEP). Base del calculo de eficiencia operativa."
-    },
-    {
-      "name": "user_count",
-      "type": "int",
-      "doc": "Numero de usuarios activos en el equipo (rango observado 0 - 200)."
+      "doc": "Valor medido por el contador. ATENCION - LA UNIDAD DEPENDE DE meter_type: la documentacion del dataset la describe como 'kWh o equivalente', lo que significa que electricidad, agua fria, vapor y agua caliente NO son directamente comparables ni sumables entre si. Se observa en los datos: la mediana es 43,6 en electricity, 146,0 en chilledwater y 8,8 en hotwater. Toda agregacion debe incluir meter_type en la clave de agrupacion; promediar o sumar a traves de tipos distintos produce una cifra sin significado fisico. El precedente del dominio (BACnet, ANSI/ASHRAE 135) separa por eso el tipo de objeto de su propiedad Units."
     },
     {
       "name": "sim_publish_ts",
       "type": {"type": "long", "logicalType": "timestamp-millis"},
-      "doc": "Epoch en milisegundos del instante exacto del publish() en MQTT. Lo genera el simulador, no procede del dataset. Es el unico campo valido para medir la latencia extremo a extremo del Objetivo 1: latencia = hora_de_persistencia_en_TimescaleDB - sim_publish_ts."
+      "doc": "Epoch en milisegundos del instante del publish() en MQTT. Lo anade el simulador, no procede del dataset: es INSTRUMENTACION para medir la latencia extremo a extremo del Objetivo 1, calculada como hora_de_persistencia - sim_publish_ts. Es el segundo reloj del evento y esta a unos 9,6 anos de distancia de `timestamp`, porque los datos son de 2016 y se reproducen hoy. Con replay acelerado NO representa una cadencia de transmision realista: a 740 ev/s dos eventos consecutivos reciben marcas separadas por 1,35 ms aunque sus tiempos de evento disten una hora, y varios eventos pueden compartir el mismo milisegundo. No debe usarse para ordenar ni para desempatar."
     }
   ]
 }

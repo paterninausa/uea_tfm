@@ -202,6 +202,74 @@ def set_rule(base: str, group: str, artifact: str, rule_type: str, config: str) 
     logger.info("Regla %s = %s", rule_type, config)
 
 
+def _collect_enums(nodo, acc: dict | None = None) -> dict:
+    """Recorre el esquema y devuelve {nombre_enum: [simbolos]}, incluidos los anidados."""
+    acc = {} if acc is None else acc
+    if isinstance(nodo, dict):
+        if nodo.get("type") == "enum" and "name" in nodo:
+            acc[nodo["name"]] = list(nodo.get("symbols", []))
+        for v in nodo.values():
+            _collect_enums(v, acc)
+    elif isinstance(nodo, list):
+        for v in nodo:
+            _collect_enums(v, acc)
+    return acc
+
+
+def check_enum_order(base: str, group: str, artifact: str, contenido_nuevo: str) -> None:
+    """Impide reordenar o insertar simbolos de enum respecto a la version registrada.
+
+    Esta comprobacion NO la hace Apicurio. Se verifico que su regla
+    COMPATIBILITY, incluso en FULL_TRANSITIVE, acepta tanto reordenar los
+    simbolos de un enum como insertar uno en medio: desde el punto de vista de
+    la resolucion de esquemas de Avro son cambios compatibles, porque un lector
+    que use el esquema del ESCRITOR resuelve los simbolos por nombre.
+
+    El problema es que este pipeline no hace eso: el job de Spark deserializa
+    todo el flujo con un unico esquema (`from_avro` recibe uno solo). Y Avro
+    codifica un enum como el INDICE del simbolo, no como su nombre. Comprobado:
+    un evento escrito con `symbols: [electricity, chilledwater, ...]` y leido
+    con el array reordenado alfabeticamente devuelve 'chilledwater' donde ponia
+    'electricity', sin lanzar ninguna excepcion y con el resto de campos
+    intactos.
+
+    Por eso solo se admite ANADIR simbolos al final: eso conserva el indice de
+    todos los existentes. Cualquier otra modificacion del array se rechaza aqui.
+    """
+    if not artifact_exists(base, group, artifact):
+        return
+
+    resp = requests.get(
+        artifact_url(base, group, artifact) + "/versions/branch=latest/content",
+        timeout=TIMEOUT,
+    )
+    if resp.status_code != 200:
+        logger.warning("No se pudo leer la version registrada para comparar enums (HTTP %s)",
+                       resp.status_code)
+        return
+
+    viejos = _collect_enums(json.loads(resp.text))
+    nuevos = _collect_enums(json.loads(contenido_nuevo))
+
+    for nombre, simbolos_viejos in viejos.items():
+        simbolos_nuevos = nuevos.get(nombre)
+        if simbolos_nuevos is None:
+            continue  # el enum ya no existe: lo juzgan las reglas del registro
+        prefijo = simbolos_nuevos[: len(simbolos_viejos)]
+        if prefijo != simbolos_viejos:
+            logger.error("El enum '%s' altera el orden de los simbolos ya registrados.", nombre)
+            logger.error("  registrado: %s", simbolos_viejos)
+            logger.error("  propuesto : %s", simbolos_nuevos)
+            for i, (a, b) in enumerate(zip(simbolos_viejos, prefijo)):
+                if a != b:
+                    logger.error("  el indice %d pasa de '%s' a '%s': todo evento ya escrito "
+                                 "con '%s' se leeria como '%s'", i, a, b, a, b)
+            raise RegistryError(
+                f"Cambio de indice en el enum '{nombre}'. Solo se permite anadir simbolos al "
+                "final; reordenar o insertar corrompe en silencio los datos ya escritos."
+            )
+
+
 def _version_numbers(base: str, group: str, artifact: str) -> set:
     """Numeros de version registrados ahora mismo, para distinguir despues si
     una ejecucion ha creado version nueva o ha reutilizado una existente."""
@@ -236,6 +304,11 @@ def run(args: argparse.Namespace) -> int:
 
     content = load_and_validate(Path(args.schema))
     existe = artifact_exists(args.registry_url, args.group, args.artifact)
+
+    # Comprobacion propia, previa a la del registro: Apicurio no detecta los
+    # cambios de indice en los enums. Se aplica tambien en dry-run, para que
+    # sirva de verificacion antes de proponer una evolucion.
+    check_enum_order(args.registry_url, args.group, args.artifact, content)
 
     if args.dry_run:
         if not existe:
