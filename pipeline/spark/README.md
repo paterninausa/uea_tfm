@@ -1,5 +1,16 @@
 # Job de Spark Structured Streaming — doble sumidero
 
+> **ESTADO: parcialmente desactualizado.** La lectura de Kafka, la
+> deserializacion Avro y la guarda de version de esquema ya trabajan con el
+> contrato de ASHRAE (`building_id`, `meter_type`, `timestamp`,
+> `meter_reading`, `sim_publish_ts`). El **enriquecimiento, las reglas de
+> anomalia y la agregacion siguen escritos para el dataset anterior** y
+> referencian columnas que ya no existen (`power_watts`, `company_id`,
+> `department`, `cpu_load`...). El job **no se ejecuta de extremo a extremo**
+> hasta adaptarlos, junto con el DDL de las dos tablas y el broadcast join
+> contra la tabla de dimension. Las cifras de la seccion "Resultados medidos"
+> corresponden al dataset anterior y habra que rehacerlas.
+
 Lee los eventos Avro de `iot.telemetry.raw` y los escribe en dos destinos con
 proposito distinto.
 
@@ -104,6 +115,48 @@ todos los eventos ordenados que llegaron despues quedaron por detras y se
 descartaron **en silencio** como tardios. No es un fallo del codigo sino
 semantica de watermark, pero es un riesgo real: una sola fecha mal puesta
 silencia datos validos posteriores sin dar ningun error.
+
+## Evolucion de esquema: drenar y conmutar
+
+El job deserializa todo el flujo con **un unico esquema**, el vigente al
+arrancar, porque `from_avro` recibe uno solo. No sabe consumir dos versiones a
+la vez. En lugar de anadir resolucion de esquema por mensaje, se adopta un
+procedimiento operativo que hace que **la coexistencia no llegue a ocurrir**:
+
+1. **Parar el simulador.** Deja de entrar telemetria nueva.
+2. **Esperar unos segundos.** El bridge vacia su buffer y el job alcanza el
+   final del topico.
+3. **Registrar la version nueva** con `register_schema.py`.
+4. **Reiniciar el bridge.** Pasa a producir con el esquema nuevo.
+5. **Reiniciar el job.** Pasa a leer con el esquema nuevo.
+6. **Reanudar el simulador.**
+
+La interrupcion son segundos y **no se pierde ningun evento**: Kafka retiene 7
+dias, el job reanuda desde su checkpoint y el bridge desde su sesion MQTT
+persistente. Ambas recuperaciones estan verificadas por separado.
+
+Es la opcion mas sencilla de explicar y de defender, y no requiere codigo
+adicional. La alternativa —resolver el esquema de cada mensaje por su
+`globalId` contra el registro— se descarto a proposito: `ApicurioClient` ya
+tiene el metodo y la cache necesarios, pero anade complejidad que este trabajo
+no necesita.
+
+### Si el procedimiento se ejecuta mal, el job se detiene
+
+`guard_schema_version` comprueba el `globalId` de cada evento y **detiene el
+job** si no es el esperado. Antes lo *filtraba*, y esa era la ultima via de
+perdida silenciosa del pipeline: los eventos de una version inesperada
+desaparecian sin contador ni traza, justo en el momento en que mas importa.
+
+Detenerse es preferible a descartar, y no por purismo: con 7 dias de retencion
+en Kafka, **parar es recuperable** —se corrige y se reanuda desde el checkpoint
+sin perder un evento— mientras que descartar es irreversible.
+
+La comprobacion se aplica sobre la columna `meter_reading` y no como columna
+aparte, para que el optimizador no pueda eliminarla. Verificado: inyectando un
+evento con `globalId=99` en un flujo donde `meter_reading` solo se usa dentro
+de una agregacion, el job aborta con el mensaje completo, y la traza muestra
+que la comprobacion se evaluo dentro del propio `hashAgg`.
 
 ## Uso
 

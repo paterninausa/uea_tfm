@@ -117,9 +117,10 @@ def decode_events(raw: DataFrame, schema_json: str) -> DataFrame:
     vigente al arrancar. Avro es un formato posicional, de modo que leer bytes
     escritos con otra version usando este esquema produciria campos corruptos,
     no un error limpio. Por eso los mensajes con un globalId distinto se
-    apartan (ver `split_by_schema`) en lugar de deserializarlos a ciegas.
-    Soportar varias versiones a la vez exigiria resolver el esquema por fila
-    contra el registro, que es trabajo futuro.
+    detienen el job (ver `guard_schema_version`) en lugar de deserializarlos a
+    ciegas. Soportar varias versiones a la vez exigiria resolver el esquema por
+    fila contra el registro; se descarto a proposito en favor del procedimiento
+    de drenar y conmutar, que hace que la coexistencia no llegue a ocurrir.
     """
     con_cabecera = raw.select(
         F.col("key").cast("string").alias("kafka_key"),
@@ -142,10 +143,51 @@ def decode_events(raw: DataFrame, schema_json: str) -> DataFrame:
     )
 
 
-def split_by_schema(df: DataFrame, expected_global_id: int) -> DataFrame:
-    """Se queda solo con los eventos escritos con el esquema esperado."""
-    return df.filter(F.col("schema_global_id") == F.lit(expected_global_id)).select(
-        "kafka_key", "kafka_partition", "kafka_offset", "schema_global_id", "evento.*"
+def guard_schema_version(df: DataFrame, expected_global_id: int) -> DataFrame:
+    """Detiene el job si aparece un evento escrito con otro esquema.
+
+    La version anterior FILTRABA esos eventos, y era la ultima via de perdida
+    silenciosa que quedaba en el pipeline: los mensajes de una version de
+    esquema inesperada desaparecian sin dejar rastro ni contador, lo que
+    chocaria con el objetivo de perdida < 0,1% justo cuando mas importa.
+
+    Detenerse es preferible a descartar, y no por purismo: en una arquitectura
+    Kappa el log de Kafka conserva 7 dias, asi que parar es RECUPERABLE —se
+    corrige la configuracion y se reanuda desde el checkpoint sin perder un
+    evento—, mientras que descartar es irreversible.
+
+    La comprobacion se aplica sobre `meter_reading`, no como columna aparte,
+    para que el optimizador de Spark no pueda eliminarla: esa columna se usa
+    siempre aguas abajo, de modo que la condicion se evalua necesariamente en
+    cada fila.
+
+    El procedimiento operativo que evita llegar aqui es el de "drenar y
+    conmutar" descrito en el README: no se permite que dos versiones de
+    esquema convivan en el topico.
+    """
+    lectura_validada = F.when(
+        F.col("schema_global_id") == F.lit(expected_global_id),
+        F.col("evento.meter_reading"),
+    ).otherwise(
+        F.raise_error(
+            F.concat(
+                F.lit("Evento con globalId de esquema inesperado: se esperaba "),
+                F.lit(str(expected_global_id)),
+                F.lit(" y llego "),
+                F.col("schema_global_id").cast("string"),
+                F.lit(". El job se detiene en lugar de descartarlo; el evento sigue en Kafka. "),
+                F.lit("Revisa el procedimiento de drenar y conmutar del README."),
+            )
+        )
+    )
+
+    return df.select(
+        "kafka_key", "kafka_partition", "kafka_offset", "schema_global_id",
+        F.col("evento.building_id").alias("building_id"),
+        F.col("evento.meter_type").alias("meter_type"),
+        F.col("evento.timestamp").alias("timestamp"),
+        lectura_validada.alias("meter_reading"),
+        F.col("evento.sim_publish_ts").alias("sim_publish_ts"),
     )
 
 
@@ -382,7 +424,7 @@ def run(args: argparse.Namespace) -> int:
     logger.info("Spark %s | esquema globalId=%d | ventana=%s watermark=%s",
                 spark.version, global_id, args.window, args.watermark)
 
-    eventos = split_by_schema(
+    eventos = guard_schema_version(
         decode_events(read_kafka(spark, args), schema_json), global_id
     )
 
