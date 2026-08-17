@@ -107,20 +107,27 @@ Registrar el esquema (idempotente):
 python pipeline/schemas/register_schema.py --schema pipeline/schemas/telemetry_event_v1.avsc
 ```
 
-Ver lo registrado:
+Probar una evolucion:
 
 ```bash
-python pipeline/schemas/register_schema.py --show
+python pipeline/schemas/register_schema.py --schema pipeline/schemas/telemetry_event_v2.avsc
 ```
 
-Comprobar una evolucion **sin registrarla**:
+Si es aceptada queda registrada como version nueva. Para volver al estado
+anterior hay que borrarla, algo que el compose habilita expresamente:
 
 ```bash
-python pipeline/schemas/register_schema.py --schema pipeline/schemas/telemetry_event_v2.avsc --dry-run
+curl -X DELETE http://localhost:8080/apis/registry/v3/groups/iot/artifacts/iot.telemetry.raw-value/versions/2
 ```
 
 Codigo de salida 0 si el esquema es valido y aceptado, 1 si es rechazado, si el
-`.avsc` esta mal formado o si el registro no responde. UI: <http://localhost:8888>
+`.avsc` esta mal formado o si el registro no responde.
+
+Para ver lo registrado, la UI en <http://localhost:8888> o:
+
+```bash
+curl -s http://localhost:8080/apis/registry/v3/groups/iot/artifacts/iot.telemetry.raw-value/versions
+```
 
 ## Estado verificado
 
@@ -142,5 +149,10 @@ Contra Apicurio 3.3.1 con almacenamiento KafkaSQL:
 | `.avsc` con un tipo inexistente | Rechazado en local, sin llegar al registro | `fastavro` |
 | Registro no accesible | Error explicito con la orden para levantar el stack | — |
 
-Ninguna comprobacion `--dry-run` dejo rastro: el registro permanece en la
-version 1.
+El registro permanece en la version 1: ninguna de las evoluciones probadas
+llego a persistirse, porque todas fueron rechazadas antes de escribirse.
+
+El grupo, el artefacto y las dos reglas son **constantes** del script, no
+opciones: hay un unico contrato en el proyecto y una unica politica de
+compatibilidad. Como opciones invitaban a registrar con una politica distinta y
+dejar el registro incoherente sin darse cuenta.
