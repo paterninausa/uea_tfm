@@ -1,22 +1,26 @@
 """
-Simulador de comunicacion IoT - Fase 1 (basico, sincrono)
+Simulador de sensores IoT: reproduce telemetria historica sobre MQTT.
 
-Publica telemetria de consumo electrico via MQTT, a partir del historico
-en Parquet, replicando la topologia de topicos definida para el TFM:
+Lee el subconjunto de ASHRAE preparado por `pipeline/data/prepare_ashrae.py` y
+publica cada lectura como un mensaje MQTT, reproduciendo la topologia de
+topicos del trabajo:
 
-    iot/{company_id}/{site_id}/{machine_id}/telemetry
+    iot/{site_id}/{building_id}/{meter_type}/telemetry
 
-`sensor_id` no identifica un dispositivo estable (rota entre maquinas en el
-dataset original), por lo que la identidad del "sensor simulado" es
-`machine_id`, no `sensor_id`. `sensor_id` viaja como campo del payload.
+UN SENSOR ES EL PAR (edificio, tipo de contador). Un mismo edificio con
+contador de electricidad y de agua fria son dos sensores con series
+independientes; el subconjunto en uso tiene 652.
 
-Esta version es intencionalmente simple (un solo hilo, cliente MQTT unico):
-valida el flujo extremo a extremo antes de anadir el modo asincrono/carga
-(Objetivo 5) y la serializacion Avro via Apicurio (Objetivo 2).
+EL PAYLOAD SOLO LLEVA LO QUE EMITIRIA EL CONTADOR: identidad, instante y
+medida, mas `sim_publish_ts`. Los atributos del edificio no viajan en el
+evento; viven en la tabla de dimension. `site_id` aparece en el TOPICO pero no
+en el payload, igual que en un despliegue real, donde la pasarela sabe donde
+esta instalado el dispositivo aunque el dispositivo no lo transmita.
 
 Uso:
-    python mqtt_simulator.py --parquet-path ../data/power_measurements_parquet \
-        --broker-host localhost --broker-port 1883 --rate 20 --limit 5000
+    python mqtt_simulator.py --rate 100 --limit 5000
+    python mqtt_simulator.py --max-sensors 100          # carga base, Objetivo 5
+    python mqtt_simulator.py --rate 0 --rebase-end now  # demostracion en vivo
 """
 
 import argparse
@@ -24,71 +28,118 @@ import json
 import logging
 import signal
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
 import pandas as pd
 from paho.mqtt.enums import CallbackAPIVersion
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("mqtt_simulator")
 
-TOPIC_TEMPLATE = "iot/{company_id}/{site_id}/{machine_id}/telemetry"
+TOPIC_TEMPLATE = "iot/{site_id}/{building_id}/{meter_type}/telemetry"
 
-# Campos que representan timestamps historicos del dataset original.
-# NO deben usarse para medir la latencia extremo a extremo del pipeline:
-# esa medicion se hace con sim_publish_ts, generado en el instante del publish.
-_TIMESTAMP_FIELDS = ("timestamp", "ingest_ts")
+AQUI = Path(__file__).parent
 
 
-def build_topic(row: pd.Series) -> str:
-    return TOPIC_TEMPLATE.format(
-        company_id=row["company_id"],
-        site_id=row["site_id"],
-        machine_id=row["machine_id"],
-    )
+def cargar(telemetry_path: Path, buildings_path: Path) -> pd.DataFrame:
+    """Carga la tabla de hechos y le anade site_id SOLO para enrutar."""
+    for p in (telemetry_path, buildings_path):
+        if not p.exists():
+            raise FileNotFoundError(
+                f"No se encontro {p}. Genera los datos primero: "
+                "python pipeline/data/prepare_ashrae.py"
+            )
 
+    tel = pd.read_parquet(telemetry_path)
+    dim = pd.read_parquet(buildings_path)[["building_id", "site_id"]]
 
-def _to_native(value):
-    """Convierte tipos de pandas/numpy a tipos nativos serializables en JSON."""
-    if pd.isna(value):
-        return None
-    if hasattr(value, "item"):
-        return value.item()
-    return value
+    # El cruce con la dimension es exclusivamente para construir el topico. En
+    # un despliegue real equivale a que la pasarela conoce el emplazamiento de
+    # cada dispositivo por su registro, sin que el dispositivo lo transmita.
+    df = tel.merge(dim, on="building_id", how="left")
+    if df["site_id"].isna().any():
+        faltan = sorted(df.loc[df["site_id"].isna(), "building_id"].unique())[:5]
+        raise ValueError(f"Edificios sin entrada en la tabla de dimension: {faltan}")
 
-
-def build_payload(row: pd.Series) -> dict:
-    """Construye el payload del evento. Los campos coinciden con las columnas
-    del dataset (futuro esquema Avro v1), mas sim_publish_ts."""
-    payload = {}
-    for key, value in row.items():
-        if key in _TIMESTAMP_FIELDS:
-            payload[key] = pd.Timestamp(value).isoformat() if pd.notna(value) else None
-        else:
-            payload[key] = _to_native(value)
-
-    payload["sim_publish_ts"] = int(time.time() * 1000)  # epoch millis
-    return payload
-
-
-def load_dataset(parquet_path: str) -> pd.DataFrame:
-    path = Path(parquet_path)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"No se encontro {path}. Genera primero el Parquet a partir del "
-            "dataset de Kaggle (ver pipeline/data/README.md)."
-        )
-    df = pd.read_parquet(path)
-    df = df.sort_values("timestamp").reset_index(drop=True)
-    logger.info(
-        "Dataset cargado: %d filas, %d machine_id unicos",
-        len(df), df["machine_id"].nunique(),
-    )
+    logger.info("Cargados %s eventos | %s sensores | %s edificios",
+                f"{len(df):,}",
+                f"{df.groupby(['building_id', 'meter_type']).ngroups:,}",
+                f"{df['building_id'].nunique():,}")
     return df
+
+
+def filtrar_sensores(df: pd.DataFrame, max_sensores: int | None) -> pd.DataFrame:
+    """Se queda con los primeros N sensores en orden determinista.
+
+    El orden fijo importa para el Objetivo 5: hace que la seleccion de 100
+    sensores sea un SUBCONJUNTO de la de 250, esta de la de 500, y asi. La
+    degradacion de throughput se mide entonces sobre los mismos sensores mas
+    otros, y no comparando dos muestras aleatorias distintas, que no serian
+    comparables entre si.
+    """
+    if not max_sensores:
+        return df
+
+    sensores = (df[["building_id", "meter_type"]].drop_duplicates()
+                .sort_values(["building_id", "meter_type"]).reset_index(drop=True))
+    if max_sensores >= len(sensores):
+        logger.info("Se pidieron %d sensores y solo hay %d: se usan todos",
+                    max_sensores, len(sensores))
+        return df
+
+    df = df.merge(sensores.head(max_sensores), on=["building_id", "meter_type"], how="inner")
+    logger.info("Filtrado a %d sensores -> %s eventos", max_sensores, f"{len(df):,}")
+    return df
+
+
+def rebasar(df: pd.DataFrame, destino: str) -> pd.DataFrame:
+    """Desplaza las marcas de tiempo para que la ULTIMA caiga en `destino`.
+
+    Los datos son de 2016. Sin desplazarlos, un panel de Grafana configurado a
+    "ultimas 6 horas" sale vacio y la demostracion en vivo pierde el efecto de
+    tiempo real. Se aplica un unico offset constante a todo el conjunto, de modo
+    que las distancias relativas entre eventos —y por tanto los ciclos diario y
+    estacional— se conservan intactas.
+
+    Se ancla la ULTIMA marca y no la primera para que todo el historico quede en
+    el pasado respecto al instante indicado, que es lo que esperan los paneles.
+    Anclando la primera, el replay acelerado generaria marcas en el futuro.
+    """
+    instante = datetime.now(timezone.utc) if destino == "now" else datetime.fromisoformat(destino)
+    if instante.tzinfo is None:
+        instante = instante.replace(tzinfo=timezone.utc)
+
+    offset = pd.Timestamp(instante).tz_localize(None) - df["timestamp"].max()
+    df = df.copy()
+    df["timestamp"] = df["timestamp"] + offset
+    logger.info("Marcas desplazadas %+.1f dias: el rango pasa a ser %s -> %s",
+                offset.total_seconds() / 86400, df["timestamp"].min(), df["timestamp"].max())
+    return df
+
+
+def build_topic(fila) -> str:
+    return TOPIC_TEMPLATE.format(site_id=fila.site_id, building_id=fila.building_id,
+                                 meter_type=fila.meter_type)
+
+
+def build_payload(fila) -> dict:
+    """Payload con los campos del contrato y nada mas.
+
+    `timestamp` se envia como cadena ISO-8601 y el bridge lo convierte a epoch
+    en milisegundos, que es lo que declara el esquema Avro. Se mantiene en ISO
+    aqui porque hace legible el trafico al depurar con `mosquitto_sub`.
+    """
+    return {
+        "building_id": int(fila.building_id),
+        "meter_type": str(fila.meter_type),
+        "timestamp": fila.timestamp.isoformat(),
+        "meter_reading": float(fila.meter_reading),
+        # Instante real del publish(): origen de tiempo del KPI de latencia del
+        # Objetivo 1, y unico campo del payload que no emite el contador.
+        "sim_publish_ts": int(time.time() * 1000),
+    }
 
 
 class GracefulShutdown:
@@ -102,78 +153,108 @@ class GracefulShutdown:
         self.stop = True
 
 
-def run(args: argparse.Namespace) -> None:
-    df = load_dataset(args.parquet_path)
+def run(args: argparse.Namespace) -> int:
+    df = cargar(args.telemetry, args.buildings)
+    df = filtrar_sensores(df, args.max_sensors)
+    if args.rebase_end:
+        df = rebasar(df, args.rebase_end)
+
+    # Orden cronologico: el watermark de Spark asume que el tiempo de evento
+    # avanza, y un flujo desordenado haria que se descartaran lecturas tardias.
+    df = df.sort_values("timestamp").reset_index(drop=True)
     if args.limit:
         df = df.head(args.limit)
 
-    client = mqtt.Client(
-        CallbackAPIVersion.VERSION2,
-        client_id="tfm-simulator",
-    )
-    client.on_connect = lambda c, u, flags, reason_code, props=None: logger.info(
-        "Conectado al broker MQTT (reason_code=%s)", reason_code
-    )
-    client.on_disconnect = lambda c, u, dc, reason_code=None, props=None: logger.warning(
-        "Desconectado del broker (reason_code=%s)", reason_code
-    )
+    client = mqtt.Client(CallbackAPIVersion.VERSION2, client_id=args.client_id)
+    client.on_connect = lambda c, u, f, rc, p=None: logger.info(
+        "Conectado al broker MQTT (reason_code=%s)", rc)
+    client.on_disconnect = lambda c, u, flags, rc=None, p=None: logger.warning(
+        "Desconectado del broker (reason_code=%s)", rc)
 
     logger.info("Conectando a %s:%d ...", args.broker_host, args.broker_port)
     client.connect(args.broker_host, args.broker_port, keepalive=30)
     client.loop_start()
 
     shutdown = GracefulShutdown()
-    interval = 1.0 / args.rate if args.rate > 0 else 0
-    published, failed = 0, 0
+    intervalo = 1.0 / args.rate if args.rate > 0 else 0
+    publicados = fallidos = 0
+    t0 = time.monotonic()
 
+    logger.info("Publicando %s eventos%s", f"{len(df):,}",
+                f" a {args.rate:g} ev/s" if args.rate else " sin limite de tasa")
     try:
-        for _, row in df.iterrows():
+        for fila in df.itertuples(index=False):
             if shutdown.stop:
                 break
 
-            topic = build_topic(row)
-            payload = build_payload(row)
+            topico = build_topic(fila)
+            resultado = client.publish(topico, json.dumps(build_payload(fila)), qos=args.qos)
+            # wait_for_publish bloquea hasta que el broker confirma el QoS 1. Es
+            # lo que hace fiable el contador de perdidas, y a la vez el techo de
+            # throughput del simulador: se midieron ~740 ev/s, muy por encima de
+            # los 50 ev/s que exige el Objetivo 3.
+            resultado.wait_for_publish(timeout=5)
 
-            result = client.publish(topic, json.dumps(payload), qos=args.qos)
-            result.wait_for_publish(timeout=5)
-
-            if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                published += 1
+            if resultado.rc == mqtt.MQTT_ERR_SUCCESS:
+                publicados += 1
             else:
-                failed += 1
-                logger.warning("Fallo al publicar en %s (rc=%s)", topic, result.rc)
+                fallidos += 1
+                logger.warning("Fallo al publicar en %s (rc=%s)", topico, resultado.rc)
 
-            if published and published % 500 == 0:
-                logger.info("Publicados: %d | Fallidos: %d", published, failed)
+            if publicados and publicados % 5000 == 0:
+                logger.info("Publicados: %s | Fallidos: %d | %.1f ev/s", f"{publicados:,}",
+                            fallidos, publicados / max(1e-9, time.monotonic() - t0))
 
-            if interval:
-                time.sleep(interval)
+            if intervalo:
+                time.sleep(intervalo)
 
     finally:
         client.loop_stop()
         client.disconnect()
-        total = published + failed
-        loss_rate = (failed / total * 100) if total else 0
-        logger.info(
-            "Fin de la simulacion. Publicados=%d Fallidos=%d Tasa de perdida=%.3f%%",
-            published, failed, loss_rate,
-        )
+        total = publicados + fallidos
+        duracion = time.monotonic() - t0
+        logger.info("--- Fin de la simulacion ---")
+        logger.info("  publicados      : %s", f"{publicados:,}")
+        logger.info("  fallidos        : %d", fallidos)
+        logger.info("  tasa de perdida : %.4f%%", (fallidos / total * 100) if total else 0.0)
+        logger.info("  duracion        : %.1f s", duracion)
+        logger.info("  throughput      : %.1f ev/s", publicados / max(1e-9, duracion))
+
+    return 0 if fallidos == 0 else 1
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Simulador MQTT de telemetria IoT (TFM)")
-    parser.add_argument("--parquet-path", required=True,
-                         help="Ruta local al directorio/archivo Parquet con la telemetria")
-    parser.add_argument("--broker-host", default="localhost")
-    parser.add_argument("--broker-port", type=int, default=1883)
-    parser.add_argument("--qos", type=int, default=1, choices=[0, 1, 2],
-                         help="Nivel de QoS MQTT (por defecto 1, ver Objetivo 1)")
-    parser.add_argument("--rate", type=float, default=20.0,
-                         help="Eventos por segundo (0 = sin limite, maxima velocidad)")
-    parser.add_argument("--limit", type=int, default=None,
-                         help="Numero maximo de filas a publicar (para pruebas rapidas)")
-    return parser.parse_args()
+    p = argparse.ArgumentParser(description="Simulador MQTT de telemetria IoT (TFM)")
+    p.add_argument("--telemetry", type=Path, default=AQUI / "../data/ashrae_telemetry.parquet",
+                   help="Tabla de hechos generada por prepare_ashrae.py")
+    p.add_argument("--buildings", type=Path, default=AQUI / "../data/ashrae_buildings.parquet",
+                   help="Tabla de dimension; se usa solo para construir el topico")
+    p.add_argument("--broker-host", default="localhost")
+    p.add_argument("--broker-port", type=int, default=1883)
+    p.add_argument("--client-id", default="tfm-simulator")
+    p.add_argument("--qos", type=int, default=1, choices=[0, 1, 2],
+                   help="QoS MQTT (1 por defecto, ver Objetivo 1)")
+    p.add_argument("--rate", type=float, default=100.0,
+                   help="Eventos por segundo (0 = sin limite, para pruebas de carga)")
+    p.add_argument("--limit", type=int, default=None,
+                   help="Numero maximo de eventos a publicar")
+    p.add_argument("--max-sensors", type=int, default=None,
+                   help="Publica solo los primeros N sensores, en orden determinista. "
+                        "Para la escalera de carga del Objetivo 5: 100, 250, 500, 652")
+    p.add_argument("--rebase-end", metavar="ISO|now", default=None,
+                   help="Desplaza las marcas de tiempo para que la ultima caiga en este "
+                        "instante. Para la demostracion en vivo: los datos son de 2016 y "
+                        "los paneles miran a fechas recientes")
+    return p.parse_args()
 
 
 if __name__ == "__main__":
-    run(parse_args())
+    try:
+        raise SystemExit(run(parse_args()))
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error("%s", exc)
+        raise SystemExit(1)
+    except ConnectionRefusedError:
+        logger.error("No se pudo conectar al broker MQTT. Levanta el stack: "
+                     "docker compose -f pipeline/docker-compose.yml up -d")
+        raise SystemExit(1)

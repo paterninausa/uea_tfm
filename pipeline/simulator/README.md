@@ -1,116 +1,132 @@
 # Simulador MQTT de telemetria IoT
 
-Fase 1 del pipeline (Objetivo 1 / tarea "Disenar e implementar un simulador de
-comunicacion IoT"). Publica eventos de consumo electrico leidos del historico
-en Parquet hacia un broker MQTT, replicando la topologia de topicos definitiva
-del TFM.
+Reproduce el historico de ASHRAE sobre MQTT, como si 652 contadores estuvieran
+emitiendo en directo. Es el punto de entrada del pipeline (Objetivo 1).
 
-## Topico
+## Topologia de topicos
 
-    iot/{company_id}/{site_id}/{machine_id}/telemetry
+    iot/{site_id}/{building_id}/{meter_type}/telemetry
 
-`sensor_id` no identifica un dispositivo estable (rota entre maquinas en el
-dataset original de Kaggle: ~2000 sensor_id distintos frente a ~5000
-machine_id y 951459 pares machine-sensor unicos sobre ~1M filas), por lo que
-la identidad del "sensor simulado" es `machine_id`, no `sensor_id`.
-`sensor_id` viaja como campo del payload, no como nivel del topico.
+Ejemplo real: `iot/2/156/electricity/telemetry`
 
-`country_code` y `energy_type` son constantes en el dataset actual (FR /
-ELECTRICITY) y por eso no se usan como niveles del topico; viajan tambien en
-el payload.
+**Un sensor es el par (edificio, tipo de contador).** Un mismo edificio con
+contador de electricidad y de agua fria son dos sensores con series
+independientes: 498 edificios dan 652 sensores.
 
-## Obtener el dataset
+## Que va en el topico y que va en el payload
 
-Ver `../data/README.md`. En resumen: el dataset viene del Kaggle publico
-"Power Telemetry" (no depende de ninguna cuenta o recurso privado), y el
-script `../data/convert_to_parquet.py` lo convierte a
-`../data/power_measurements.parquet`, que es la forma canonica que espera este
-simulador.
+El payload lleva **solo lo que emitiria el contador**:
 
-Si en tu copia de trabajo lo que hay es el directorio
-`../data/power_measurements_parquet/` (export anterior generado con Spark),
-tambien sirve: `--parquet-path` acepta tanto un fichero Parquet como un
-directorio, porque `pandas.read_parquet` resuelve ambos casos. Basta con
-apuntar `--parquet-path` a lo que tengas en disco.
+```json
+{
+  "building_id": 156,
+  "meter_type": "electricity",
+  "timestamp": "2016-01-01T00:00:00",
+  "meter_reading": 114.71,
+  "sim_publish_ts": 1786988417219
+}
+```
+
+`site_id` aparece en el **topico** pero no en el payload. No es un descuido: un
+contador no transmite en que emplazamiento esta instalado, lo sabe la pasarela
+por su registro de dispositivos. El simulador lo obtiene cruzando con
+`ashrae_buildings.parquet` y lo usa **solo para enrutar**.
+
+Los demas atributos del edificio —uso, superficie, ano de construccion— no
+aparecen en ninguna parte del mensaje: viven en la tabla de dimension y es
+Spark quien los incorpora con un broadcast join.
+
+`sim_publish_ts` es el unico campo que no emite el contador: es instrumentacion
+para medir la latencia extremo a extremo del Objetivo 1. `timestamp` viaja en
+ISO-8601 y el bridge lo convierte a epoch en milisegundos, que es lo que declara
+el esquema Avro; se mantiene en ISO aqui porque hace legible el trafico al
+depurar con `mosquitto_sub`.
 
 ## Uso
 
-Activa el entorno virtual del proyecto (venv + pip; el proyecto ya no usa
-conda):
-
-    bash pipeline/setup_env.sh      # solo la primera vez
-    source .venv/bin/activate
-
-`pyarrow` (necesario para leer Parquet con pandas) se declara
-**explicitamente** en `../requirements.txt` junto con `pandas`: se comprobo
-que `pip install pyspark==4.2.0` no los instala (solo llegan con extras como
-`pyspark[sql]`), asi que no puede darse por supuesto que lleguen como
-dependencia transitiva.
-
-    python mqtt_simulator.py \
-        --parquet-path ../data/power_measurements.parquet \
-        --broker-host localhost --broker-port 1883 \
-        --rate 20 --limit 5000
-
-Parametros:
-- `--rate`: eventos/segundo (0 = sin limite, para pruebas de carga)
-- `--limit`: numero de filas a publicar (omitir para publicar el dataset completo)
-- `--qos`: nivel de QoS MQTT (por defecto 1, ver justificacion en Objetivo 1)
-
-## Prueba rapida contra el broker del stack (smoke test)
-
-El broker es **Mosquitto** y forma parte del stack containerizado
-(`pipeline/docker-compose.yml`, ver `../README.md`): no se levanta con un
-`docker run` suelto. Requiere 2 terminales, **en este orden**:
-
-**Terminal 1 -- levantar el broker** (desde la raiz del repo; basta el
-servicio `mosquitto`, no hace falta el stack completo para esta prueba):
+Requiere los datos preparados (`python pipeline/data/prepare_ashrae.py`) y el
+stack levantado.
 
 ```bash
-docker compose -f pipeline/docker-compose.yml up -d mosquitto
+python pipeline/simulator/mqtt_simulator.py --rate 100 --limit 5000
 ```
 
-Y suscribirse para ver llegar los mensajes (dejar la terminal corriendo):
+| Opcion | Para que |
+|---|---|
+| `--rate` | Eventos por segundo. `0` = sin limite, para pruebas de carga |
+| `--limit` | Numero maximo de eventos |
+| `--max-sensors` | Publica solo los primeros N sensores (Objetivo 5) |
+| `--rebase-end` | Desplaza las marcas de tiempo (demostracion en vivo) |
+| `--qos` | QoS MQTT, 1 por defecto |
+
+### `--max-sensors`: la escalera de carga del Objetivo 5
+
+El objetivo pide soportar 500 sensores concurrentes con una degradacion de
+throughput inferior al 20% respecto a una carga base de 100. Esta opcion da los
+cuatro peldanos:
+
+```bash
+python pipeline/simulator/mqtt_simulator.py --max-sensors 100 --rate 0
+```
+
+| Sensores | Eventos |
+|---|---|
+| 100 | 875.090 |
+| 250 | 2.191.296 |
+| 500 | 4.356.884 |
+| 652 (todos) | 5.682.185 |
+
+La seleccion es **determinista y anidada**: los 100 primeros sensores estan
+contenidos en los 250, estos en los 500 y estos en los 652 —verificado—. Eso
+importa para la medida: la degradacion se compara sobre los mismos sensores mas
+otros, y no entre dos muestras aleatorias distintas que no serian comparables.
+
+### `--rebase-end`: para la demostracion en vivo
+
+Los datos son de 2016, asi que un panel de Grafana a "ultimas 6 horas" saldria
+vacio. Esta opcion desplaza todas las marcas con un unico offset constante para
+que la ultima caiga en el instante indicado:
+
+```bash
+python pipeline/simulator/mqtt_simulator.py --rebase-end now --rate 0
+```
+
+Al ser un offset constante, las distancias relativas entre eventos se conservan
+y los ciclos diario y estacional quedan intactos. Se ancla la **ultima** marca y
+no la primera para que todo el historico quede en el pasado: anclando la
+primera, el replay acelerado generaria marcas en el futuro.
+
+Tambien acepta un instante ISO concreto, util para preparar la vispera de una
+defensa: `--rebase-end 2026-09-15T09:00:00`.
+
+## Comprobar el trafico
+
+En otra terminal, mientras corre el simulador:
 
 ```bash
 docker exec tfm-mosquitto mosquitto_sub -h localhost -t 'iot/#' -v
 ```
 
-**Terminal 2 -- ejecutar el simulador** (con el venv activado):
+Para ver solo un tipo de contador, aprovechando la jerarquia del topico:
 
 ```bash
-cd pipeline/simulator
-python mqtt_simulator.py \
-    --parquet-path ../data/power_measurements.parquet \
-    --broker-host localhost --broker-port 1883 \
-    --rate 20 --limit 5000
+docker exec tfm-mosquitto mosquitto_sub -h localhost -t 'iot/+/+/chilledwater/telemetry' -v
 ```
 
-Si el simulador se ejecuta antes de que el broker este escuchando, falla con
-`ConnectionRefusedError: [Errno 111] Connection refused` al intentar
-`client.connect()`. Es el error esperado en ese caso (no un bug del script) --
-confirma que el broker no esta arriba todavia y hay que levantarlo primero
-(Terminal 1) antes de lanzar la Terminal 2.
+## Throughput y perdida
 
-Con el broker arriba, en la Terminal 1 deberian verse los topicos
-`iot/{company_id}/{site_id}/{machine_id}/telemetry` con el payload JSON
-llegando al ritmo indicado por `--rate`, y al finalizar la Terminal 2
-imprime el resumen de publicados/fallidos y la tasa de perdida.
+Cada `publish()` espera la confirmacion del broker (`wait_for_publish` con QoS
+1). Eso hace fiable el contador de perdidas y a la vez fija el techo de
+throughput del simulador: **~740 ev/s medidos**, muy por encima de los 50 ev/s
+que exige el Objetivo 3.
 
-## Medicion de latencia extremo a extremo (Objetivo 1)
+Al terminar imprime publicados, fallidos, tasa de perdida, duracion y
+throughput, y devuelve codigo de salida 1 si hubo algun fallo.
 
-El payload incluye `sim_publish_ts` (epoch millis, generado en el instante del
-`publish()`). Los campos `timestamp` / `ingest_ts` del dataset original son
-historicos y no deben usarse para calcular la latencia del pipeline: el KPI
-(percentil 95 < 2s) se calcula como `hora_de_persistencia_en_TimescaleDB -
-sim_publish_ts`.
+## Estado verificado
 
-## Pendiente (fases siguientes)
-
-- Serializacion Avro via Apicurio (sustituye el JSON actual)
-- Modo asincrono con pool de publishers para llegar a >=500 sensores
-  concurrentes (Objetivo 5)
-- Modo de replay historico con factor de aceleracion temporal, preservando
-  los deltas relativos entre eventos consecutivos de una misma maquina
-- Campo opcional reservado (p. ej. `firmware_version`) para la prueba de
-  evolucion de esquema compatible (Objetivo 2)
+- Publicacion contra Mosquitto con la topologia correcta
+  (`iot/2/156/electricity/telemetry`) y payload de cinco campos.
+- Escalera de sensores anidada: 100 ⊂ 250 ⊂ 500 ⊂ 652.
+- `--rebase-end now` desplaza el rango completo conservando las distancias
+  relativas entre eventos.
