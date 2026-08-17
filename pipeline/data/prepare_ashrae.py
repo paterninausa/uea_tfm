@@ -11,7 +11,7 @@ Parquet; el formato se detecta por la extension.
 
     train + building_metadata  ->  ashrae_telemetry.parquet
 
-SUBCONJUNTO POR DEFECTO: emplazamientos 2, 3 y 5.
+SUBCONJUNTO ELEGIDO: emplazamientos 2, 3 y 5.
 
 Se eligieron midiendo el dataset completo, no por conveniencia:
 
@@ -31,11 +31,15 @@ van 5 horas por delante del resto (pico a las 18h frente a las 13-14h, con
 correlacion de forma 0,99). Los demas emplazamientos estan en hora local y son
 mutuamente comparables sin conversion.
 
+Produce DOS ficheros, no uno: la tabla de hechos con lo que emite el contador y
+la tabla de dimension con los atributos estaticos del edificio.
+
 Uso:
     python prepare_ashrae.py \
         --train ./raw/train.parquet \
         --metadata ./raw/building_metadata.parquet \
-        --output ./ashrae_telemetry.parquet
+        --output-telemetry ./ashrae_telemetry.parquet \
+        --output-buildings ./ashrae_buildings.parquet
 """
 
 import argparse
@@ -59,7 +63,17 @@ def read_any(path: Path) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
-def prepare(train_path: Path, meta_path: Path, output_path: Path, sites: tuple) -> None:
+def prepare(train_path: Path, meta_path: Path, tel_path: Path, dim_path: Path,
+            sites: tuple) -> None:
+    # Guarda frente al fallo mas caro posible de este script: que las dos
+    # salidas apunten al mismo fichero y la segunda escritura destruya la
+    # primera en silencio.
+    if tel_path.resolve() == dim_path.resolve():
+        raise ValueError(
+            f"Las dos salidas apuntan al mismo fichero ({tel_path}). "
+            "Indica rutas distintas en --output-telemetry y --output-buildings."
+        )
+
     print(f"Leyendo metadatos de edificio: {meta_path}")
     meta = read_any(meta_path)
     meta_sub = meta[meta["site_id"].isin(sites)]
@@ -89,7 +103,7 @@ def prepare(train_path: Path, meta_path: Path, output_path: Path, sites: tuple) 
 
     # ---- TABLA DE HECHOS: solo lo que emitiria el contador -------------------
     # Sin event_id, sin sensor_id y sin caracteristicas del edificio. Un contador
-    # real envia quien es, cuando midio y cuanto midio; cualquier otra cosa la
+    # real envia quien es y cuanto midio; cualquier otra cosa la
     # anadiriamos nosotros y dejaria de reproducir su comportamiento.
     telemetria = df[["building_id", "meter_type", "timestamp", "meter_reading"]]
     # Orden cronologico: el simulador reproduce el historico en secuencia y el
@@ -109,12 +123,13 @@ def prepare(train_path: Path, meta_path: Path, output_path: Path, sites: tuple) 
 
     resumen(telemetria, dimension)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    telemetria.to_parquet(output_path, index=False)
-    dim_path = output_path.with_name(output_path.stem.replace("telemetry", "buildings") + ".parquet")
+    for p in (tel_path, dim_path):
+        p.parent.mkdir(parents=True, exist_ok=True)
+    telemetria.to_parquet(tel_path, index=False)
     dimension.to_parquet(dim_path, index=False)
 
-    for p in (output_path, dim_path):
+    print()
+    for p in (tel_path, dim_path):
         print(f"Escrito {p} ({p.stat().st_size / 1024:.0f} KB)")
 
 
@@ -165,7 +180,15 @@ def parse_args() -> argparse.Namespace:
                    help="Lecturas de contador (train.csv de Kaggle o su equivalente en Parquet)")
     p.add_argument("--metadata", type=Path, default=aqui / "raw/building_metadata.parquet",
                    help="Metadatos de edificio (building_metadata.csv o Parquet)")
-    p.add_argument("--output", type=Path, default=aqui / "ashrae_telemetry.parquet")
+    # Las dos salidas se declaran por separado a proposito. Derivar la ruta de
+    # la dimension a partir de la del hecho (sustituyendo "telemetry" por
+    # "buildings" en el nombre) parecia comodo pero era peligroso: con
+    # cualquier ruta que no contuviera esa palabra, ambas apuntaban al mismo
+    # fichero y la dimension SOBRESCRIBIA la tabla de hechos, sin ningun error.
+    p.add_argument("--output-telemetry", type=Path, default=aqui / "ashrae_telemetry.parquet",
+                   help="Salida de la tabla de hechos (lecturas de contador)")
+    p.add_argument("--output-buildings", type=Path, default=aqui / "ashrae_buildings.parquet",
+                   help="Salida de la tabla de dimension (atributos de edificio)")
     p.add_argument("--sites", type=int, nargs="+", default=list(DEFAULT_SITES),
                    help="Emplazamientos a incluir (por defecto 2 3 5)")
     return p.parse_args()
@@ -173,4 +196,4 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     a = parse_args()
-    prepare(a.train, a.metadata, a.output, tuple(a.sites))
+    prepare(a.train, a.metadata, a.output_telemetry, a.output_buildings, tuple(a.sites))

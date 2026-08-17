@@ -1,19 +1,12 @@
 """
-Conversion del dataset original de Kaggle (Power Telemetry) a Parquet.
-
-Dataset: https://www.kaggle.com/datasets/khalilaraoui/power-telemetry
-Fichero: Power_measurements.xlsx
-
-Este script es un paso de preparacion de datos de UN SOLO USO: no forma
-parte del pipeline en ejecucion (simulador -> Mosquitto -> bridge -> Kafka
--> Spark Structured Streaming). Solo convierte el .xlsx original a .parquet
-para que el simulador (pipeline/simulator/mqtt_simulator.py) lo lea
-eficientemente.
+Este script es un paso de preparacion de datos, solo convierte el .xlsx 
+a .parquet para que el simulador (pipeline/simulator/mqtt_simulator.py) 
+lo lea eficientemente.
 
 Uso:
     python convert_to_parquet.py \
-        --input ./raw/Power_measurements.xlsx \
-        --output ./power_measurements.parquet
+        --input ./raw/<name>.xlsx \
+        --output ./<name>.parquet
 """
 
 import argparse
@@ -25,8 +18,7 @@ import pandas as pd
 def convert(input_path: Path, output_path: Path) -> None:
     if not input_path.exists():
         raise FileNotFoundError(
-            f"No se encontro {input_path}. Descarga primero el dataset "
-            "(ver README.md de este directorio)."
+            f"No se encontro {input_path}. Descarga primero el dataset"
         )
 
     print(f"Leyendo {input_path} ...")
@@ -42,10 +34,10 @@ def convert(input_path: Path, output_path: Path) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Convierte Power_measurements.xlsx (Kaggle) a Parquet"
+        description="Convierte .xlsx a Parquet"
     )
     parser.add_argument("--input", required=True, type=Path,
-                         help="Ruta al Power_measurements.xlsx descargado de Kaggle")
+                         help="Ruta del archivo .xlsx")
     parser.add_argument("--output", required=True, type=Path,
                          help="Ruta de salida para el Parquet")
     return parser.parse_args()
