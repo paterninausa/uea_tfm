@@ -5,13 +5,22 @@ emitiendo en directo. Es el punto de entrada del pipeline (Objetivo 1).
 
 ## Topologia de topicos
 
-    iot/{site_id}/{building_id}/{meter_type}/telemetry
+    iot/{building_id}/{meter_type}/telemetry
 
-Ejemplo real: `iot/2/156/electricity/telemetry`
+Ejemplo real: `iot/156/electricity/telemetry`
 
 **Un sensor es el par (edificio, tipo de contador).** Un mismo edificio con
 contador de electricidad y de agua fria son dos sensores con series
-independientes: 498 edificios dan 652 sensores.
+independientes: 498 edificios dan 652 sensores. El topico identifica
+exactamente eso: al sensor.
+
+**No hay nivel de emplazamiento.** `site_id` es derivable de `building_id` a
+traves de la tabla de dimension, igual que lo eran `event_id` y `sensor_id`
+antes de eliminarlos. Tenerlo tambien en el topico creaba una segunda fuente de
+verdad —topico y dimension podrian discrepar si un edificio se reasignara— y
+ademas nadie lo consumia: el bridge se suscribe a `iot/#` y nunca parte el
+topico. El emplazamiento entra en el analisis donde importa, en el broadcast
+join de Spark contra la dimension.
 
 ## Que va en el topico y que va en el payload
 
@@ -27,12 +36,7 @@ El payload lleva **solo lo que emitiria el contador**:
 }
 ```
 
-`site_id` aparece en el **topico** pero no en el payload. No es un descuido: un
-contador no transmite en que emplazamiento esta instalado, lo sabe la pasarela
-por su registro de dispositivos. El simulador lo obtiene cruzando con
-`ashrae_buildings.parquet` y lo usa **solo para enrutar**.
-
-Los demas atributos del edificio —uso, superficie, ano de construccion— no
+Los atributos del edificio —uso, superficie, ano de construccion— no
 aparecen en ninguna parte del mensaje: viven en la tabla de dimension y es
 Spark quien los incorpora con un broadcast join.
 
@@ -110,7 +114,7 @@ docker exec tfm-mosquitto mosquitto_sub -h localhost -t 'iot/#' -v
 Para ver solo un tipo de contador, aprovechando la jerarquia del topico:
 
 ```bash
-docker exec tfm-mosquitto mosquitto_sub -h localhost -t 'iot/+/+/chilledwater/telemetry' -v
+docker exec tfm-mosquitto mosquitto_sub -h localhost -t 'iot/+/chilledwater/telemetry' -v
 ```
 
 ## Throughput y perdida
@@ -126,7 +130,9 @@ throughput, y devuelve codigo de salida 1 si hubo algun fallo.
 ## Estado verificado
 
 - Publicacion contra Mosquitto con la topologia correcta
-  (`iot/2/156/electricity/telemetry`) y payload de cinco campos.
+  (`iot/156/electricity/telemetry`) y payload de cinco campos.
+- Filtrado jerarquico por tipo de contador: una suscripcion a
+  `iot/+/chilledwater/telemetry` recibe solo las lecturas de agua fria.
 - Escalera de sensores anidada: 100 ⊂ 250 ⊂ 500 ⊂ 652.
 - `--rebase-end now` desplaza el rango completo conservando las distancias
   relativas entre eventos.

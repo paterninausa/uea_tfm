@@ -33,13 +33,17 @@ Dentro de `references/` hay una serie de trabajos finales TFM que pueden ser usa
 - **Gobernanza de esquemas con Avro + Apicurio**: es uno de los aportes diferenciadores del trabajo frente a las implementaciones Kappa-IoT de referencia existentes (que no la incluyen). Debe soportar evolución de esquema compatible hacia adelante/atrás (ver Objetivo 2 abajo).
 - **Doble sumidero (dual sink)**: separar el consumo operacional en tiempo casi real (TimescaleDB → Grafana) del consumo analítico de negocio (PostgreSQL → Power BI). También es un aporte diferenciador documentado en el trabajo.
 
-## Estructura de tópicos MQTT (ya definida y validada)
+## Estructura de tópicos MQTT
 
 ```
-iot/{company_id}/{site_id}/{machine_id}/telemetry
+iot/{building_id}/{meter_type}/telemetry
 ```
 
-El simulador (`pipeline/simulator/mqtt_simulator.py`, si ya existe, revisar antes de tocar) incluye `sim_publish_ts` en el payload (epoch millis) para medir latencia extremo a extremo.
+Ejemplo: `iot/156/electricity/telemetry`. Un sensor es el par (edificio, tipo de contador): 498 edificios dan 652 sensores.
+
+No hay nivel de emplazamiento: `site_id` es derivable de `building_id` vía la tabla de dimensión, nadie lo consumía del tópico (el bridge se suscribe a `iot/#` y nunca lo parte), y tenerlo en ambos sitios creaba una segunda fuente de verdad.
+
+El simulador incluye `sim_publish_ts` en el payload (epoch millis) para medir latencia extremo a extremo.
 
 ## Dataset de referencia
 

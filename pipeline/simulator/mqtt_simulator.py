@@ -5,17 +5,22 @@ Lee el subconjunto de ASHRAE preparado por `pipeline/data/prepare_ashrae.py` y
 publica cada lectura como un mensaje MQTT, reproduciendo la topologia de
 topicos del trabajo:
 
-    iot/{site_id}/{building_id}/{meter_type}/telemetry
+    iot/{building_id}/{meter_type}/telemetry
 
 UN SENSOR ES EL PAR (edificio, tipo de contador). Un mismo edificio con
 contador de electricidad y de agua fria son dos sensores con series
 independientes; el subconjunto en uso tiene 652.
 
+EL TOPICO SOLO IDENTIFICA AL SENSOR. No lleva nivel de emplazamiento: `site_id`
+es derivable de `building_id` a traves de la tabla de dimension, igual que lo
+eran `event_id` y `sensor_id` antes de eliminarlos. Ponerlo tambien en el
+topico creaba una segunda fuente de verdad —topico y dimension podrian
+discrepar si un edificio se reasignara— sin que nada lo consumiera: el bridge
+se suscribe a `iot/#` y nunca parte el topico. El emplazamiento entra en el
+analisis donde importa, en el broadcast join de Spark contra la dimension.
+
 EL PAYLOAD SOLO LLEVA LO QUE EMITIRIA EL CONTADOR: identidad, instante y
-medida, mas `sim_publish_ts`. Los atributos del edificio no viajan en el
-evento; viven en la tabla de dimension. `site_id` aparece en el TOPICO pero no
-en el payload, igual que en un despliegue real, donde la pasarela sabe donde
-esta instalado el dispositivo aunque el dispositivo no lo transmita.
+medida, mas `sim_publish_ts`.
 
 Uso:
     python mqtt_simulator.py --rate 100 --limit 5000
@@ -38,31 +43,21 @@ from paho.mqtt.enums import CallbackAPIVersion
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("mqtt_simulator")
 
-TOPIC_TEMPLATE = "iot/{site_id}/{building_id}/{meter_type}/telemetry"
+TOPIC_TEMPLATE = "iot/{building_id}/{meter_type}/telemetry"
 
 AQUI = Path(__file__).parent
 
 
-def cargar(telemetry_path: Path, buildings_path: Path) -> pd.DataFrame:
-    """Carga la tabla de hechos y le anade site_id SOLO para enrutar."""
-    for p in (telemetry_path, buildings_path):
-        if not p.exists():
-            raise FileNotFoundError(
-                f"No se encontro {p}. Genera los datos primero: "
-                "python pipeline/data/prepare_ashrae.py"
-            )
+def cargar(telemetry_path: Path) -> pd.DataFrame:
+    """Carga la tabla de hechos. No necesita la dimension: el topico se
+    construye solo con los campos que emite el propio contador."""
+    if not telemetry_path.exists():
+        raise FileNotFoundError(
+            f"No se encontro {telemetry_path}. Genera los datos primero: "
+            "python pipeline/data/prepare_ashrae.py"
+        )
 
-    tel = pd.read_parquet(telemetry_path)
-    dim = pd.read_parquet(buildings_path)[["building_id", "site_id"]]
-
-    # El cruce con la dimension es exclusivamente para construir el topico. En
-    # un despliegue real equivale a que la pasarela conoce el emplazamiento de
-    # cada dispositivo por su registro, sin que el dispositivo lo transmita.
-    df = tel.merge(dim, on="building_id", how="left")
-    if df["site_id"].isna().any():
-        faltan = sorted(df.loc[df["site_id"].isna(), "building_id"].unique())[:5]
-        raise ValueError(f"Edificios sin entrada en la tabla de dimension: {faltan}")
-
+    df = pd.read_parquet(telemetry_path)
     logger.info("Cargados %s eventos | %s sensores | %s edificios",
                 f"{len(df):,}",
                 f"{df.groupby(['building_id', 'meter_type']).ngroups:,}",
@@ -120,8 +115,7 @@ def rebasar(df: pd.DataFrame, destino: str) -> pd.DataFrame:
 
 
 def build_topic(fila) -> str:
-    return TOPIC_TEMPLATE.format(site_id=fila.site_id, building_id=fila.building_id,
-                                 meter_type=fila.meter_type)
+    return TOPIC_TEMPLATE.format(building_id=fila.building_id, meter_type=fila.meter_type)
 
 
 def build_payload(fila) -> dict:
@@ -154,7 +148,7 @@ class GracefulShutdown:
 
 
 def run(args: argparse.Namespace) -> int:
-    df = cargar(args.telemetry, args.buildings)
+    df = cargar(args.telemetry)
     df = filtrar_sensores(df, args.max_sensors)
     if args.rebase_end:
         df = rebasar(df, args.rebase_end)
@@ -227,8 +221,6 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Simulador MQTT de telemetria IoT (TFM)")
     p.add_argument("--telemetry", type=Path, default=AQUI / "../data/ashrae_telemetry.parquet",
                    help="Tabla de hechos generada por prepare_ashrae.py")
-    p.add_argument("--buildings", type=Path, default=AQUI / "../data/ashrae_buildings.parquet",
-                   help="Tabla de dimension; se usa solo para construir el topico")
     p.add_argument("--broker-host", default="localhost")
     p.add_argument("--broker-port", type=int, default=1883)
     p.add_argument("--client-id", default="tfm-simulator")
