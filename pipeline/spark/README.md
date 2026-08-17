@@ -205,36 +205,80 @@ borrarlos hace que el job reprocese el topico desde el principio.
 
 ## Resultados medidos
 
-Sobre el stack completo (Kafka 4.3.1, TimescaleDB 2.29.1-oss, PostgreSQL 17,
-Spark 4.2.0 en `local[*]`), con el simulador publicando 90.000 eventos a 200 ev/s:
+Sobre el stack completo, estado limpio (topico recreado, tablas vacias,
+checkpoints borrados) y 50.000 eventos a 400 ev/s:
 
-| Metrica | Resultado |
+| Metrica | Resultado | Objetivo |
+|---|---|---|
+| Perdida de mensajes | **0,0000%** | < 0,1% ✓ |
+| Latencia de ingesta (evento -> PostgreSQL) p50 / p95 | **0,766 / 1,277 s** | < 2 s ✓ |
+| Disponibilidad del agregado (-> TimescaleDB) p50 / p95 | 5,660 / 6,916 s | — |
+
+### Pruebas de carga (Objetivo 5)
+
+Escalera de sensores concurrentes, 20.000 eventos por peldano sin limite de
+tasa:
+
+| Sensores | Throughput | Perdida |
+|---|---|---|
+| 100 (primera ejecucion, en frio) | 1.062,6 ev/s | 0,0000% |
+| 250 | 1.226,0 ev/s | 0,0000% |
+| 500 | 1.270,8 ev/s | 0,0000% |
+| 652 | 1.331,9 ev/s | 0,0000% |
+
+El throughput parecia **subir** con mas sensores, lo que no tenia sentido. Se
+sospecho de un sesgo de calentamiento —la escalera se ejecuto en orden
+creciente, asi que JIT y conexiones favorecian a los ultimos peldanos— y se
+controlo repitiendo el primero al final:
+
+| Comparacion en igualdad de condiciones | Throughput |
 |---|---|
-| Perdida de mensajes | **0,0000%** |
-| Latencia MQTT -> PostgreSQL (evento) p50 / p95 | **0,800 s / 1,303 s** |
-| Latencia MQTT -> TimescaleDB (agregado) p50 / p95 | 8,380 s / 10,249 s |
-| Lecturas a cero | 3,66% |
-| Anomalias detectadas | **0,46%** |
-| Filas de metricas | 6.345 en 138 ventanas, 46 combinaciones |
+| 100 sensores, en caliente | **1.291,2 ev/s** |
+| 652 sensores, en caliente | **1.284,0 ev/s** |
 
-La tasa de anomalias del 0,46% concuerda con el 0,34% previsto al elegir el
-umbral de 5 x IQR sobre el dataset completo; la diferencia se explica porque la
-muestra son los primeros eventos del ano y no el conjunto entero.
+**Degradacion real: 0,6%**, muy por debajo del 20% que admite el Objetivo 5, y
+con 0,0000% de perdida en todos los peldanos. El bridge proceso 320.000 eventos
+sin perder ninguno.
 
-### La latencia del agregado empeoro y esta sin explicar
+La leccion metodologica vale para el trabajo: la escalera en orden creciente
+habria producido la conclusion falsa de que el sistema mejora al cargarlo.
 
-Con el dataset anterior este camino daba 3,55 s en p95; ahora da 10,25 s. La
-hipotesis es que el cuello esta en el sumidero, no en la agregacion: cada
-ventana de una hora agrega ahora una lectura de cada uno de los 652 sensores, se
-mantienen mas ventanas abiertas a la vez, y el UPSERT recoge las filas en el
-driver. **Es una hipotesis sin comprobar**; hay que medir la duracion de los
-micro-lotes antes de tocar nada.
+## Diagnostico de la latencia del agregado: parcial
 
-Parametros a revisar: `--max-offsets-per-trigger` (10.000 por defecto, quiza
-demasiado para un trigger de 1 s), el numero de particiones de shuffle, y la
-escritura por particion en lugar de recoger en el driver.
+Se encontro y corrigio **un bug real de la instrumentacion**. `ingested_at` no
+se refrescaba en el `ON CONFLICT DO UPDATE`: al reescribir una fila existente se
+actualizaba `sim_publish_ts` al instante nuevo pero `ingested_at` conservaba el
+de la primera escritura. La latencia calculada salia entonces **negativa** —la
+fila parecia escrita antes de publicarse— y ocurre siempre que se reprocesa el
+log de Kafka, que es la operacion basica de una arquitectura Kappa.
 
-El camino de eventos individuales **si cumple** el objetivo de 2 s con holgura.
+Con el bug corregido y midiendo sobre estado limpio, la latencia del agregado
+bajo de 10,25 s a **6,92 s** en p95. Buena parte de aquella cifra era medicion
+contaminada, no latencia.
+
+**Donde se va el tiempo de cada micro-lote** (opcion `--log-progress`):
+
+| Fase | Consulta de metricas |
+|---|---|
+| `addBatch` (escritura al sumidero) | **480 ms — el 84%** |
+| `queryPlanning` | 15-24 ms |
+| `latestOffset` | 6-12 ms |
+| `walCommit` | 24-59 ms |
+| **`triggerExecution` total** | **572 ms** |
+
+**Tres hipotesis descartadas con medidas**:
+
+1. *El job va retrasado*: no. Procesa a 605 ev/s frente a 269 ev/s de entrada.
+2. *La granularidad de lote*: no. Con `--trigger 500ms` y
+   `--max-offsets-per-trigger 2000` la latencia paso de 6,92 a 6,65 s, un 4%.
+3. *La escritura domina la latencia extremo a extremo*: domina el LOTE (84%),
+   pero 572 ms de lote no explican 6,9 s de latencia.
+
+**Queda sin explicar** el grueso de esos ~6 s. La sospecha restante es la
+propagacion del watermark entre lotes: Spark lo calcula a partir del maximo
+tiempo de evento del lote ANTERIOR, de modo que cerrar una ventana cuesta
+varios lotes aunque los datos ya hayan llegado. Comprobarlo exige instrumentar
+el instante de cierre de cada ventana, que es el siguiente paso.
 
 ## Sobre el KPI de latencia del Objetivo 1
 

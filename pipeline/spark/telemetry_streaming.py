@@ -391,10 +391,20 @@ def make_upsert_writer(props: dict, table: str, conflict_cols: list[str]):
         valores = [tuple(a_utc(v) for v in fila) for fila in filas]
 
         actualizables = [c for c in columnas if c not in conflict_cols]
+        # ingested_at se refresca en el UPDATE, no solo en el INSERT.
+        #
+        # Sin esto, al reescribir una fila existente se actualizaba
+        # sim_publish_ts al instante de publicacion nuevo pero ingested_at
+        # conservaba el de la primera escritura, dejando un par incoherente. La
+        # latencia calculada como ingested_at - sim_publish_ts salia entonces
+        # NEGATIVA, porque la fila parecia haberse escrito antes de publicarse.
+        # Ocurre siempre que se reprocesa el log de Kafka, que es la operacion
+        # basica de una arquitectura Kappa.
         sql = (
             f"INSERT INTO {table} ({', '.join(columnas)}) VALUES %s "
             f"ON CONFLICT ({', '.join(conflict_cols)}) DO UPDATE SET "
             + ", ".join(f"{c} = EXCLUDED.{c}" for c in actualizables)
+            + ", ingested_at = now()"
         )
 
         conn = psycopg2.connect(
@@ -476,6 +486,37 @@ def db_props(args: argparse.Namespace, cual: str) -> dict:
 
 
 # --------------------------------------------------------------------------
+def arrancar_monitor(consultas: list, intervalo: float) -> None:
+    """Hilo que publica las metricas de progreso de cada consulta.
+
+    Spark las expone en `query.lastProgress`, pero no las escribe en el log con
+    la configuracion habitual. Sin ellas, diagnosticar una latencia alta es
+    adivinar: `durationMs` desglosa cuanto se va en leer offsets, planificar,
+    ejecutar el lote y escribir en el sumidero, que es justo lo que hace falta
+    para saber donde esta el cuello.
+    """
+    import threading
+
+    def bucle():
+        while True:
+            _time.sleep(intervalo)
+            for q in consultas:
+                p = q.lastProgress
+                if not p:
+                    continue
+                d = p.get("durationMs", {})
+                logger.info(
+                    "[%s] lote=%s filas=%s entrada=%.1f ev/s proceso=%.1f ev/s | "
+                    "total=%sms (addBatch=%sms consulta=%sms offsets=%sms plan=%sms wal=%sms)",
+                    q.name, p.get("batchId"), p.get("numInputRows"),
+                    p.get("inputRowsPerSecond") or 0, p.get("processedRowsPerSecond") or 0,
+                    d.get("triggerExecution"), d.get("addBatch"), d.get("queryPlanning"),
+                    d.get("latestOffset"), d.get("getBatch"), d.get("walCommit"),
+                )
+
+    threading.Thread(target=bucle, daemon=True).start()
+
+
 def run(args: argparse.Namespace) -> int:
     registry = ApicurioClient(args.registry_url)
     registry.check()
@@ -554,6 +595,9 @@ def run(args: argparse.Namespace) -> int:
                 .start()
             )
 
+    if args.log_progress:
+        arrancar_monitor(consultas, args.log_progress)
+
     logger.info("Consultas en marcha: %s", [q.name for q in consultas])
     try:
         for q in consultas:
@@ -603,6 +647,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--group", default=DEFAULT_GROUP)
     p.add_argument("--artifact", default=DEFAULT_ARTIFACT)
     p.add_argument("--spark-log-level", default="WARN")
+    p.add_argument("--log-progress", type=float, default=0,
+                   help="Segundos entre informes de progreso de cada consulta (0 = desactivado). "
+                        "Desglosa donde se va el tiempo de cada micro-lote")
     return p.parse_args()
 
 
