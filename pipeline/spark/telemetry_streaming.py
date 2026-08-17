@@ -505,13 +505,17 @@ def arrancar_monitor(consultas: list, intervalo: float) -> None:
                 if not p:
                     continue
                 d = p.get("durationMs", {})
+                # eventTime lleva el watermark y el maximo tiempo de evento del
+                # lote. Compararlos con el reloj de pared es lo que permite
+                # separar el retraso de cierre de ventana del de escritura.
+                et = p.get("eventTime", {})
                 logger.info(
-                    "[%s] lote=%s filas=%s entrada=%.1f ev/s proceso=%.1f ev/s | "
-                    "total=%sms (addBatch=%sms consulta=%sms offsets=%sms plan=%sms wal=%sms)",
+                    "[%s] lote=%s filas=%s salida=%s | total=%sms (addBatch=%sms) | "
+                    "evento_max=%s watermark=%s",
                     q.name, p.get("batchId"), p.get("numInputRows"),
-                    p.get("inputRowsPerSecond") or 0, p.get("processedRowsPerSecond") or 0,
-                    d.get("triggerExecution"), d.get("addBatch"), d.get("queryPlanning"),
-                    d.get("latestOffset"), d.get("getBatch"), d.get("walCommit"),
+                    (p.get("sink") or {}).get("numOutputRows"),
+                    d.get("triggerExecution"), d.get("addBatch"),
+                    et.get("max"), et.get("watermark"),
                 )
 
     threading.Thread(target=bucle, daemon=True).start()

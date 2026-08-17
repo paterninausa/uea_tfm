@@ -243,6 +243,174 @@ sin perder ninguno.
 La leccion metodologica vale para el trabajo: la escalera en orden creciente
 habria producido la conclusion falsa de que el sistema mejora al cargarlo.
 
+## Por que el agregado tarda ~6 s: diagnostico cerrado
+
+Se instrumento el cierre de ventana anadiendo el watermark y el maximo tiempo de
+evento al monitor de progreso (`--log-progress`). El resultado explica la cifra
+por completo, y la causa no es una ineficiencia del pipeline.
+
+### Lo que se ve en el log
+
+```
+lote=2  evento_max=01:00  watermark=2015-12-31T23:58
+lote=3  evento_max=01:00  watermark=00:58
+lote=4  evento_max=01:00  watermark=00:58
+lote=5  evento_max=02:00  watermark=00:58
+lote=6  evento_max=02:00  watermark=01:58
+```
+
+Dos hechos:
+
+1. **El watermark va un lote por detras.** En el lote N vale (maximo tiempo de
+   evento del lote N-1) menos el margen. Es comportamiento documentado de Spark
+   y explica una parte pequena.
+
+2. **El tiempo de evento avanza a saltos de una hora exacta.** ASHRAE mide en
+   punto: no existen instantes intermedios. Para cerrar la ventana 00:00-01:00
+   hace falta un watermark mayor que 01:00, o sea tiempo de evento mayor que
+   01:02; y como el siguiente valor posible es **02:00**, hay que esperar a que
+   llegue la hora siguiente entera.
+
+**El watermark de 2 minutos es por tanto irrelevante aqui**: cualquier valor
+entre 0 y 1 hora produce exactamente la misma espera. Lo que fija la latencia es
+cuanto se tarda en publicar una hora de datos, es decir 652 lecturas —una por
+sensor— divididas por la tasa de publicacion.
+
+### La prediccion y su comprobacion
+
+Si la causa es esa, publicar mas despacio debe alargar la latencia
+proporcionalmente. Medido:
+
+| Tasa | Publicar 1 hora de evento | Latencia p50 |
+|---|---|---|
+| 262 ev/s | 2,49 s | 5,66 s |
+| 110 ev/s | 5,93 s | 10,89 s |
+
+Ajustando ambos puntos: **latencia ≈ 1,5 × (652 / tasa) + 1,9 s**. El factor 1,5
+corresponde a esperar el resto de la hora propia mas parte de la siguiente; el
+termino constante de 1,9 s es el micro-lote mas el retraso del watermark.
+
+### Que significa esto para el trabajo
+
+**La latencia del agregado esta acotada por abajo por el intervalo de muestreo
+de los sensores.** Un agregado horario no puede existir antes de que termine la
+hora que resume, y con contadores que miden una vez por hora eso significa
+esperar a la lectura siguiente. En un despliegue real esa espera es de una hora
+de reloj; aqui se comprime porque el replay va acelerado.
+
+Comparar esa cifra con un KPI de 2 segundos es un error de categoria: no mide la
+velocidad del pipeline, mide la cadencia del sensor. La latencia que si mide el
+pipeline es la de ingesta a grano de evento, **1,277 s en p95**, por debajo del
+objetivo.
+
+Las tres hipotesis previas quedan descartadas con medidas: el job no va
+retrasado (procesa a 605 ev/s frente a 269 de entrada), la granularidad de lote
+apenas influye (trigger de 500 ms deja la latencia en 6,65 s frente a 6,92) y
+`addBatch` domina el lote con el 84% de 572 ms, pero 572 ms no explican 6,9 s.
+
+## Evolucion de esquema: drenar y conmutar
+
+El job deserializa todo el flujo con **un unico esquema**, el vigente al
+arrancar, porque `from_avro` recibe uno solo. No sabe consumir dos versiones a
+la vez. En lugar de anadir resolucion de esquema por mensaje, se adopta un
+procedimiento operativo que hace que **la coexistencia no llegue a ocurrir**:
+
+1. **Parar el simulador.** Deja de entrar telemetria nueva.
+2. **Esperar unos segundos.** El bridge vacia su buffer y el job alcanza el
+   final del topico.
+3. **Registrar la version nueva** con `register_schema.py`.
+4. **Reiniciar el bridge.** Pasa a producir con el esquema nuevo.
+5. **Reiniciar el job.** Pasa a leer con el esquema nuevo.
+6. **Reanudar el simulador.**
+
+La interrupcion son segundos y **no se pierde ningun evento**: Kafka retiene 7
+dias, el job reanuda desde su checkpoint y el bridge desde su sesion MQTT
+persistente. Ambas recuperaciones estan verificadas por separado.
+
+Es la opcion mas sencilla de explicar y de defender, y no requiere codigo
+adicional. La alternativa —resolver el esquema de cada mensaje por su
+`globalId` contra el registro— se descarto a proposito: `ApicurioClient` ya
+tiene el metodo y la cache necesarios, pero anade complejidad que este trabajo
+no necesita.
+
+### Si el procedimiento se ejecuta mal, el job se detiene
+
+`guard_schema_version` comprueba el `globalId` de cada evento y **detiene el
+job** si no es el esperado. Antes lo *filtraba*, y esa era la ultima via de
+perdida silenciosa del pipeline: los eventos de una version inesperada
+desaparecian sin contador ni traza, justo en el momento en que mas importa.
+
+Detenerse es preferible a descartar, y no por purismo: con 7 dias de retencion
+en Kafka, **parar es recuperable** —se corrige y se reanuda desde el checkpoint
+sin perder un evento— mientras que descartar es irreversible.
+
+La comprobacion se aplica sobre la columna `meter_reading` y no como columna
+aparte, para que el optimizador no pueda eliminarla. Verificado: inyectando un
+evento con `globalId=99` en un flujo donde `meter_reading` solo se usa dentro
+de una agregacion, el job aborta con el mensaje completo, y la traza muestra
+que la comprobacion se evaluo dentro del propio `hashAgg`.
+
+## Uso
+
+Requiere el stack levantado, el esquema registrado y el bridge en marcha:
+
+```bash
+docker compose -f pipeline/docker-compose.yml up -d
+```
+
+```bash
+python pipeline/spark/telemetry_streaming.py --sink both
+```
+
+Opciones: `--sink metrics|events|both`, `--console` (depuracion sin bases de
+datos), `--window`, `--watermark`, `--trigger`, `--starting-offsets`. Ver
+`--help`.
+
+El primer arranque descarga de Maven Central los conectores de Kafka, Avro y el
+driver JDBC; quedan cacheados en `~/.ivy2` y los siguientes no necesitan red.
+Los checkpoints viven en `pipeline/spark/checkpoints/` y no se versionan:
+borrarlos hace que el job reprocese el topico desde el principio.
+
+## Resultados medidos
+
+Sobre el stack completo, estado limpio (topico recreado, tablas vacias,
+checkpoints borrados) y 50.000 eventos a 400 ev/s:
+
+| Metrica | Resultado | Objetivo |
+|---|---|---|
+| Perdida de mensajes | **0,0000%** | < 0,1% ✓ |
+| Latencia de ingesta (evento -> PostgreSQL) p50 / p95 | **0,766 / 1,277 s** | < 2 s ✓ |
+| Disponibilidad del agregado (-> TimescaleDB) p50 / p95 | 5,660 / 6,916 s | — |
+
+### Pruebas de carga (Objetivo 5)
+
+Escalera de sensores concurrentes, 20.000 eventos por peldano sin limite de
+tasa:
+
+| Sensores | Throughput | Perdida |
+|---|---|---|
+| 100 (primera ejecucion, en frio) | 1.062,6 ev/s | 0,0000% |
+| 250 | 1.226,0 ev/s | 0,0000% |
+| 500 | 1.270,8 ev/s | 0,0000% |
+| 652 | 1.331,9 ev/s | 0,0000% |
+
+El throughput parecia **subir** con mas sensores, lo que no tenia sentido. Se
+sospecho de un sesgo de calentamiento —la escalera se ejecuto en orden
+creciente, asi que JIT y conexiones favorecian a los ultimos peldanos— y se
+controlo repitiendo el primero al final:
+
+| Comparacion en igualdad de condiciones | Throughput |
+|---|---|
+| 100 sensores, en caliente | **1.291,2 ev/s** |
+| 652 sensores, en caliente | **1.284,0 ev/s** |
+
+**Degradacion real: 0,6%**, muy por debajo del 20% que admite el Objetivo 5, y
+con 0,0000% de perdida en todos los peldanos. El bridge proceso 320.000 eventos
+sin perder ninguno.
+
+La leccion metodologica vale para el trabajo: la escalera en orden creciente
+habria producido la conclusion falsa de que el sistema mejora al cargarlo.
+
 ## Diagnostico de la latencia del agregado: parcial
 
 Se encontro y corrigio **un bug real de la instrumentacion**. `ingested_at` no
