@@ -215,7 +215,7 @@ def load_reference(spark: SparkSession, dim_path: Path, base_path: Path):
     dimension = spark.read.parquet(str(dim_path)).select(
         "building_id", "site_id", "primary_use", "square_feet")
     linea_base = spark.read.parquet(str(base_path)).select(
-        "building_id", "meter_type", "baseline_p50", "baseline_p75", "baseline_iqr")
+        "building_id", "meter_type", "baseline_p75", "baseline_iqr")
 
     logger.info("Referencia cargada: %d edificios, %d sensores con linea base",
                 dimension.count(), linea_base.count())
