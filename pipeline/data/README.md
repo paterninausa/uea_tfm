@@ -66,13 +66,16 @@ Produce dos ficheros, que no se versionan por estar en `.gitignore`:
 | Fichero | Contenido | Tamano |
 |---|---|---|
 | `ashrae_telemetry.parquet` | Tabla de hechos: 5.682.185 lecturas | ~18 MB |
-| `ashrae_buildings.parquet` | Tabla de dimensiones | ~11 KB |
+| `ashrae_buildings.parquet` | Dimension: 498 edificios | ~11 KB |
+| `ashrae_sensor_baseline.parquet` | Cuartiles del historico de cada contador | ~23 KB |
+
+La linea base la usan Spark, para marcar picos atipicos contra el historial del
+propio contador, y Power BI, que la recibe cargada en PostgreSQL y puede ajustar
+el umbral sin tocar el pipeline. Se calcula aqui, una sola vez, porque exige
+recorrer el historico completo.
 
 Cada salida tiene su propio argumento, `--output-telemetry` y
 `--output-buildings`, y el script aborta si ambas apuntan al mismo fichero.
-Deducir la ruta de la dimension a partir de la del hecho parecia mas comodo,
-pero con cualquier ruta que no contuviera la palabra `telemetry` las dos
-coincidian y la dimension sobrescribia la tabla de hechos sin dar ningun error.
 
 ## El subconjunto elegido: emplazamientos 2, 3 y 5
 
