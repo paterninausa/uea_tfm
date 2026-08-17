@@ -52,6 +52,41 @@ Con el replay acelerado, el tiempo de evento avanza mucho mas rapido que el
 reloj, de modo que las ventanas se cierran continuamente y el flujo se comporta
 como un sistema en regimen.
 
+## Reparto de calculos: quien calcula que
+
+El criterio es uno solo: **si el consumidor puede derivarlo con lo que ya tiene,
+que lo derive el**. Si necesita datos que no le llegan, lo calcula el pipeline.
+
+| Quien | Que calcula | Por que ahi |
+|---|---|---|
+| `prepare_ashrae.py` | Linea base por contador | Una vez, sobre el historico completo |
+| `enrich` en Spark | Solo lo que consume la agregacion | Las claves y banderas que Grafana necesita por ventana |
+| PostgreSQL | Nada: guarda lecturas crudas y las dos tablas de referencia | — |
+| Power BI | Intensidad, atipicos, ceros, umbrales | Un join le basta, y es potente |
+
+Por eso **la tabla de eventos no tiene campos derivados ni copias de la
+dimension**: seis columnas, la clave natural mas la medida y la instrumentacion.
+Persistir intensidad o banderas seria almacenar 5,68 millones de valores
+derivables, y ademas congelar en el pipeline unos umbrales que el analista
+deberia poder mover.
+
+Comprobado que Power BI se basta con lo que recibe:
+
+| Consulta sobre las tablas crudas | Resultado | Tiempo |
+|---|---|---|
+| Intensidad energetica por uso de edificio | Utility 0,0107, Manufacturing 0,0066... | 15,3 ms |
+| Atipicos con umbral `p75 + 5 x IQR` | 0,36% | 8,5 ms |
+| **El analista cambia el umbral a `3 x IQR`** | **0,96%, sin tocar el pipeline** | 5,4 ms |
+| Lecturas a cero | 4,12% | 1,7 ms |
+
+La tercera fila es la que justifica la decision: mover un umbral pasa de exigir
+un cambio de codigo, un reinicio y un reproceso, a ser una consulta distinta.
+
+Las mismas cifras **si** se agregan en TimescaleDB, porque alli no son
+reconstruibles: `avg_energy_intensity` es un cociente de sumas —no la media de
+cocientes— y `zero_count` y `anomaly_count` resumen una ventana entera que ya no
+esta disponible fila a fila.
+
 ## Deteccion de anomalias: contra la linea base del propio sensor
 
 El umbral se eligio **midiendo la tasa de disparo** sobre los 5,68 M de eventos,

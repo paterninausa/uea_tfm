@@ -27,7 +27,28 @@ CREATE TABLE IF NOT EXISTS buildings (
 );
 
 -- ---------------------------------------------------------------------------
--- Hechos: lecturas enriquecidas
+-- Linea base por sensor
+-- ---------------------------------------------------------------------------
+-- Cuartiles del historico de cada contador, calculados una vez por
+-- prepare_ashrae.py. Se cargan aqui para que Power BI pueda marcar por si mismo
+-- las lecturas atipicas con un join sencillo, en lugar de recalcular
+-- percentiles sobre todo el historico en cada consulta.
+--
+-- Cada contador solo es comparable consigo mismo: los edificios van de 801 a
+-- 850.354 pies cuadrados y cada medio tiene su unidad, asi que no existe un
+-- umbral global valido.
+CREATE TABLE IF NOT EXISTS sensor_baseline (
+    building_id    INTEGER          NOT NULL,
+    meter_type     TEXT             NOT NULL,
+    baseline_p25   DOUBLE PRECISION,
+    baseline_p50   DOUBLE PRECISION,
+    baseline_p75   DOUBLE PRECISION,
+    baseline_iqr   DOUBLE PRECISION,
+    PRIMARY KEY (building_id, meter_type)
+);
+
+-- ---------------------------------------------------------------------------
+-- Hechos: lecturas de contador
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS telemetry_events (
     -- Identidad: la CLAVE NATURAL del evento. No hay id inventado; se verifico
@@ -47,21 +68,17 @@ CREATE TABLE IF NOT EXISTS telemetry_events (
     -- fria, vapor y agua caliente no son comparables ni sumables entre si.
     meter_reading        DOUBLE PRECISION,
 
-    -- Copia desnormalizada de las dos dimensiones que filtran casi todos los
-    -- informes. Se aceptan a proposito para que Power BI no necesite el join en
-    -- las consultas mas frecuentes; el resto de atributos se consultan en
-    -- `buildings`.
-    site_id              INTEGER,
-    primary_use          TEXT,
-    square_feet          INTEGER,
-
-    -- Campos derivados, calculados una sola vez en el pipeline para que la
-    -- logica de negocio viva en un unico sitio y dos informes no puedan acabar
-    -- con definiciones distintas de la misma metrica.
-    energy_intensity     DOUBLE PRECISION,  -- consumo por pie cuadrado
-    is_zero_reading      BOOLEAN,           -- indicador de calidad, no anomalia
-    is_anomaly           BOOLEAN,
-    anomaly_reason       TEXT,
+    -- NO hay campos derivados ni copias de la dimension. Power BI tiene
+    -- `buildings` y `sensor_baseline` cargadas y calcula lo suyo con un join:
+    -- intensidad energetica como meter_reading/square_feet, lecturas atipicas
+    -- comparando contra baseline_p75 + k*baseline_iqr, lecturas a cero como
+    -- meter_reading = 0. Persistir esas columnas seria almacenar 5,68 millones
+    -- de valores que el consumidor puede derivar, y ademas fijar en el pipeline
+    -- unos umbrales que el analista deberia poder ajustar.
+    --
+    -- Las mismas cifras SI se agregan en TimescaleDB, porque alli no son
+    -- reconstruibles: avg_energy_intensity es un cociente de sumas, y
+    -- zero_count y anomaly_count resumen una ventana entera.
 
     -- Instrumentacion del KPI de latencia (Objetivo 1)
     sim_publish_ts       TIMESTAMPTZ,
@@ -70,15 +87,14 @@ CREATE TABLE IF NOT EXISTS telemetry_events (
     PRIMARY KEY (building_id, meter_type, event_time)
 );
 
-CREATE INDEX IF NOT EXISTS idx_events_time      ON telemetry_events (event_time DESC);
-CREATE INDEX IF NOT EXISTS idx_events_site_use  ON telemetry_events (site_id, primary_use);
-CREATE INDEX IF NOT EXISTS idx_events_meter     ON telemetry_events (meter_type, event_time DESC);
--- Indices parciales: los informes de anomalias y de calidad filtran siempre por
--- su bandera, que es verdadera en una fraccion pequena de las filas.
-CREATE INDEX IF NOT EXISTS idx_events_anomaly   ON telemetry_events (event_time DESC) WHERE is_anomaly;
-CREATE INDEX IF NOT EXISTS idx_events_zero      ON telemetry_events (event_time DESC) WHERE is_zero_reading;
+CREATE INDEX IF NOT EXISTS idx_events_time   ON telemetry_events (event_time DESC);
+CREATE INDEX IF NOT EXISTS idx_events_meter  ON telemetry_events (meter_type, event_time DESC);
+-- Sin indices sobre banderas derivadas: ya no existen como columnas. Power BI
+-- filtra por el join contra la dimension y la linea base.
 
 COMMENT ON TABLE telemetry_events IS
-    'Lecturas enriquecidas a grano de evento. Escribe Spark, consume Power BI.';
+    'Lecturas crudas a grano de evento. Escribe Spark, consume Power BI.';
+COMMENT ON TABLE sensor_baseline IS
+    'Cuartiles historicos por contador. Se carga desde ashrae_sensor_baseline.parquet.';
 COMMENT ON TABLE buildings IS
     'Dimension de edificios. Se carga una vez desde ashrae_buildings.parquet.';

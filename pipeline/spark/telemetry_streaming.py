@@ -226,22 +226,19 @@ def load_reference(spark: SparkSession, dim_path: Path, base_path: Path):
 # Enriquecimiento
 # --------------------------------------------------------------------------
 def enrich(df: DataFrame, dimension: DataFrame, linea_base: DataFrame) -> DataFrame:
-    """Cruza con la referencia y anade los campos derivados.
+    """Cruza con la referencia y calcula SOLO lo que necesita la agregacion.
 
-    Se calculan aqui, una sola vez en el pipeline, y no en cada consulta del
-    informe: asi la logica de negocio vive en un unico sitio y dos informes no
-    pueden acabar con definiciones distintas de la misma metrica.
+    Los campos que produce no llegan a PostgreSQL: existen para que
+    `aggregate_metrics` pueda agrupar por emplazamiento y uso de edificio, y
+    contar ceros y anomalias por ventana. Todo lo que Power BI puede calcularse
+    solo —intensidad energetica, motivo de la anomalia— se ha retirado: recibe
+    las lecturas crudas y las dos tablas de referencia, y con eso se basta.
+
+    El criterio es: si el consumidor puede derivarlo con lo que ya tiene, que lo
+    derive el. Si necesita datos que no le llegan, lo calcula el pipeline.
     """
     df = df.join(dimension, on="building_id", how="left")
     df = df.join(linea_base, on=["building_id", "meter_type"], how="left")
-
-    # Intensidad energetica: consumo por pie cuadrado. Es la metrica estandar
-    # para comparar edificios de tamanos muy distintos —aqui van de 801 a
-    # 850.354 pies cuadrados— y es la base del informe de eficiencia operativa.
-    # SOLO ES COMPARABLE DENTRO DE UN MISMO meter_type, porque la unidad de
-    # meter_reading depende del medio.
-    intensidad = F.when(F.col("square_feet") > 0,
-                        F.col("meter_reading") / F.col("square_feet"))
 
     # Lectura exactamente cero: no se juzga como anomalia porque una sola no lo
     # es —un contador puede estar legitimamente parado unas horas—. Se marca
@@ -268,13 +265,9 @@ def enrich(df: DataFrame, dimension: DataFrame, linea_base: DataFrame) -> DataFr
     # Se descarto la regla de lectura negativa: es fisicamente imposible en un
     # contador y se comprobo que no ocurre ni una vez en el subconjunto. Una
     # regla que nunca dispara es indistinguible de una regla rota.
-    motivo = F.when(pico_atipico, F.lit("pico_atipico")).otherwise(F.lit(None))
-
     return (
-        df.withColumn("energy_intensity", intensidad)
-        .withColumn("is_zero_reading", lectura_cero)
-        .withColumn("anomaly_reason", motivo)
-        .withColumn("is_anomaly", F.col("anomaly_reason").isNotNull())
+        df.withColumn("is_zero_reading", lectura_cero)
+        .withColumn("is_anomaly", pico_atipico)
     )
 
 
@@ -310,7 +303,6 @@ def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str) -> Da
             # exigiria guardar en el estado todos los valores vistos.
             F.approx_count_distinct("building_id").alias("distinct_buildings"),
             F.avg("meter_reading").alias("avg_reading"),
-            F.min("meter_reading").alias("min_reading"),
             F.max("meter_reading").alias("max_reading"),
             F.sum("meter_reading").alias("sum_reading"),
             # Intensidad agregada como cociente de sumas, no como media de
@@ -329,7 +321,7 @@ def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str) -> Da
             F.col("window.end").alias("window_end"),
             "site_id", "primary_use", "meter_type",
             "event_count", "distinct_buildings",
-            "avg_reading", "min_reading", "max_reading", "sum_reading",
+            "avg_reading", "max_reading", "sum_reading",
             F.when(F.col("sum_square_feet") > 0,
                    F.col("sum_reading") / F.col("sum_square_feet"))
              .alias("avg_energy_intensity"),
@@ -413,31 +405,33 @@ def make_upsert_writer(props: dict, table: str, conflict_cols: list[str]):
     return write_batch
 
 
-def load_buildings_dimension(spark: SparkSession, dim_path: Path, props: dict) -> None:
-    """Vuelca la dimension de edificios en PostgreSQL al arrancar.
+def load_reference_tables(spark: SparkSession, dim_path: Path, base_path: Path,
+                          props: dict) -> None:
+    """Vuelca las dos tablas de referencia en PostgreSQL al arrancar.
 
-    Power BI consume un esquema en estrella, asi que la tabla de hechos necesita
-    su dimension al lado. Se carga aqui, y no con un script aparte, para que el
-    origen sea el mismo Parquet que alimenta el broadcast join y no puedan
-    divergir.
+    Es lo que hace autosuficiente a Power BI: con la dimension de edificios y la
+    linea base por contador puede calcular por si mismo la intensidad
+    energetica, las lecturas atipicas y cualquier umbral que el analista quiera
+    ajustar, con un join sencillo en lugar de recalcular percentiles sobre todo
+    el historico.
 
-    Es idempotente: son 498 filas con UPSERT sobre building_id, de modo que
-    reiniciar el job la deja igual en lugar de duplicarla.
+    Se cargan aqui, y no con un script aparte, para que el origen sea el mismo
+    Parquet que alimenta el broadcast join y no puedan divergir. Son 498 y 652
+    filas con UPSERT, asi que reiniciar el job las deja igual.
     """
     import psycopg2
     from psycopg2.extras import execute_values
-
-    filas = spark.read.parquet(str(dim_path)).select(
-        "building_id", "site_id", "primary_use",
-        "square_feet", "year_built", "floor_count").collect()
 
     def entero(v):
         # year_built y floor_count llegan como float por los nulos del origen.
         return None if v is None else int(v)
 
-    valores = [(r.building_id, r.site_id, r.primary_use,
-                entero(r.square_feet), entero(r.year_built), entero(r.floor_count))
-               for r in filas]
+    edificios = [(r.building_id, r.site_id, r.primary_use,
+                  entero(r.square_feet), entero(r.year_built), entero(r.floor_count))
+                 for r in spark.read.parquet(str(dim_path)).collect()]
+    baseline = [(r.building_id, r.meter_type, r.baseline_p25, r.baseline_p50,
+                 r.baseline_p75, r.baseline_iqr)
+                for r in spark.read.parquet(str(base_path)).collect()]
 
     conn = psycopg2.connect(host=props["host"], port=props["port"], dbname=props["dbname"],
                             user=props["user"], password=props["password"])
@@ -451,8 +445,18 @@ def load_buildings_dimension(spark: SparkSession, dim_path: Path, props: dict) -
                     site_id = EXCLUDED.site_id, primary_use = EXCLUDED.primary_use,
                     square_feet = EXCLUDED.square_feet, year_built = EXCLUDED.year_built,
                     floor_count = EXCLUDED.floor_count
-            """, valores, page_size=500)
-        logger.info("Dimension de edificios cargada en PostgreSQL: %d filas", len(valores))
+            """, edificios, page_size=500)
+            execute_values(cur, """
+                INSERT INTO sensor_baseline
+                    (building_id, meter_type, baseline_p25, baseline_p50,
+                     baseline_p75, baseline_iqr)
+                VALUES %s
+                ON CONFLICT (building_id, meter_type) DO UPDATE SET
+                    baseline_p25 = EXCLUDED.baseline_p25, baseline_p50 = EXCLUDED.baseline_p50,
+                    baseline_p75 = EXCLUDED.baseline_p75, baseline_iqr = EXCLUDED.baseline_iqr
+            """, baseline, page_size=500)
+        logger.info("Referencia cargada en PostgreSQL: %d edificios, %d lineas base",
+                    len(edificios), len(baseline))
     finally:
         conn.close()
 
@@ -519,16 +523,18 @@ def run(args: argparse.Namespace) -> int:
             )
 
         if args.sink in ("events", "both"):
-            load_buildings_dimension(spark, Path(args.buildings), db_props(args, "events"))
+            load_reference_tables(spark, Path(args.buildings), Path(args.baseline),
+                                  db_props(args, "events"))
 
-            # La clave primaria es la clave natural del evento, no un id
-            # inventado: es lo que hace idempotente el reprocesamiento.
+            # PostgreSQL recibe SOLO el contrato mas la instrumentacion. Ni
+            # copias de la dimension ni campos derivados: Power BI tiene las dos
+            # tablas de referencia cargadas y calcula lo suyo con un join, que
+            # es justo para lo que sirve. La clave primaria es la clave natural
+            # del evento, lo que hace idempotente el reprocesamiento.
             eventos_bd = enriquecidos.select(
                 "building_id", "meter_type",
                 F.col("timestamp").alias("event_time"),
-                "meter_reading", "site_id", "primary_use", "square_feet",
-                "energy_intensity", "is_zero_reading", "is_anomaly", "anomaly_reason",
-                "sim_publish_ts",
+                "meter_reading", "sim_publish_ts",
             )
             consultas.append(
                 eventos_bd.writeStream
