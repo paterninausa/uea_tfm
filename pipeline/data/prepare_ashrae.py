@@ -2,14 +2,16 @@
 Preparacion del dataset ASHRAE GEPIII para el pipeline del TFM.
 
 Une las lecturas de contador con los metadatos de edificio, se queda con el
-subconjunto de emplazamientos elegido y produce un unico Parquet plano, que es
-lo que reproduce el simulador MQTT.
+subconjunto de emplazamientos elegido y produce las tres tablas planas que
+alimentan el pipeline.
 
 Es un paso de UN SOLO USO, independiente del pipeline en ejecucion. Funciona
 con los ficheros originales de Kaggle (CSV) o con los mismos datos exportados a
 Parquet; el formato se detecta por la extension.
 
     train + building_metadata  ->  ashrae_telemetry.parquet
+                                   ashrae_buildings.parquet
+                                   ashrae_sensor_baseline.parquet
 
 SUBCONJUNTO ELEGIDO: emplazamientos 2, 3 y 5.
 
@@ -31,20 +33,23 @@ van 5 horas por delante del resto (pico a las 18h frente a las 13-14h, con
 correlacion de forma 0,99). Los demas emplazamientos estan en hora local y son
 mutuamente comparables sin conversion.
 
-Produce TRES ficheros:
+Produce TRES ficheros, con nombres fijos, en este mismo directorio:
 
-  - la tabla de hechos, con lo que emite el contador;
-  - la tabla de dimension, con los atributos estaticos del edificio;
-  - la linea base por sensor, cuartiles del historico de cada contador, que usa
-    Spark para detectar picos atipicos y Power BI para ajustar el umbral.
+  - `ashrae_telemetry.parquet`       la tabla de hechos, lo que emite el contador
+  - `ashrae_buildings.parquet`       la dimension con los atributos del edificio
+  - `ashrae_sensor_baseline.parquet` los cuartiles del historico de cada contador,
+                                     que usa Spark para detectar picos atipicos y
+                                     Power BI para ajustar el umbral
+
+Los nombres NO son configurables, y es deliberado: el simulador y el job de
+Spark ya los tienen cableados como valores por defecto, asi que un nombre
+distinto no lo seguiria nadie. Ademas, al no derivarse unas rutas de otras, dos
+salidas no pueden colisionar y sobra la comprobacion que antes hacia falta.
 
 Uso:
-    python prepare_ashrae.py \
-        --train ./raw/train.parquet \
-        --metadata ./raw/building_metadata.parquet \
-        --output-telemetry ./ashrae_telemetry.parquet \
-        --output-buildings ./ashrae_buildings.parquet \
-        --output-baseline ./ashrae_sensor_baseline.parquet
+    python prepare_ashrae.py
+    python prepare_ashrae.py --train ./raw/train.csv --metadata ./raw/building_metadata.csv
+    python prepare_ashrae.py --sites 2 3 5
 """
 
 import argparse

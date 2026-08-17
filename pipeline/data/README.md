@@ -61,7 +61,7 @@ que instalarlo encima del venv principal no reinstale nada.
 python prepare_ashrae.py
 ```
 
-Produce dos ficheros, que no se versionan por estar en `.gitignore`:
+Produce tres ficheros, que no se versionan por estar en `.gitignore`:
 
 | Fichero | Contenido | Tamano |
 |---|---|---|
@@ -74,8 +74,20 @@ propio contador, y Power BI, que la recibe cargada en PostgreSQL y puede ajustar
 el umbral sin tocar el pipeline. Se calcula aqui, una sola vez, porque exige
 recorrer el historico completo.
 
-Cada salida tiene su propio argumento, `--output-telemetry` y
-`--output-buildings`, y el script aborta si ambas apuntan al mismo fichero.
+Los nombres de salida **no son configurables**, y es deliberado: el simulador y
+el job de Spark ya los tienen cableados como valores por defecto, asi que un
+nombre distinto no lo seguiria ningun consumidor. Seria una opcion que solo
+sirve para romper el pipeline.
+
+Ademas elimina por construccion un riesgo que llego a aparecer dos veces: cuando
+la ruta de una salida se deducia de la de otra, ambas podian coincidir y la
+segunda escritura destruia la primera sin dar ningun error. Con tres nombres
+fijos e independientes la colision es imposible, y sobra la comprobacion que
+antes hacia falta.
+
+Los unicos argumentos son `--train`, `--metadata` y `--sites`, que si varian de
+verdad: los dos primeros permiten partir del CSV de Kaggle o de un Parquet, y el
+tercero cambia el subconjunto de emplazamientos.
 
 ## El subconjunto elegido: emplazamientos 2, 3 y 5
 
