@@ -192,84 +192,87 @@ def guard_schema_version(df: DataFrame, expected_global_id: int) -> DataFrame:
 
 
 # --------------------------------------------------------------------------
+# Datos de referencia (broadcast join)
+# --------------------------------------------------------------------------
+def load_reference(spark: SparkSession, dim_path: Path, base_path: Path):
+    """Carga las dos tablas de referencia estaticas que enriquecen el flujo.
+
+    Son pequenas —498 edificios y 652 sensores— asi que se difunden a todos los
+    ejecutores con broadcast: cada micro-lote las cruza en memoria, sin shuffle.
+    Es el patron estandar de union flujo-estatico de Structured Streaming.
+
+    Que estos atributos vivan aqui y no en el evento es deliberado: son del
+    edificio, no del contador. Si manana se corrige el ano de construccion de un
+    edificio se actualiza una fila, mientras que desnormalizados en cada evento
+    habria que reprocesar el historico entero.
+    """
+    for p in (dim_path, base_path):
+        if not p.exists():
+            raise FileNotFoundError(
+                f"No se encontro {p}. Genera los datos de referencia: "
+                "python pipeline/data/prepare_ashrae.py")
+
+    dimension = spark.read.parquet(str(dim_path)).select(
+        "building_id", "site_id", "primary_use", "square_feet")
+    linea_base = spark.read.parquet(str(base_path)).select(
+        "building_id", "meter_type", "baseline_p50", "baseline_p75", "baseline_iqr")
+
+    logger.info("Referencia cargada: %d edificios, %d sensores con linea base",
+                dimension.count(), linea_base.count())
+    return F.broadcast(dimension), F.broadcast(linea_base)
+
+
+# --------------------------------------------------------------------------
 # Enriquecimiento
 # --------------------------------------------------------------------------
-def enrich(df: DataFrame, nominal_interval_s: int) -> DataFrame:
-    """Anade los campos derivados que consumira Power BI.
+def enrich(df: DataFrame, dimension: DataFrame, linea_base: DataFrame) -> DataFrame:
+    """Cruza con la referencia y anade los campos derivados.
 
     Se calculan aqui, una sola vez en el pipeline, y no en cada consulta del
     informe: asi la logica de negocio vive en un unico sitio y dos informes no
     pueden acabar con definiciones distintas de la misma metrica.
     """
-    # Potencia aparente (VA) = tension x intensidad. Junto al factor de
-    # potencia permite razonar sobre la potencia reactiva, que es lo que
-    # penalizan las companias electricas.
-    potencia_aparente = F.col("voltage") * F.col("current_amp")
+    df = df.join(dimension, on="building_id", how="left")
+    df = df.join(linea_base, on=["building_id", "meter_type"], how="left")
 
-    # Energia NOMINAL, no real: asume que la potencia medida se mantiene
-    # durante el intervalo de muestreo nominal del flujo (30 s). Se comprobo
-    # que ese es el ritmo GLOBAL del dataset y que cada maquina concreta
-    # reporta con mucha menos frecuencia, asi que esto NO es la integral de
-    # energia de la maquina: es un indicador comparable entre eventos, y como
-    # tal debe interpretarse en los informes.
-    energia_wh = F.col("power_watts") * (nominal_interval_s / 3600.0)
+    # Intensidad energetica: consumo por pie cuadrado. Es la metrica estandar
+    # para comparar edificios de tamanos muy distintos —aqui van de 801 a
+    # 850.354 pies cuadrados— y es la base del informe de eficiencia operativa.
+    # SOLO ES COMPARABLE DENTRO DE UN MISMO meter_type, porque la unidad de
+    # meter_reading depende del medio.
+    intensidad = F.when(F.col("square_feet") > 0,
+                        F.col("meter_reading") / F.col("square_feet"))
 
-    # Reglas de anomalia. El dataset no trae etiquetas, asi que no hay forma de
-    # validar un detector aprendido: se usan condiciones de dominio explicitas
-    # y auditables, cada una dejando constancia del motivo.
-    #
-    # Las reglas se eligieron midiendo su tasa de disparo sobre el millon de
-    # filas, no por intuicion. Se DESCARTARON estas tres, que parecen
-    # razonables pero no discriminan nada en estos datos:
-    #
-    #   sensor_status = WARN            -> dispara en el 25,04% de los eventos
-    #   measurement_quality = ESTIMATED -> dispara en el 33,25%
-    #   power_factor < 0,75             -> dispara en el 15,00%
-    #
-    # Su union marcaba el 57,49% del dataset: un informe que senala a la
-    # mayoria de los eventos no detecta anomalias, renombra la normalidad. La
-    # causa es que el dataset es sintetico y esos campos siguen distribuciones
-    # casi uniformes (power_factor es uniforme entre 0,70 y 1,00, de modo que
-    # cualquier umbral fijo marca una fraccion fija sin ninguna senal).
-    #
-    # sensor_status y measurement_quality siguen disponibles como columnas en
-    # esta misma tabla, asi que Power BI puede filtrar por ellos cuando
-    # interese; simplemente no son anomalias. Ademas ya van agregados en
-    # TimescaleDB como warn_count y estimated_count.
+    # Lectura exactamente cero: no se juzga como anomalia porque una sola no lo
+    # es —un contador puede estar legitimamente parado unas horas—. Se marca
+    # como indicador de calidad y son las AGREGACIONES las que revelan el
+    # patron: se midio que las rachas de ceros llegan a durar 8.051 horas
+    # seguidas, 335 dias, lo que ya no es una medida sino un contador muerto.
+    # Detectar la racha evento a evento exigiria procesamiento con estado.
+    lectura_cero = F.col("meter_reading") == 0
 
-    # Regla 1 - incoherencia electrica: la potencia declarada se aparta mas de
-    # un 50% de la que implican tension, intensidad y factor de potencia. El
-    # error relativo mediano en estos datos es del 15%, asi que el umbral del
-    # 50% deja fuera el ruido de generacion y solo marca el 0,21% de los casos.
-    potencia_teorica = F.col("voltage") * F.col("current_amp") * F.col("power_factor")
-    error_relativo = F.abs(F.col("power_watts") - potencia_teorica) / F.greatest(
-        F.col("power_watts"), F.lit(1e-9)
+    # Regla de pico atipico, contra la linea base del PROPIO sensor. Un umbral
+    # global no serviria: cada contador solo es comparable consigo mismo.
+    #
+    # El umbral se eligio midiendo la tasa de disparo sobre los 5,68 M de
+    # eventos, no por intuicion: p75 + 3*IQR marca el 0,95%, 5*IQR el 0,34% y
+    # 10*IQR el 0,04%. Se toma 5*IQR por dejar una tasa de anomalias creible.
+    # Los 17 sensores con IQR = 0 quedan exentos: sin dispersion historica no
+    # hay forma de definir que es atipico para ellos.
+    pico_atipico = (
+        F.col("baseline_iqr").isNotNull()
+        & (F.col("baseline_iqr") > 0)
+        & (F.col("meter_reading") > F.col("baseline_p75") + 5 * F.col("baseline_iqr"))
     )
 
-    # Regla 2 - equipo encendido sin consumo: contradiccion entre el estado
-    # declarado y la medida. Dispara en el 0,03% de los eventos.
-    # El ORDEN importa: se evalua primero la regla especifica y despues la
-    # general. Se comprobo que toda fila con "ON y corriente cero" tiene
-    # tambien potencia teorica cero y, por tanto, un error relativo del 100%,
-    # de modo que la regla de incoherencia la absorbe si va antes. Con el orden
-    # inverso, esas filas se etiquetaban todas como "incoherencia_electrica" y
-    # el motivo mas preciso —y mas accionable para mantenimiento— nunca
-    # aparecia en el informe.
-    motivo = (
-        F.when((F.col("device_state") == "ON") & (F.col("current_amp") <= 0.0),
-               F.lit("equipo_encendido_sin_consumo"))
-        .when(error_relativo > 0.5, F.lit("incoherencia_electrica"))
-        .otherwise(F.lit(None))
-    )
-    # Pendiente: una tercera regla por desviacion respecto al consumo tipico de
-    # cada machine_model. Se midio que los modelos forman poblaciones muy
-    # separadas (mediana de 8 W en un movil frente a 27.450 W en un chiller,
-    # un rango de 3.400x), asi que un umbral global no sirve y hace falta una
-    # tabla de referencia por modelo unida al flujo mediante broadcast join.
+    # Se descarto la regla de lectura negativa: es fisicamente imposible en un
+    # contador y se comprobo que no ocurre ni una vez en el subconjunto. Una
+    # regla que nunca dispara es indistinguible de una regla rota.
+    motivo = F.when(pico_atipico, F.lit("pico_atipico")).otherwise(F.lit(None))
 
     return (
-        df.withColumn("apparent_power_va", potencia_aparente)
-        .withColumn("energy_wh_estimated", energia_wh)
+        df.withColumn("energy_intensity", intensidad)
+        .withColumn("is_zero_reading", lectura_cero)
         .withColumn("anomaly_reason", motivo)
         .withColumn("is_anomaly", F.col("anomaly_reason").isNotNull())
     )
@@ -283,47 +286,54 @@ def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str) -> Da
 
     El watermark le dice a Spark cuanto puede tardar un evento en llegar antes
     de considerarlo demasiado tardio para modificar una ventana ya emitida. Sin
-    el, Spark tendria que mantener el estado de todas las ventanas abiertas
-    para siempre y la memoria creceria sin limite.
+    el, Spark mantendria el estado de todas las ventanas abiertas para siempre.
 
-    Se agrupa por company/site/department y no por machine_id porque se midio
-    que cada maquina reporta una vez cada ~29 h de media: una ventana por
-    maquina contendria un unico evento y la agregacion no aportaria nada.
+    SE AGRUPA POR meter_type OBLIGATORIAMENTE, y no por comodidad: la unidad de
+    meter_reading depende del medio, asi que promediar a traves de tipos de
+    contador produce una cifra sin significado fisico. Se ve en las medianas del
+    subconjunto: 43,6 en electricidad, 146,0 en agua fria y 8,8 en agua
+    caliente.
+
+    Junto a site_id y primary_use dan 46 combinaciones, y con lecturas horarias
+    cada ventana de una hora agrega una lectura por cada sensor del grupo.
     """
     return (
         df.withWatermark("timestamp", watermark)
         .groupBy(
             F.window(F.col("timestamp"), window_duration),
-            F.col("company_id"), F.col("site_id"), F.col("department"),
+            F.col("site_id"), F.col("primary_use"), F.col("meter_type"),
         )
         .agg(
             F.count("*").alias("event_count"),
             # approx_count_distinct y no countDistinct: el conteo distinto
             # exacto no esta soportado en agregaciones de streaming, porque
             # exigiria guardar en el estado todos los valores vistos.
-            F.approx_count_distinct("machine_id").alias("distinct_machines"),
-            F.avg("power_watts").alias("avg_power_watts"),
-            F.min("power_watts").alias("min_power_watts"),
-            F.max("power_watts").alias("max_power_watts"),
-            F.sum("power_watts").alias("sum_power_watts"),
-            F.avg("power_factor").alias("avg_power_factor"),
-            F.avg("current_amp").alias("avg_current_amp"),
-            F.avg("cpu_load").alias("avg_cpu_load"),
-            F.sum(F.when(F.col("sensor_status") == "WARN", 1).otherwise(0)).alias("warn_count"),
-            F.sum(F.when(F.col("measurement_quality") == "ESTIMATED", 1).otherwise(0))
-                .alias("estimated_count"),
-            # Instrumentacion del KPI de latencia extremo a extremo: el
-            # instante de publicacion MQTT mas reciente de la ventana.
+            F.approx_count_distinct("building_id").alias("distinct_buildings"),
+            F.avg("meter_reading").alias("avg_reading"),
+            F.min("meter_reading").alias("min_reading"),
+            F.max("meter_reading").alias("max_reading"),
+            F.sum("meter_reading").alias("sum_reading"),
+            # Intensidad agregada como cociente de sumas, no como media de
+            # cocientes: asi los edificios grandes pesan lo que les corresponde.
+            # Cada edificio aporta su superficie una vez por ventana, porque
+            # emite una lectura por hora y contador.
+            F.sum("square_feet").alias("sum_square_feet"),
+            F.sum(F.when(F.col("is_zero_reading"), 1).otherwise(0)).alias("zero_count"),
+            F.sum(F.when(F.col("is_anomaly"), 1).otherwise(0)).alias("anomaly_count"),
+            # Instrumentacion del KPI de latencia extremo a extremo: el instante
+            # de publicacion MQTT mas reciente de la ventana.
             F.max("sim_publish_ts").alias("max_sim_publish_ts"),
         )
         .select(
             F.col("window.start").alias("window_start"),
             F.col("window.end").alias("window_end"),
-            "company_id", "site_id", "department",
-            "event_count", "distinct_machines",
-            "avg_power_watts", "min_power_watts", "max_power_watts", "sum_power_watts",
-            "avg_power_factor", "avg_current_amp", "avg_cpu_load",
-            "warn_count", "estimated_count", "max_sim_publish_ts",
+            "site_id", "primary_use", "meter_type",
+            "event_count", "distinct_buildings",
+            "avg_reading", "min_reading", "max_reading", "sum_reading",
+            F.when(F.col("sum_square_feet") > 0,
+                   F.col("sum_reading") / F.col("sum_square_feet"))
+             .alias("avg_energy_intensity"),
+            "zero_count", "anomaly_count", "max_sim_publish_ts",
         )
     )
 
@@ -403,6 +413,50 @@ def make_upsert_writer(props: dict, table: str, conflict_cols: list[str]):
     return write_batch
 
 
+def load_buildings_dimension(spark: SparkSession, dim_path: Path, props: dict) -> None:
+    """Vuelca la dimension de edificios en PostgreSQL al arrancar.
+
+    Power BI consume un esquema en estrella, asi que la tabla de hechos necesita
+    su dimension al lado. Se carga aqui, y no con un script aparte, para que el
+    origen sea el mismo Parquet que alimenta el broadcast join y no puedan
+    divergir.
+
+    Es idempotente: son 498 filas con UPSERT sobre building_id, de modo que
+    reiniciar el job la deja igual en lugar de duplicarla.
+    """
+    import psycopg2
+    from psycopg2.extras import execute_values
+
+    filas = spark.read.parquet(str(dim_path)).select(
+        "building_id", "site_id", "primary_use",
+        "square_feet", "year_built", "floor_count").collect()
+
+    def entero(v):
+        # year_built y floor_count llegan como float por los nulos del origen.
+        return None if v is None else int(v)
+
+    valores = [(r.building_id, r.site_id, r.primary_use,
+                entero(r.square_feet), entero(r.year_built), entero(r.floor_count))
+               for r in filas]
+
+    conn = psycopg2.connect(host=props["host"], port=props["port"], dbname=props["dbname"],
+                            user=props["user"], password=props["password"])
+    try:
+        with conn, conn.cursor() as cur:
+            execute_values(cur, """
+                INSERT INTO buildings
+                    (building_id, site_id, primary_use, square_feet, year_built, floor_count)
+                VALUES %s
+                ON CONFLICT (building_id) DO UPDATE SET
+                    site_id = EXCLUDED.site_id, primary_use = EXCLUDED.primary_use,
+                    square_feet = EXCLUDED.square_feet, year_built = EXCLUDED.year_built,
+                    floor_count = EXCLUDED.floor_count
+            """, valores, page_size=500)
+        logger.info("Dimension de edificios cargada en PostgreSQL: %d filas", len(valores))
+    finally:
+        conn.close()
+
+
 def db_props(args: argparse.Namespace, cual: str) -> dict:
     if cual == "metrics":
         return {"host": args.timescale_host, "port": args.timescale_port,
@@ -428,6 +482,12 @@ def run(args: argparse.Namespace) -> int:
         decode_events(read_kafka(spark, args), schema_json), global_id
     )
 
+    # El enriquecimiento se aplica UNA vez y lo comparten los dos sumideros: el
+    # de metricas necesita site_id y primary_use para agrupar, y el de eventos
+    # necesita ademas los campos derivados.
+    dimension, linea_base = load_reference(spark, Path(args.buildings), Path(args.baseline))
+    enriquecidos = enrich(eventos, dimension, linea_base)
+
     consultas = []
     checkpoint_raiz = Path(args.checkpoint_dir).resolve()
 
@@ -441,7 +501,7 @@ def run(args: argparse.Namespace) -> int:
         )
     else:
         if args.sink in ("metrics", "both"):
-            metricas = aggregate_metrics(eventos, args.window, args.watermark)
+            metricas = aggregate_metrics(enriquecidos, args.window, args.watermark)
             consultas.append(
                 metricas.writeStream
                 # outputMode append: emite cada ventana UNA vez, cuando el
@@ -451,7 +511,7 @@ def run(args: argparse.Namespace) -> int:
                 .outputMode("append")
                 .foreachBatch(make_upsert_writer(
                     db_props(args, "metrics"), "telemetry_metrics",
-                    ["window_start", "company_id", "site_id", "department"]))
+                    ["window_start", "site_id", "primary_use", "meter_type"]))
                 .option("checkpointLocation", str(checkpoint_raiz / "metrics"))
                 .trigger(processingTime=args.trigger)
                 .queryName("metricas-timescaledb")
@@ -459,22 +519,23 @@ def run(args: argparse.Namespace) -> int:
             )
 
         if args.sink in ("events", "both"):
-            enriquecidos = enrich(eventos, args.nominal_interval_s).select(
-                "event_id",
+            load_buildings_dimension(spark, Path(args.buildings), db_props(args, "events"))
+
+            # La clave primaria es la clave natural del evento, no un id
+            # inventado: es lo que hace idempotente el reprocesamiento.
+            eventos_bd = enriquecidos.select(
+                "building_id", "meter_type",
                 F.col("timestamp").alias("event_time"),
-                "company_id", "site_id", "machine_id", "machine_model", "department",
-                "country_code", "energy_type",
-                "power_watts", "voltage", "current_amp", "power_factor",
-                "sensor_id", "sensor_status", "measurement_quality",
-                "cpu_load", "device_state", "user_count",
-                "apparent_power_va", "energy_wh_estimated", "is_anomaly", "anomaly_reason",
+                "meter_reading", "site_id", "primary_use", "square_feet",
+                "energy_intensity", "is_zero_reading", "is_anomaly", "anomaly_reason",
                 "sim_publish_ts",
             )
             consultas.append(
-                enriquecidos.writeStream
+                eventos_bd.writeStream
                 .outputMode("append")
                 .foreachBatch(make_upsert_writer(
-                    db_props(args, "events"), "telemetry_events", ["event_id"]))
+                    db_props(args, "events"), "telemetry_events",
+                    ["building_id", "meter_type", "event_time"]))
                 .option("checkpointLocation", str(checkpoint_raiz / "events"))
                 .trigger(processingTime=args.trigger)
                 .queryName("eventos-postgresql")
@@ -507,8 +568,10 @@ def parse_args() -> argparse.Namespace:
                    help="Retraso maximo admitido antes de dar una ventana por cerrada")
     p.add_argument("--trigger", default="1 second",
                    help="Intervalo de micro-lote (KPI del Objetivo 3: < 3 s)")
-    p.add_argument("--nominal-interval-s", type=int, default=30,
-                   help="Intervalo nominal de muestreo del flujo, para la energia estimada")
+    p.add_argument("--buildings", default=str(Path(__file__).parent / "../data/ashrae_buildings.parquet"),
+                   help="Tabla de dimension de edificios (broadcast join)")
+    p.add_argument("--baseline", default=str(Path(__file__).parent / "../data/ashrae_sensor_baseline.parquet"),
+                   help="Linea base por sensor para la deteccion de picos (broadcast join)")
     p.add_argument("--shuffle-partitions", type=int, default=8)
 
     p.add_argument("--sink", default="both", choices=["both", "metrics", "events"])

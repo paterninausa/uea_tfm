@@ -1,15 +1,5 @@
 # Job de Spark Structured Streaming — doble sumidero
 
-> **ESTADO: parcialmente desactualizado.** La lectura de Kafka, la
-> deserializacion Avro y la guarda de version de esquema ya trabajan con el
-> contrato de ASHRAE (`building_id`, `meter_type`, `timestamp`,
-> `meter_reading`, `sim_publish_ts`). El **enriquecimiento, las reglas de
-> anomalia y la agregacion siguen escritos para el dataset anterior** y
-> referencian columnas que ya no existen (`power_watts`, `company_id`,
-> `department`, `cpu_load`...). El job **no se ejecuta de extremo a extremo**
-> hasta adaptarlos, junto con el DDL de las dos tablas y el broadcast join
-> contra la tabla de dimension. Las cifras de la seccion "Resultados medidos"
-> corresponden al dataset anterior y habra que rehacerlas.
 
 Lee los eventos Avro de `iot.telemetry.raw` y los escribe en dos destinos con
 proposito distinto.
@@ -29,68 +19,67 @@ reanudar cada consulta retoma su offset sin arrastrar a la otra. En una
 arquitectura Kappa, donde el log de Kafka es la fuente de verdad reproducible,
 esa independencia vale mas que ahorrar una lectura.
 
-## Por que se agrupa por planta y no por maquina
+## Union flujo-estatico: las dos tablas de referencia
 
-Se midio la cadencia real del dataset y **contradice el supuesto de partida**
-del proyecto:
+El evento solo trae `building_id`, `meter_type`, `timestamp`, `meter_reading` y
+`sim_publish_ts`. Todo lo demas entra por **broadcast join** contra dos tablas
+pequenas que se cargan al arrancar:
 
-| Medicion | Resultado |
-|---|---|
-| Delta entre eventos consecutivos del flujo | 30 s (90,4% exactos) |
-| Timestamps unicos | 999.966 sobre 999.966 filas |
-| **Delta por maquina (mediana)** | **~104.000 s (~29 horas)** |
-| Huecos > 60 s por maquina | 99,97% |
-
-Los 30 s son la cadencia **global**: el dataset visita una maquina distinta
-cada 30 s, y cada maquina concreta reporta una vez cada ~29 h. Una ventana de
-1 minuto agrupada por `machine_id` contendria exactamente un evento y la
-agregacion seria un paso a traves. Por eso se agrupa por
-`company_id + site_id + department` con ventana de 1 hora.
-
-Con el replay acelerado del simulador esto encaja bien: a 100 ev/s el tiempo de
-evento avanza ~50 minutos por segundo de reloj, de modo que las ventanas de 1
-hora se cierran continuamente y el flujo se comporta como un sistema en
-regimen.
-
-## Reglas de anomalia: las que se descartaron y por que
-
-Las reglas se eligieron **midiendo su tasa de disparo** sobre el millon de
-filas, no por intuicion. Estas tres parecen razonables y se descartaron:
-
-| Regla candidata | Dispara en |
-|---|---|
-| `sensor_status = WARN` | 25,04% de los eventos |
-| `measurement_quality = ESTIMATED` | 33,25% |
-| `power_factor < 0,75` | 15,00% |
-| **Union de las tres** | **57,49%** |
-
-Un informe que senala a la mayoria de los eventos no detecta anomalias:
-renombra la normalidad. La causa es que el dataset es sintetico y esos campos
-siguen distribuciones casi uniformes — `power_factor` es uniforme entre 0,70 y
-1,00, asi que cualquier umbral fijo marca una fraccion fija sin ninguna senal.
-
-Las reglas que si discriminan:
-
-| Regla activa | Dispara en | Significado |
+| Tabla | Filas | Aporta |
 |---|---|---|
-| `equipo_encendido_sin_consumo` | 0,03% | `device_state=ON` con corriente cero: contradiccion entre estado declarado y medida |
-| `incoherencia_electrica` | 0,21% | `power_watts` se aparta > 50% de V·I·PF |
+| `ashrae_buildings.parquet` | 498 | `site_id`, `primary_use`, `square_feet` |
+| `ashrae_sensor_baseline.parquet` | 652 | `baseline_p50`, `baseline_p75`, `baseline_iqr` |
 
-El **orden de evaluacion importa**: toda fila con "ON y corriente cero" tiene
-tambien potencia teorica cero y por tanto un error relativo del 100%, asi que
-la regla de incoherencia la absorbe si va primero. Se comprobo inyectando
-filas reales: con el orden inverso, las 10 filas de "ON sin consumo" se
-etiquetaban como `incoherencia_electrica` y el motivo mas accionable nunca
-aparecia.
+Al difundirlas a los ejecutores, cada micro-lote las cruza en memoria sin
+shuffle. Es el patron estandar de union flujo-estatico de Structured Streaming.
 
-`sensor_status` y `measurement_quality` siguen como columnas en la tabla, asi
-que Power BI puede filtrar por ellos; simplemente no son anomalias. Ademas van
-agregados en TimescaleDB como `warn_count` y `estimated_count`.
+Que estos atributos vivan fuera del evento es deliberado: son del edificio, no
+del contador. Corregir el ano de construccion de un edificio es actualizar una
+fila; desnormalizado en cada evento, obligaria a reprocesar el historico entero.
 
-Pendiente: una tercera regla por desviacion respecto al consumo tipico de cada
-`machine_model`. Los modelos forman poblaciones muy separadas (mediana de 8 W
-en un movil frente a 27.450 W en un chiller, un rango de 3.400x), asi que
-requiere una tabla de referencia por modelo unida al flujo por broadcast join.
+## Por que se agrupa por site + uso + tipo de contador
+
+`meter_type` es **obligatorio** en la clave de agrupacion, y no por comodidad:
+la unidad de `meter_reading` depende del medio, asi que promediar a traves de
+tipos de contador da una cifra sin significado fisico. Se ve en las medianas del
+subconjunto: 43,6 en electricidad, 146,0 en agua fria y 8,8 en agua caliente.
+
+Junto a `site_id` y `primary_use` dan **46 combinaciones**. Como las lecturas
+son horarias, cada ventana de una hora agrega una lectura por cada sensor del
+grupo.
+
+Con el replay acelerado, el tiempo de evento avanza mucho mas rapido que el
+reloj, de modo que las ventanas se cierran continuamente y el flujo se comporta
+como un sistema en regimen.
+
+## Deteccion de anomalias: contra la linea base del propio sensor
+
+El umbral se eligio **midiendo la tasa de disparo** sobre los 5,68 M de eventos,
+no por intuicion:
+
+| Umbral | Dispara en |
+|---|---|
+| `p75 + 3 x IQR` | 0,95% |
+| **`p75 + 5 x IQR`** | **0,34%** (elegido) |
+| `p75 + 10 x IQR` | 0,04% |
+
+La comparacion es contra la linea base **del propio contador**, no contra un
+umbral global: los edificios van de 801 a 850.354 pies cuadrados y cada medio
+tiene su unidad, asi que un contador solo es comparable consigo mismo. Los 17
+sensores con IQR = 0 quedan exentos: sin dispersion historica no hay forma de
+definir que es atipico para ellos.
+
+**Se descarto la regla de lectura negativa**: es fisicamente imposible en un
+contador y se comprobo que no ocurre ni una vez en el subconjunto. Una regla que
+nunca dispara es indistinguible de una regla rota.
+
+**Las lecturas a cero NO se marcan como anomalia**, aunque sean el 4,64%. Una
+lectura a cero aislada puede ser legitima —un contador parado unas horas—, asi
+que se registran como `is_zero_reading`, un indicador de calidad. El patron real
+emerge en la agregacion: se midio que las rachas de ceros llegan a durar **8.051
+horas seguidas, 335 dias**, y eso ya no es una medida sino un contador muerto.
+Detectar la racha evento a evento exigiria procesamiento con estado; a nivel de
+ventana, un `zero_count` alto y sostenido la delata igual.
 
 ## Tres problemas encontrados al probarlo
 
@@ -182,32 +171,35 @@ borrarlos hace que el job reprocese el topico desde el principio.
 ## Resultados medidos
 
 Sobre el stack completo (Kafka 4.3.1, TimescaleDB 2.29.1-oss, PostgreSQL 17,
-Spark 4.2.0 en `local[*]`), con el simulador publicando a 100 ev/s:
-
-**Integridad**
+Spark 4.2.0 en `local[*]`), con el simulador publicando 90.000 eventos a 200 ev/s:
 
 | Metrica | Resultado |
 |---|---|
-| Eventos recibidos / publicados por el bridge | 32.000 / 32.000 |
-| Perdida | **0,0000%** |
-| Eventos unicos en PostgreSQL | 12.000 (la deduplicacion colapso 20.000 reenvios) |
-| Ventanas en TimescaleDB | 100 ventanas, 8.915 filas |
+| Perdida de mensajes | **0,0000%** |
+| Latencia MQTT -> PostgreSQL (evento) p50 / p95 | **0,800 s / 1,303 s** |
+| Latencia MQTT -> TimescaleDB (agregado) p50 / p95 | 8,380 s / 10,249 s |
+| Lecturas a cero | 3,66% |
+| Anomalias detectadas | **0,46%** |
+| Filas de metricas | 6.345 en 138 ventanas, 46 combinaciones |
 
-**Latencia, segun configuracion**
+La tasa de anomalias del 0,46% concuerda con el 0,34% previsto al elegir el
+umbral de 5 x IQR sobre el dataset completo; la diferencia se explica porque la
+muestra son los primeros eventos del ano y no el conjunto entero.
 
-| Configuracion | Metricas p50/p95 | Eventos p95 |
-|---|---|---|
-| trigger 2 s, watermark 10 min | 4,44 / 5,61 s | 2,22 s |
-| **trigger 1 s, watermark 2 min** (por defecto) | **2,66 / 3,55 s** | **1,26 s** |
+### La latencia del agregado empeoro y esta sin explicar
 
-Bajar el watermark de 10 a 2 minutos no perdio ni una ventana (4.426 filas y 50
-ventanas en ambos casos), porque el flujo llega ordenado por construccion.
+Con el dataset anterior este camino daba 3,55 s en p95; ahora da 10,25 s. La
+hipotesis es que el cuello esta en el sumidero, no en la agregacion: cada
+ventana de una hora agrega ahora una lectura de cada uno de los 652 sensores, se
+mantienen mas ventanas abiertas a la vez, y el UPSERT recoge las filas en el
+driver. **Es una hipotesis sin comprobar**; hay que medir la duracion de los
+micro-lotes antes de tocar nada.
 
-**Throughput**
+Parametros a revisar: `--max-offsets-per-trigger` (10.000 por defecto, quiza
+demasiado para un trigger de 1 s), el numero de particiones de shuffle, y la
+escritura por particion en lugar de recoger en el driver.
 
-Publicando 8.000 eventos sin limite de tasa: **739,8 ev/s** de extremo a
-extremo con 0% de perdida, y Spark siguiendo el ritmo sin acumular retraso.
-Son ~15x el objetivo de >=50 ev/s.
+El camino de eventos individuales **si cumple** el objetivo de 2 s con holgura.
 
 ## Sobre el KPI de latencia del Objetivo 1
 

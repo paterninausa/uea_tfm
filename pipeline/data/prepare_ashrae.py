@@ -121,19 +121,40 @@ def prepare(train_path: Path, meta_path: Path, tel_path: Path, dim_path: Path,
         .sort_values("building_id").reset_index(drop=True)
     )
 
-    resumen(telemetria, dimension)
+    # ---- LINEA BASE POR SENSOR: referencia para la deteccion de picos --------
+    # Mediana y cuartiles del historico de cada contador. El job de Spark la
+    # incorpora por broadcast join y marca como atipica toda lectura que supere
+    # p75 + 5*IQR de su PROPIO sensor. Un umbral global no serviria: el consumo
+    # va de 801 a 850.354 pies cuadrados de edificio y de un medio a otro cambia
+    # la unidad, asi que cada contador solo es comparable consigo mismo.
+    #
+    # Que la referencia se calcule sobre el mismo historico que luego se
+    # reproduce es lo habitual en cualquier linea base: describe el
+    # comportamiento normal observado. En produccion se recalcularia
+    # periodicamente con los datos acumulados.
+    g = telemetria.groupby(["building_id", "meter_type"], observed=True)["meter_reading"]
+    linea_base = g.agg(
+        baseline_p25=lambda s: s.quantile(0.25),
+        baseline_p50="median",
+        baseline_p75=lambda s: s.quantile(0.75),
+    ).reset_index()
+    linea_base["baseline_iqr"] = linea_base.baseline_p75 - linea_base.baseline_p25
 
-    for p in (tel_path, dim_path):
+    resumen(telemetria, dimension, linea_base)
+
+    base_path = tel_path.with_name("ashrae_sensor_baseline.parquet")
+    for p in (tel_path, dim_path, base_path):
         p.parent.mkdir(parents=True, exist_ok=True)
     telemetria.to_parquet(tel_path, index=False)
     dimension.to_parquet(dim_path, index=False)
+    linea_base.to_parquet(base_path, index=False)
 
     print()
-    for p in (tel_path, dim_path):
+    for p in (tel_path, dim_path, base_path):
         print(f"Escrito {p} ({p.stat().st_size / 1024:.0f} KB)")
 
 
-def resumen(tel: pd.DataFrame, dim: pd.DataFrame) -> None:
+def resumen(tel: pd.DataFrame, dim: pd.DataFrame, base: pd.DataFrame) -> None:
     n = len(tel)
     print("\n--- Tabla de hechos (lo que emite el sensor) ---")
     print(f"  columnas               : {list(tel.columns)}")
@@ -171,6 +192,12 @@ def resumen(tel: pd.DataFrame, dim: pd.DataFrame) -> None:
     nulos = dim.isna().sum()
     for col, c in nulos[nulos > 0].items():
         print(f"    {col:<16} {c:>5,} de {len(dim)}  ({100*c/len(dim):.1f}%)")
+
+    print("\n--- Linea base por sensor (referencia de deteccion de picos) ---")
+    print(f"  sensores               : {len(base):,}")
+    print(f"  columnas               : {list(base.columns)}")
+    sin_dispersion = (base.baseline_iqr == 0).sum()
+    print(f"  sensores con IQR = 0   : {sin_dispersion} (quedan exentos de la regla de picos)")
 
 
 def parse_args() -> argparse.Namespace:
