@@ -63,8 +63,12 @@ que instalarlo encima del venv principal no reinstale nada.
 python prepare_ashrae.py
 ```
 
-Produce `ashrae_telemetry.parquet` (~50 MB, 5.682.185 eventos), que es lo que
-espera el simulador MQTT. Tampoco se versiona.
+Produce dos ficheros, que no se versionan:
+
+| Fichero | Contenido | Tamano |
+|---|---|---|
+| `ashrae_telemetry.parquet` | Tabla de hechos: 5.682.185 lecturas | ~18 MB |
+| `ashrae_buildings.parquet` | Dimension: 498 edificios | ~11 KB |
 
 ## El subconjunto: emplazamientos 2, 3 y 5
 
@@ -113,29 +117,85 @@ tipos de edificio, y solo importaria al cruzar con datos meteorologicos.
 
 ## Decisiones de modelado
 
-**`event_id` derivado y legible** (`B{edificio}-M{contador}-{epoch}`). ASHRAE no
-trae identificador de evento y el pipeline lo necesita como clave primaria. Se
-deriva de (edificio, contador, instante) —unico, porque cada contador tiene como
-mucho una lectura por hora— en lugar de generar un UUID: con un UUID,
-reprocesar el log de Kafka duplicaria filas, porque cada reproceso inventaria
-identificadores nuevos.
+### La tabla de hechos reproduce lo que emite el contador
 
-Se prefirio la forma legible a un hash truncado por dos razones: un
-identificador que aparece en el log de la DLQ dice de que sensor e instante
-procede sin cruzarlo con nada, y ademas **ocupa tres veces menos en disco** (50
-MB frente a 159 MB), porque los prefijos compartidos y los epochs casi
-secuenciales se comprimen muy bien y un hash, por diseno, no.
+    building_id | meter_type | timestamp | meter_reading
+
+Cuatro columnas y nada mas. El dataset original se publico para entrenar
+modelos de prediccion, asi que las caracteristicas del edificio estan ahi como
+variables de entrada del modelo. Pero un contador real no envia la superficie
+del edificio con cada lectura: envia quien es, cuando midio y cuanto midio.
+Cualquier columna adicional la anadiriamos nosotros y dejaria de reproducir el
+comportamiento del sensor.
+
+Por eso **no hay `event_id` ni `sensor_id`**: ambos eran concatenaciones
+calculadas por el propio script, es decir, informacion que ya estaba en el
+dato. Y **las caracteristicas del edificio salen a una tabla de dimension**.
+
+El efecto sobre el tamano del mensaje es grande: medido con el esquema Avro
+real, el evento pasa de 59,4 a **23,0 bytes**, un 61,3% menos, lo que se
+traduce en 131 MB en Kafka en lugar de 338 MB.
+
+`meter_type` es la unica concesion, y no es un campo derivado sino una
+**decodificacion**: la correspondencia `0 -> electricity ... 3 -> hotwater`
+viene de la documentacion de la competicion, es biyectiva y no anade ni pierde
+informacion. Se prefiere al codigo crudo porque permite declararlo como enum en
+Avro, que se serializa exactamente igual —un indice varint— pero deja el
+dominio explicito en el contrato.
+
+### Clave natural: (building_id, meter_type, timestamp)
+
+Es la clave primaria y la clave de deduplicacion, y lo que garantiza que el
+reprocesamiento de la arquitectura Kappa sea idempotente. Cumple las cuatro
+propiedades necesarias:
+
+- **Determinista**: los tres campos vienen del sensor. No depende del instante
+  de recepcion, del offset de Kafka ni de ningun generador aleatorio.
+- **Unica**: verificado sobre el subconjunto, 5.682.185 grupos para 5.682.185
+  filas, sin un solo duplicado en el origen. El script lo comprueba en cada
+  ejecucion en lugar de darlo por supuesto.
+- **Estable**: no cambia si se recrea el topico, se reordenan las particiones o
+  se reprocesa el historico.
+- **Disponible en todo el recorrido**: bridge, Spark y ambas bases de datos la
+  tienen sin necesidad de ningun join.
+
+Un UUID generado en la ingesta falla en la primera propiedad —cada reproceso
+inventaria identificadores nuevos y duplicaria filas— y el offset de Kafka
+falla en la tercera.
+
+**`(building_id, timestamp)` no basta**: un mismo edificio tiene contadores de
+electricidad, agua fria y agua caliente midiendo a la misma hora. Sin
+`meter_type` en la clave se colapsarian 1.345.428 eventos.
+
+**No confundir con la clave del mensaje en Kafka**, que es solo
+`(building_id, meter_type)` —el sensor, 652 valores distintos—. Es lo que
+mantiene en la misma particion y en orden todas las lecturas de un contador,
+que es lo que necesitan las ventanas de Spark. Usar la clave del evento como
+clave de Kafka repartiria cada lectura a una particion al azar.
+
+### Tabla de dimension
+
+    building_id | site_id | primary_use | square_feet | year_built | floor_count
+
+498 filas. Spark la incorpora con un broadcast join para agregar por tipo de
+edificio, y Power BI la consume como dimension de un esquema en estrella, que
+es el modelo que esa herramienta espera; desnormalizar estos atributos en cada
+una de los 5,68 M de filas es justo el antipatron.
+
+Ahi viven tambien los nulos reales del dataset: `year_built` falta en 184 de
+los 498 edificios (36,9%) y `floor_count` en 409 (82,1%).
+
+Separarlos tiene ademas una ventaja operativa: si se corrige el ano de
+construccion de un edificio, se actualiza una fila; desnormalizado, habria que
+reprocesar el historico entero.
+
+### Otras decisiones
 
 **Un sensor es el par edificio-contador.** Un mismo edificio con contador de
 electricidad y de agua fria son dos sensores con series independientes. De ahi
-la topologia de topicos:
+la topologia de topicos, que el simulador construye cruzando con la dimension:
 
     iot/{site_id}/{building_id}/{meter_type}/telemetry
 
 **Las lecturas a cero no se eliminan** (4,6% del subconjunto). Son parte del
 dato real y son material para el informe de deteccion de anomalias.
-
-**Los nulos se conservan**: `year_built` falta en el 32,2% de los eventos y
-`floor_count` en el 86,2%. Se declaran como uniones con `null` en el esquema
-Avro, lo que da un uso legitimo a la nulabilidad del contrato — algo que el
-dataset anterior no permitia, porque no tenia ni un solo nulo.

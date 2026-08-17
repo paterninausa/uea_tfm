@@ -59,32 +59,6 @@ def read_any(path: Path) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
-def make_event_id(df: pd.DataFrame) -> pd.Series:
-    """Identificador de evento DETERMINISTA y legible: B{edificio}-M{contador}-{epoch}.
-
-    ASHRAE no trae identificador de evento y el pipeline lo necesita como clave
-    primaria en PostgreSQL. Se deriva de (edificio, contador, instante), que es
-    unico en el dataset porque cada contador tiene como mucho una lectura por
-    hora.
-
-    Que sea derivado y no un UUID aleatorio es deliberado: con un UUID,
-    reprocesar el log de Kafka —la operacion basica de una arquitectura Kappa—
-    insertaria filas duplicadas, porque cada reproceso inventaria
-    identificadores nuevos. Siendo derivado, el mismo evento produce siempre la
-    misma clave y el UPSERT lo absorbe.
-
-    Se prefiere la forma legible a un hash: un identificador que aparece en el
-    log de la DLQ dice directamente de que sensor e instante procede, sin tener
-    que cruzarlo con nada. Ocupa lo mismo que un hash truncado.
-    """
-    epoch = df["timestamp"].astype("int64") // 10**9  # nanosegundos -> segundos
-    return (
-        "B" + df["building_id"].astype(str)
-        + "-M" + df["meter"].astype(str)
-        + "-" + epoch.astype(str)
-    )
-
-
 def prepare(train_path: Path, meta_path: Path, output_path: Path, sites: tuple) -> None:
     print(f"Leyendo metadatos de edificio: {meta_path}")
     meta = read_any(meta_path)
@@ -101,66 +75,87 @@ def prepare(train_path: Path, meta_path: Path, output_path: Path, sites: tuple) 
     print(f"  {len(df):,} lecturas tras filtrar por emplazamiento")
 
     df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+    # meter_type es una DECODIFICACION del codigo de contador, no un campo
+    # derivado: la correspondencia 0->electricity ... 3->hotwater viene de la
+    # documentacion de la competicion y es biyectiva, asi que no anade ni pierde
+    # informacion. Se prefiere al codigo crudo porque permite declararlo como
+    # enum en Avro, que se serializa exactamente igual (un indice varint) pero
+    # deja el dominio explicito en el contrato.
     df["meter_type"] = df["meter"].map(METER_TYPES)
     if df["meter_type"].isna().any():
         codigos = sorted(df.loc[df["meter_type"].isna(), "meter"].unique())
         raise ValueError(f"Codigos de contador desconocidos en los datos: {codigos}")
 
-    # Identidad del sensor simulado: el par edificio-contador. Un mismo edificio
-    # con contador de electricidad y de agua fria son dos sensores distintos,
-    # con series independientes.
-    df["sensor_id"] = "B" + df["building_id"].astype(str) + "-M" + df["meter"].astype(str)
-    df["event_id"] = make_event_id(df)
-
-    columnas = [
-        "event_id", "timestamp",
-        "site_id", "building_id", "sensor_id",
-        "meter", "meter_type", "meter_reading",
-        "primary_use", "square_feet", "year_built", "floor_count",
-    ]
-    df = df[columnas]
-
-    # Orden cronologico: el simulador reproduce el historico en secuencia, y el
+    # ---- TABLA DE HECHOS: solo lo que emitiria el contador -------------------
+    # Sin event_id, sin sensor_id y sin caracteristicas del edificio. Un contador
+    # real envia quien es, cuando midio y cuanto midio; cualquier otra cosa la
+    # anadiriamos nosotros y dejaria de reproducir su comportamiento.
+    telemetria = df[["building_id", "meter_type", "timestamp", "meter_reading"]]
+    # Orden cronologico: el simulador reproduce el historico en secuencia y el
     # watermark de Spark asume que el tiempo de evento avanza. Un fichero
     # desordenado haria que se descartaran lecturas como tardias.
-    df = df.sort_values("timestamp").reset_index(drop=True)
+    telemetria = telemetria.sort_values("timestamp").reset_index(drop=True)
 
-    resumen(df)
+    # ---- TABLA DE DIMENSION: caracteristicas estaticas del edificio ----------
+    # No viajan en cada evento: son atributos del edificio, no medidas del
+    # sensor. Spark las incorpora con un broadcast join y Power BI las consume
+    # como dimension de un esquema en estrella.
+    dimension = (
+        meta_sub[["building_id", "site_id", "primary_use",
+                  "square_feet", "year_built", "floor_count"]]
+        .sort_values("building_id").reset_index(drop=True)
+    )
+
+    resumen(telemetria, dimension)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(output_path, index=False)
-    tam = output_path.stat().st_size / 1_048_576
-    print(f"\nEscrito {output_path} ({tam:.1f} MB)")
+    telemetria.to_parquet(output_path, index=False)
+    dim_path = output_path.with_name(output_path.stem.replace("telemetry", "buildings") + ".parquet")
+    dimension.to_parquet(dim_path, index=False)
+
+    for p in (output_path, dim_path):
+        print(f"Escrito {p} ({p.stat().st_size / 1024:.0f} KB)")
 
 
-def resumen(df: pd.DataFrame) -> None:
-    print("\n--- Resumen del subconjunto ---")
-    print(f"  eventos                : {len(df):,}")
-    print(f"  sensores (edificio-contador): {df['sensor_id'].nunique():,}")
-    print(f"  edificios              : {df['building_id'].nunique():,}")
-    print(f"  emplazamientos         : {sorted(int(s) for s in df['site_id'].unique())}")
-    print(f"  tipos de contador      : {sorted(df['meter_type'].unique())}")
-    print(f"  usos de edificio       : {df['primary_use'].nunique()}")
-    combos = df.groupby(["site_id", "primary_use", "meter_type"]).ngroups
-    print(f"  combinaciones de agregacion (site x uso x contador): {combos}")
-    print(f"  rango temporal         : {df['timestamp'].min()} -> {df['timestamp'].max()}")
-    print(f"  event_id unicos        : {df['event_id'].is_unique}")
+def resumen(tel: pd.DataFrame, dim: pd.DataFrame) -> None:
+    n = len(tel)
+    print("\n--- Tabla de hechos (lo que emite el sensor) ---")
+    print(f"  columnas               : {list(tel.columns)}")
+    print(f"  eventos                : {n:,}")
+    print(f"  sensores (edificio + contador): {tel.groupby(['building_id','meter_type'], observed=True).ngroups}")
+    print(f"  rango temporal         : {tel['timestamp'].min()} -> {tel['timestamp'].max()}")
+    print(f"  nulos                  : {int(tel.isna().sum().sum())}")
 
-    print("\n  nulos por columna (los que existen):")
-    nulos = df.isna().sum()
-    for col, n in nulos[nulos > 0].items():
-        print(f"    {col:<16} {n:>8,}  ({100*n/len(df):.1f}%)")
-    if (nulos == 0).all():
-        print("    ninguna")
+    # La clave natural se COMPRUEBA, no se asume: es lo que sostiene la
+    # idempotencia del pipeline. Si dejara de ser unica, el UPSERT de
+    # PostgreSQL perderia eventos en silencio.
+    clave = ["building_id", "meter_type", "timestamp"]
+    grupos = tel.groupby(clave, observed=True).ngroups
+    print(f"\n  clave natural {tuple(clave)}:")
+    print(f"    grupos = {grupos:,} sobre {n:,} filas -> {'UNICA' if grupos == n else 'COLISIONA'}")
+    # (building_id, timestamp) no basta: un edificio puede tener varios
+    # contadores midiendo a la misma hora.
+    sin_contador = tel.groupby(["building_id", "timestamp"], observed=True).ngroups
+    print(f"    sin meter_type seria {sin_contador:,} grupos -> perderia {n - sin_contador:,} eventos")
 
-    ceros = (df["meter_reading"] == 0).sum()
-    print(f"\n  lecturas a cero        : {ceros:,} ({100*ceros/len(df):.1f}%)")
-    print("  (no se eliminan: son parte del dato real y sirven de material para"
-          " el informe de deteccion de anomalias)")
+    ceros = (tel["meter_reading"] == 0).sum()
+    print(f"\n  lecturas a cero        : {ceros:,} ({100*ceros/n:.1f}%)")
+    print("  (no se eliminan: son dato real y material para el informe de anomalias)")
 
     print("\n  eventos por tipo de contador:")
-    for tipo, n in df["meter_type"].value_counts().items():
-        print(f"    {tipo:<14} {n:>10,}")
+    for tipo, c in tel["meter_type"].value_counts().items():
+        print(f"    {tipo:<14} {c:>10,}")
+
+    print("\n--- Tabla de dimension (atributos del edificio) ---")
+    print(f"  columnas               : {list(dim.columns)}")
+    print(f"  edificios              : {len(dim):,}")
+    print(f"  emplazamientos         : {sorted(int(s) for s in dim['site_id'].unique())}")
+    print(f"  usos de edificio       : {dim['primary_use'].nunique()}")
+    print("  nulos por columna:")
+    nulos = dim.isna().sum()
+    for col, c in nulos[nulos > 0].items():
+        print(f"    {col:<16} {c:>5,} de {len(dim)}  ({100*c/len(dim):.1f}%)")
 
 
 def parse_args() -> argparse.Namespace:
