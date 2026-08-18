@@ -34,10 +34,21 @@ evolucion (Objetivo 2).
 
 ## Decisiones de diseño
 
-**La clave de Kafka es `machine_id`.** Garantiza que todos los eventos de una
-maquina caen en la misma particion y se procesan en orden, que es lo que
-necesitan las agregaciones por ventana de Spark. Con `event_id` como clave se
-repartirian al azar entre particiones.
+**La clave de Kafka identifica al sensor**, es decir el par `(building_id,
+meter_type)`, y se escribe como `156:electricity`. Garantiza que todas las
+lecturas de un mismo contador caen en la misma particion y se procesan en orden,
+que es lo que necesitan las agregaciones por ventana de Spark.
+
+No confundirla con la clave natural del evento, que ademas incluye `timestamp`:
+esa identifica una lectura concreta, y usarla aqui repartiria al azar entre
+particiones las lecturas de un mismo contador.
+
+Se construye con acceso directo a los dos campos, no con `.get()`, y el motivo es
+un fallo real: el bridge conservaba `evento.get("machine_id")` del dataset
+anterior, campo que el contrato de ASHRAE no tiene. La clave era **None en todos
+los mensajes**, el productor los repartia en round-robin y el orden por sensor se
+perdia sin un solo error en el log. Con acceso directo, un evento que no traiga
+esos campos no cumple el contrato y acaba en la DLQ, que es donde debe acabar.
 
 **Los timestamps ISO se interpretan como UTC de forma explicita.** El dataset
 los trae sin zona horaria (`2025-01-01T00:00:00`). Dejarlos a merced de la zona
@@ -89,7 +100,7 @@ python pipeline/bridge/mqtt_kafka_bridge.py --report-interval 5
 Y en otra terminal, generar trafico:
 
 ```bash
-python pipeline/simulator/mqtt_simulator.py --parquet-path pipeline/data/power_measurements_parquet --rate 60 --limit 300
+python pipeline/simulator/mqtt_simulator.py --speedup 500 --limit 300
 ```
 
 Parametros utiles: `--bootstrap-servers`, `--broker-host`, `--qos`,
@@ -122,8 +133,13 @@ Medido sobre el stack real (Mosquitto 2.0.22, Kafka 4.3.1 KRaft, Apicurio
 | Particiones utilizadas | 0, 1, 2 |
 
 Los 300 mensajes se releyeron desde Kafka resolviendo el esquema por el
-`globalId` de la cabecera, y se comprobo que la clave de Kafka coincide con
-`machine_id` en todos.
+`globalId` de la cabecera. **Esta medicion es anterior al dataset de ASHRAE y a
+la correccion de la clave**: se tomo cuando la clave seguia siendo `machine_id`,
+de modo que el reparto por particiones que refleja no es el actual. Verificado
+despues sobre ASHRAE: las claves son del tipo `156:electricity` y el reparto
+entre las tres particiones es desigual (6.144 / 7.468 / 6.388 sobre 20.000
+eventos), que es lo que produce el hash de una clave real y no el round-robin de
+una clave nula.
 
 **Camino de rechazo (DLQ)**
 

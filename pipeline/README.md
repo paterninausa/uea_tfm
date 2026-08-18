@@ -1,13 +1,25 @@
-# Pipeline IoT — stack de ingesta (Fase 1)
+# Pipeline IoT — arquitectura Kappa sobre telemetria de edificios
 
-Capa de ingesta y gobernanza de esquemas del pipeline Kappa del TFM. Las bases
-de datos (TimescaleDB / PostgreSQL) y Grafana se anaden en una fase posterior.
+Pipeline completo del TFM: de la telemetria simulada a los dashboards, con
+gobernanza de esquemas y doble sumidero.
 
 ```
 Simulador (host, venv) --MQTT--> Mosquitto --> bridge --Avro--> Kafka
-                                                 |
-                                                 +--> Apicurio (esquemas)
+                                                 |                |
+                                    Apicurio <---+                v
+                                    (esquemas)              Spark Streaming
+                                                             |          |
+                                          TimescaleDB <------+          +---> PostgreSQL
+                                          (agregados)                         (eventos)
+                                               |                                   |
+                                            Grafana                            Power BI
 ```
+
+Cada componente tiene su propio README con las decisiones de diseño y lo medido:
+[simulator](simulator/README.md), [bridge](bridge/README.md),
+[schemas](schemas/README.md), [spark](spark/README.md),
+[grafana](docker/grafana/README.md), [data](data/README.md) y
+[herramientas](herramientas/README.md).
 
 ## Por que Spark no esta containerizado
 
@@ -117,8 +129,8 @@ Python 3.11 + PySpark 4.2.0):
 - Apicurio responde en `/apis/registry/v3/system/info` con almacenamiento
   `KafkaSQL`.
 - El simulador publica en Mosquitto con la topologia de topicos
-  `iot/{company_id}/{site_id}/{machine_id}/telemetry` y 0% de perdida en la
-  prueba corta.
+  `iot/{building_id}/{meter_type}/telemetry` —el topico identifica al sensor, que
+  es el par edificio-contador— y 0% de perdida en la prueba corta.
 
 - Esquema Avro v1 registrado en Apicurio como `iot/iot.telemetry.raw-value`,
   con las reglas `VALIDITY=FULL` y `COMPATIBILITY=FULL_TRANSITIVE` activas y
@@ -141,5 +153,32 @@ Python 3.11 + PySpark 4.2.0):
   pico, factor de carga, intensidad) y calidad/anomalias. Consultas medidas
   entre 1,9 y 15,4 ms (ver [docker/grafana/README.md](docker/grafana/README.md)).
 
-Pendiente: informes de Power BI, pruebas de carga del Objetivo 5, y
-diagnosticar la latencia de disponibilidad del agregado.
+- Herramientas de medicion (`herramientas/`): estado limpio reproducible,
+  generador de carga asincrono, cuadro de KPIs y prueba de recuperacion ante
+  fallo. Ver [herramientas/README.md](herramientas/README.md).
+
+## Medir los KPIs
+
+El ciclo completo —estado limpio, carga, informe— esta en
+[herramientas/README.md](herramientas/README.md). En resumen:
+
+```bash
+python pipeline/herramientas/reset_state.py --yes
+```
+
+```bash
+python pipeline/simulator/mqtt_simulator.py --speedup 2000 --limit 50000 --rebase-end now
+```
+
+```bash
+python pipeline/herramientas/kpi_report.py
+```
+
+## Registro de actividad
+
+Todos los procesos escriben en `pipeline/logs/<nombre>.log` ademas de por
+consola, con la orden completa en la cabecera de cada arranque. Rotan a los 3 MB
+conservando tres copias. No se versionan.
+
+Pendiente: informes de Power BI (Objetivo 4) y determinar el punto de saturacion
+real del pipeline con el generador asincrono.

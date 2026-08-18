@@ -24,7 +24,13 @@ pyspark==4.2.0            # motor de procesamiento (Structured Streaming, DataFr
 pandas==2.3.3
 pyarrow==22.0.0
 
-paho-mqtt==2.1.0          # cliente MQTT para el simulador
+paho-mqtt==2.1.0          # cliente MQTT del bridge (suscriptor, callbacks)
+
+# El simulador abre UNA CONEXION MQTT POR SENSOR —652 en el parque completo— y
+# eso con paho serian 652 hilos. aiomqtt las mantiene como corrutinas sobre un
+# unico hilo: verificado con 652 conexiones simultaneas publicando sin un solo
+# fallo. Es un envoltorio sobre paho, no un cliente distinto.
+aiomqtt==2.5.1
 psycopg2-binary==2.9.9    # PostgreSQL / TimescaleDB
 fastavro==1.9.7           # serializacion Avro
 requests==2.32.3          # llamadas REST a Apicurio Schema Registry

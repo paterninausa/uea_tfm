@@ -1,257 +1,293 @@
 """
-Simulador de sensores IoT: reproduce telemetria historica sobre MQTT.
+Simulador del parque de contadores: reproduce el historico de ASHRAE sobre MQTT.
 
-Lee el subconjunto de ASHRAE preparado por `pipeline/data/prepare_ashrae.py` y
-publica cada lectura como un mensaje MQTT, reproduciendo la topologia de
-topicos del trabajo:
+Ocupa el lugar de los 652 sensores reales. Publica lo que emitirian ellos, en sus
+mismos topicos y con el mismo QoS, y por defecto **abre una conexion MQTT por
+sensor**, que es como se veria el parque desde el broker.
 
-    iot/{building_id}/{meter_type}/telemetry
+EL PARQUE REAL GENERA 0,1797 EV/S. Verificado sobre el Parquet: cada contador
+mide una vez por hora —mediana y p95 del intervalo son exactamente 3600 s, sin
+dispersion— y hay 652 contadores con datos en el 99,2% de las horas de 2016. Ese
+es el caso de uso: **menos de una quinta parte de un evento por segundo**, sobre
+un historico de 8.784 horas.
 
-UN SENSOR ES EL PAR (edificio, tipo de contador). Un mismo edificio con
-contador de electricidad y de agua fria son dos sensores con series
-independientes; el subconjunto en uso tiene 652.
+Por eso el simulador acelera el reloj. `--speedup` es el factor:
 
-EL TOPICO SOLO IDENTIFICA AL SENSOR. No lleva nivel de emplazamiento: `site_id`
-es derivable de `building_id` a traves de la tabla de dimension, igual que lo
-eran `event_id` y `sensor_id` antes de eliminarlos. Ponerlo tambien en el
-topico creaba una segunda fuente de verdad —topico y dimension podrian
-discrepar si un edificio se reasignara— sin que nada lo consumiera: el bridge
-se suscribe a `iot/#` y nunca parte el topico. El emplazamiento entra en el
-analisis donde importa, en el broadcast join de Spark contra la dimension.
+    tasa agregada = n_sensores x speedup / 3600
 
-EL PAYLOAD SOLO LLEVA LO QUE EMITIRIA EL CONTADOR: identidad, instante y
-medida, mas `sim_publish_ts`.
+    speedup     cadencia por sensor    con 652 sensores    ano completo en
+        1              1 h                 0,18 ev/s          8.784 h
+    2.000              1,8 s                 362 ev/s            4,4 h
+    7.145              0,5 s               1.294 ev/s             74 min
+
+Es un factor POR SENSOR, no una tasa global, y esa diferencia importa para el
+Objetivo 5: con una tasa global fija, pasar de 100 a 652 sensores reparte los
+mismos eventos entre mas identidades y no escala nada. Con `--speedup`, cada
+contador mantiene su cadencia y la carga crece con el numero de contadores, que
+es lo que significa "sensores concurrentes".
+
+POR QUE NO SE REPRODUCEN LAS RAFAGAS. Los contadores reales miden en la hora en
+punto, asi que un replay literal publicaria los 652 de golpe y luego callaria. No
+se hace, y no por comodidad: a speedup alto esa rafaga desborda el sistema. Con
+un drenaje del bridge de unos 4.000 ev/s, el replay fiel se sostiene hasta
+~x22.000 (652 / (3600/speedup) <= 4.000); por encima, la cola de Mosquitto
+—10.000 mensajes segun `mosquitto.conf`— se llena en menos de tres segundos y el
+broker empieza a descartar EN SILENCIO. En su lugar, los sensores se escalonan de
+forma determinista dentro de cada intervalo, lo que equivale a suponer que sus
+relojes no estan sincronizados al milisegundo: mas realista que la rafaga
+perfecta, y sin perdida artificial.
+
+NO HAY OPCIONES DE BANCO DE PRUEBAS AQUI. Existio un `load_generator.py` aparte
+que alcanzaba tasas altas con una VENTANA DE MENSAJES EN VUELO: publicaba N
+mensajes sin esperar confirmacion desde un solo cliente. Se retiro en agosto de
+2026 y no debe volver. El motivo: esa ventana era un artificio para que UN
+cliente hiciera el trabajo de 652, y `--clients` consigue lo mismo sin inventar
+nada, porque 652 conexiones con un mensaje en vuelo cada una dan 652 mensajes en
+vuelo por la via realista. Todo lo que mide y orquesta vive en `herramientas/`.
 
 Uso:
-    python mqtt_simulator.py --rate 100 --limit 5000
-    python mqtt_simulator.py --max-sensors 100          # carga base, Objetivo 5
-    python mqtt_simulator.py --rate 0 --rebase-end now  # demostracion en vivo
+    python mqtt_simulator.py --speedup 2000
+    python mqtt_simulator.py --speedup 2000 --max-sensors 100   # peldano del Objetivo 5
+    python mqtt_simulator.py --speedup 500 --rebase-end now     # demostracion en vivo
+    python mqtt_simulator.py --speedup 2000 --clients 1         # una sola conexion
 """
 
 import argparse
+import asyncio
+from contextlib import suppress
+import heapq
 import json
 import logging
-import signal
+import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
-import paho.mqtt.client as mqtt
-import pandas as pd
-from paho.mqtt.enums import CallbackAPIVersion
+import aiomqtt
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.logging_setup import configurar_logging  # noqa: E402
+from common.proceso import evento_de_parada_async  # noqa: E402
+from common.replay import (  # noqa: E402
+    anadir_argumentos_dataset,
+    anadir_argumentos_mqtt,
+    build_payload,
+    build_topic,
+    preparar,
+)
+
 logger = logging.getLogger("mqtt_simulator")
 
-TOPIC_TEMPLATE = "iot/{building_id}/{meter_type}/telemetry"
-
-AQUI = Path(__file__).parent
-
-
-def cargar(telemetry_path: Path) -> pd.DataFrame:
-    """Carga la tabla de hechos. No necesita la dimension: el topico se
-    construye solo con los campos que emite el propio contador."""
-    if not telemetry_path.exists():
-        raise FileNotFoundError(
-            f"No se encontro {telemetry_path}. Genera los datos primero: "
-            "python pipeline/data/prepare_ashrae.py"
-        )
-
-    df = pd.read_parquet(telemetry_path)
-    logger.info("Cargados %s eventos | %s sensores | %s edificios",
-                f"{len(df):,}",
-                f"{df.groupby(['building_id', 'meter_type']).ngroups:,}",
-                f"{df['building_id'].nunique():,}")
-    return df
+# Cadencia del contador real, en segundos. Es la constante de la que sale todo:
+# el factor de aceleracion, la tasa agregada y el escalonado entre sensores.
+PERIODO_SENSOR_S = 3600.0
 
 
-def filtrar_sensores(df: pd.DataFrame, max_sensores: int | None) -> pd.DataFrame:
-    """Se queda con los primeros N sensores en orden determinista.
+class Contadores:
+    """Estado agregado de la simulacion. Un solo hilo: no hacen falta locks."""
 
-    El orden fijo importa para el Objetivo 5: hace que la seleccion de 100
-    sensores sea un SUBCONJUNTO de la de 250, esta de la de 500, y asi. La
-    degradacion de throughput se mide entonces sobre los mismos sensores mas
-    otros, y no comparando dos muestras aleatorias distintas, que no serian
-    comparables entre si.
-    """
-    if not max_sensores:
-        return df
-
-    sensores = (df[["building_id", "meter_type"]].drop_duplicates()
-                .sort_values(["building_id", "meter_type"]).reset_index(drop=True))
-    if max_sensores >= len(sensores):
-        logger.info("Se pidieron %d sensores y solo hay %d: se usan todos",
-                    max_sensores, len(sensores))
-        return df
-
-    df = df.merge(sensores.head(max_sensores), on=["building_id", "meter_type"], how="inner")
-    logger.info("Filtrado a %d sensores -> %s eventos", max_sensores, f"{len(df):,}")
-    return df
-
-
-def rebasar(df: pd.DataFrame, destino: str) -> pd.DataFrame:
-    """Desplaza las marcas de tiempo para que la ULTIMA caiga en `destino`.
-
-    Los datos son de 2016. Sin desplazarlos, un panel de Grafana configurado a
-    "ultimas 6 horas" sale vacio y la demostracion en vivo pierde el efecto de
-    tiempo real. Se aplica un unico offset constante a todo el conjunto, de modo
-    que las distancias relativas entre eventos —y por tanto los ciclos diario y
-    estacional— se conservan intactas.
-
-    Se ancla la ULTIMA marca y no la primera para que todo el historico quede en
-    el pasado respecto al instante indicado, que es lo que esperan los paneles.
-    Anclando la primera, el replay acelerado generaria marcas en el futuro.
-    """
-    instante = datetime.now(timezone.utc) if destino == "now" else datetime.fromisoformat(destino)
-    if instante.tzinfo is None:
-        instante = instante.replace(tzinfo=timezone.utc)
-
-    offset = pd.Timestamp(instante).tz_localize(None) - df["timestamp"].max()
-    df = df.copy()
-    df["timestamp"] = df["timestamp"] + offset
-    logger.info("Marcas desplazadas %+.1f dias: el rango pasa a ser %s -> %s",
-                offset.total_seconds() / 86400, df["timestamp"].min(), df["timestamp"].max())
-    return df
-
-
-def build_topic(fila) -> str:
-    return TOPIC_TEMPLATE.format(building_id=fila.building_id, meter_type=fila.meter_type)
-
-
-def build_payload(fila) -> dict:
-    """Payload con los campos del contrato y nada mas.
-
-    `timestamp` se envia como cadena ISO-8601 y el bridge lo convierte a epoch
-    en milisegundos, que es lo que declara el esquema Avro. Se mantiene en ISO
-    aqui porque hace legible el trafico al depurar con `mosquitto_sub`.
-    """
-    return {
-        "building_id": int(fila.building_id),
-        "meter_type": str(fila.meter_type),
-        "timestamp": fila.timestamp.isoformat(),
-        "meter_reading": float(fila.meter_reading),
-        # Instante real del publish(): origen de tiempo del KPI de latencia del
-        # Objetivo 1, y unico campo del payload que no emite el contador.
-        "sim_publish_ts": int(time.time() * 1000),
-    }
-
-
-class GracefulShutdown:
     def __init__(self):
-        self.stop = False
-        signal.signal(signal.SIGINT, self._handler)
-        signal.signal(signal.SIGTERM, self._handler)
+        self.publicados = 0
+        self.fallidos = 0
+        self.reconexiones = 0
+        self.retraso_max_s = 0.0
+        self.t0 = time.monotonic()
 
-    def _handler(self, *_args):
-        logger.info("Senal de parada recibida, cerrando simulador...")
-        self.stop = True
+    def retraso(self, segundos: float) -> None:
+        self.retraso_max_s = max(self.retraso_max_s, segundos)
+
+    def resumen(self) -> dict:
+        duracion = time.monotonic() - self.t0
+        total = self.publicados + self.fallidos
+        return {
+            "publicados": self.publicados,
+            "fallidos": self.fallidos,
+            "reconexiones": self.reconexiones,
+            "tasa_perdida_pct": (self.fallidos / total * 100) if total else 0.0,
+            "duracion_s": duracion,
+            "throughput_ev_s": self.publicados / max(1e-9, duracion),
+            "retraso_max_s": self.retraso_max_s,
+        }
+
+
+def repartir(df, n_clientes: int) -> list[list]:
+    """Agrupa los eventos por conexion, respetando la identidad del sensor.
+
+    UN SENSOR NUNCA SE PARTE ENTRE DOS CONEXIONES: sus lecturas tienen que salir
+    en orden, y dos clientes publicando el mismo topico en paralelo no lo
+    garantizan.
+
+    Con `--clients` igual al numero de sensores, cada contador tiene su propia
+    conexion, que es el parque real. Con un valor menor, cada conexion agrupa
+    varios contadores, y eso tambien modela algo real: en un edificio los
+    contadores hablan BACnet o Modbus con una pasarela, y es la pasarela la que
+    publica por todos. El numero de conexiones MQTT de un despliegue de verdad
+    no lo fija el numero de sensores, sino el de pasarelas.
+    """
+    sensores = list(df.groupby(["building_id", "meter_type"], sort=True))
+    grupos: list[list] = [[] for _ in range(min(n_clientes, len(sensores)))]
+
+    for idx, (_clave, filas) in enumerate(sensores):
+        # Desfase del sensor dentro de su intervalo, como fraccion de 0 a 1: es
+        # lo que evita que los 652 publiquen a la vez. Determinista y no
+        # aleatorio, para que dos ejecuciones con los mismos argumentos sean
+        # comparables entre si.
+        grupos[idx % len(grupos)].append((filas, idx / len(sensores)))
+    return grupos
+
+
+def _programa(filas, fraccion: float, t_sim0, speedup: float):
+    """Instantes de publicacion de UN sensor, en segundos desde el arranque.
+
+    El instante sale del tiempo de evento comprimido por `speedup`, mas el
+    desfase propio del sensor dentro de su intervalo. Ese desfase es lo que
+    impide que los 652 contadores publiquen a la vez: equivale a suponer que sus
+    relojes no estan sincronizados al milisegundo, que es lo que ocurre en un
+    parque real y ademas evita la rafaga que desbordaria al bridge.
+    """
+    desfase = fraccion * PERIODO_SENSOR_S / speedup
+    for fila in filas.itertuples(index=False):
+        yield (fila.timestamp - t_sim0).total_seconds() / speedup + desfase, fila
+
+
+async def cliente_mqtt(indice: int, trabajo: list, args, contadores: Contadores,
+                       parada, t0: float, t_sim0) -> None:
+    """Una conexion MQTT publicando las lecturas de los sensores que le tocaron."""
+    identificador = f"{args.client_id}-{indice}"
+    try:
+        async with aiomqtt.Client(args.broker_host, args.broker_port,
+                                  identifier=identificador) as cliente:
+            # Los sensores de esta conexion se intercalan por instante de
+            # publicacion con heapq.merge, que consume UN GENERADOR POR SENSOR de
+            # forma perezosa. Materializar la agenda completa costaba tanta
+            # memoria como el propio dataset: son 5,68 millones de eventos.
+            agenda = heapq.merge(
+                *(_programa(filas, fraccion, t_sim0, args.speedup)
+                  for filas, fraccion in trabajo),
+                key=lambda x: x[0],
+            )
+
+            for instante, fila in agenda:
+                if parada.is_set():
+                    return
+                espera = (t0 + instante) - time.monotonic()
+                if espera > 0:
+                    # Se espera SOBRE la senal de parada en vez de dormir a
+                    # secas: asi una interrupcion se atiende al instante y el
+                    # `async with` cierra la conexion como es debido, en lugar de
+                    # dejar 652 clientes colgados cuando muere el bucle.
+                    try:
+                        await asyncio.wait_for(parada.wait(), timeout=espera)
+                        return
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    # Espera negativa: el simulador va por detras de su propia
+                    # agenda porque el speedup pedido supera lo que esta maquina
+                    # sostiene. Se registra en vez de recuperar el tiempo
+                    # publicando a rafagas, que es justo lo que este simulador
+                    # evita por diseno y ademas falsearia la medicion.
+                    contadores.retraso(-espera)
+                try:
+                    await cliente.publish(build_topic(fila),
+                                          payload=json.dumps(build_payload(fila)),
+                                          qos=args.qos)
+                    contadores.publicados += 1
+                except aiomqtt.MqttError as exc:
+                    contadores.fallidos += 1
+                    logger.warning("[%s] publicacion fallida: %s", identificador, exc)
+    except aiomqtt.MqttError as exc:
+        # Un contador no se apaga porque se caiga el broker: se anota y esta
+        # conexion deja de emitir, sin arrastrar a las demas ni al proceso.
+        contadores.reconexiones += 1
+        logger.warning("[%s] conexion perdida: %s", identificador, exc)
+
+
+async def informar(contadores: Contadores, intervalo: float, parada) -> None:
+    while not parada.is_set():
+        await asyncio.sleep(intervalo)
+        r = contadores.resumen()
+        logger.info("publicados=%s fallidos=%d | %.1f ev/s efectivos",
+                    f"{r['publicados']:,}", r["fallidos"], r["throughput_ev_s"])
+
+
+async def simular(args, df) -> Contadores:
+    parada = await evento_de_parada_async("simulador")
+    n_sensores = df.groupby(["building_id", "meter_type"]).ngroups
+    n_clientes = n_sensores if args.clients <= 0 else min(args.clients, n_sensores)
+
+    tasa_teorica = n_sensores * args.speedup / PERIODO_SENSOR_S
+    logger.info("Parque simulado: %d sensores | %d conexiones MQTT | speedup x%s",
+                n_sensores, n_clientes, f"{args.speedup:,.0f}")
+    logger.info("Cadencia por sensor: %.3f s | tasa agregada teorica: %.1f ev/s",
+                PERIODO_SENSOR_S / args.speedup, tasa_teorica)
+
+    grupos = repartir(df, n_clientes)
+    contadores = Contadores()
+    t_sim0 = df["timestamp"].min()
+    t0 = time.monotonic()
+
+    tareas = [asyncio.create_task(cliente_mqtt(i, g, args, contadores, parada, t0, t_sim0))
+              for i, g in enumerate(grupos) if g]
+    vigilante = asyncio.create_task(informar(contadores, args.report_interval, parada))
+
+    await asyncio.gather(*tareas)
+    vigilante.cancel()
+    with suppress(asyncio.CancelledError):
+        await vigilante
+    return contadores
 
 
 def run(args: argparse.Namespace) -> int:
-    df = cargar(args.telemetry)
-    df = filtrar_sensores(df, args.max_sensors)
+    df = preparar(args.telemetry, args.max_sensors, args.limit, args.rebase_end)
+    contadores = asyncio.run(simular(args, df))
 
-    # Orden cronologico: el watermark de Spark asume que el tiempo de evento
-    # avanza, y un flujo desordenado haria que se descartaran lecturas tardias.
-    df = df.sort_values("timestamp").reset_index(drop=True)
-    if args.limit:
-        df = df.head(args.limit)
-
-    # El rebase va DESPUES del recorte, a proposito: se ancla la ultima marca de
-    # lo que realmente se va a publicar. Al reves, el offset se calculaba sobre
-    # el dataset completo y un prefijo corto acababa cayendo casi un ano atras,
-    # con lo que los paneles de "ultimas 24 horas" salian vacios igualmente.
-    if args.rebase_end:
-        df = rebasar(df, args.rebase_end)
-
-    client = mqtt.Client(CallbackAPIVersion.VERSION2, client_id=args.client_id)
-    client.on_connect = lambda c, u, f, rc, p=None: logger.info(
-        "Conectado al broker MQTT (reason_code=%s)", rc)
-    client.on_disconnect = lambda c, u, flags, rc=None, p=None: logger.warning(
-        "Desconectado del broker (reason_code=%s)", rc)
-
-    logger.info("Conectando a %s:%d ...", args.broker_host, args.broker_port)
-    client.connect(args.broker_host, args.broker_port, keepalive=30)
-    client.loop_start()
-
-    shutdown = GracefulShutdown()
-    intervalo = 1.0 / args.rate if args.rate > 0 else 0
-    publicados = fallidos = 0
-    t0 = time.monotonic()
-
-    logger.info("Publicando %s eventos%s", f"{len(df):,}",
-                f" a {args.rate:g} ev/s" if args.rate else " sin limite de tasa")
-    try:
-        for fila in df.itertuples(index=False):
-            if shutdown.stop:
-                break
-
-            topico = build_topic(fila)
-            resultado = client.publish(topico, json.dumps(build_payload(fila)), qos=args.qos)
-            # wait_for_publish bloquea hasta que el broker confirma el QoS 1. Es
-            # lo que hace fiable el contador de perdidas, y a la vez el techo de
-            # throughput del simulador: se midieron ~740 ev/s, muy por encima de
-            # los 50 ev/s que exige el Objetivo 3.
-            resultado.wait_for_publish(timeout=5)
-
-            if resultado.rc == mqtt.MQTT_ERR_SUCCESS:
-                publicados += 1
-            else:
-                fallidos += 1
-                logger.warning("Fallo al publicar en %s (rc=%s)", topico, resultado.rc)
-
-            if publicados and publicados % 5000 == 0:
-                logger.info("Publicados: %s | Fallidos: %d | %.1f ev/s", f"{publicados:,}",
-                            fallidos, publicados / max(1e-9, time.monotonic() - t0))
-
-            if intervalo:
-                time.sleep(intervalo)
-
-    finally:
-        client.loop_stop()
-        client.disconnect()
-        total = publicados + fallidos
-        duracion = time.monotonic() - t0
-        logger.info("--- Fin de la simulacion ---")
-        logger.info("  publicados      : %s", f"{publicados:,}")
-        logger.info("  fallidos        : %d", fallidos)
-        logger.info("  tasa de perdida : %.4f%%", (fallidos / total * 100) if total else 0.0)
-        logger.info("  duracion        : %.1f s", duracion)
-        logger.info("  throughput      : %.1f ev/s", publicados / max(1e-9, duracion))
-
-    return 0 if fallidos == 0 else 1
+    r = contadores.resumen()
+    logger.info("--- Fin de la simulacion ---")
+    logger.info("  publicados      : %s", f"{r['publicados']:,}")
+    logger.info("  fallidos        : %d", r["fallidos"])
+    logger.info("  conexiones caidas: %d", r["reconexiones"])
+    logger.info("  tasa de perdida : %.4f%%", r["tasa_perdida_pct"])
+    logger.info("  duracion        : %.1f s", r["duracion_s"])
+    logger.info("  throughput      : %.1f ev/s", r["throughput_ev_s"])
+    logger.info("  retraso maximo  : %.2f s", r["retraso_max_s"])
+    if r["retraso_max_s"] > args.max_lag:
+        logger.warning(
+            "EL SIMULADOR NO SOSTUVO EL RITMO PEDIDO: llego a ir %.1f s por detras de su "
+            "agenda. El throughput de arriba mide esta maquina, no el pipeline; repite con "
+            "un --speedup menor o reparte la carga en mas procesos.", r["retraso_max_s"])
+        return 1
+    return 0 if r["fallidos"] == 0 else 1
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Simulador MQTT de telemetria IoT (TFM)")
-    p.add_argument("--telemetry", type=Path, default=AQUI / "../data/ashrae_telemetry.parquet",
-                   help="Tabla de hechos generada por prepare_ashrae.py")
-    p.add_argument("--broker-host", default="localhost")
-    p.add_argument("--broker-port", type=int, default=1883)
-    p.add_argument("--client-id", default="tfm-simulator")
-    p.add_argument("--qos", type=int, default=1, choices=[0, 1, 2],
-                   help="QoS MQTT (1 por defecto, ver Objetivo 1)")
-    p.add_argument("--rate", type=float, default=100.0,
-                   help="Eventos por segundo (0 = sin limite, para pruebas de carga)")
-    p.add_argument("--limit", type=int, default=None,
-                   help="Numero maximo de eventos a publicar")
-    p.add_argument("--max-sensors", type=int, default=None,
-                   help="Publica solo los primeros N sensores, en orden determinista. "
-                        "Para la escalera de carga del Objetivo 5: 100, 250, 500, 652")
-    p.add_argument("--rebase-end", metavar="ISO|now", default=None,
-                   help="Desplaza las marcas de tiempo para que la ultima caiga en este "
-                        "instante. Para la demostracion en vivo: los datos son de 2016 y "
-                        "los paneles miran a fechas recientes")
+    p = argparse.ArgumentParser(
+        description="Simulador del parque de contadores IoT (TFM)")
+    anadir_argumentos_dataset(p)
+    anadir_argumentos_mqtt(p, client_id="tfm-sim")
+    p.add_argument("--speedup", type=float, default=2000.0,
+                   help="Cuantas veces mas rapido avanza el reloj simulado. Es un factor "
+                        "POR SENSOR: la tasa agregada es n_sensores x speedup / 3600")
+    p.add_argument("--clients", type=int, default=0,
+                   help="Conexiones MQTT simultaneas. 0 (por defecto) abre una por sensor, "
+                        "que es el parque real; un valor menor agrupa varios sensores por "
+                        "conexion, como haria una pasarela de edificio")
+    p.add_argument("--report-interval", type=float, default=10.0,
+                   help="Segundos entre informes de progreso")
+    p.add_argument("--max-lag", type=float, default=1.0,
+                   help="Retraso maximo tolerado respecto a la agenda, en segundos. Por "
+                        "encima, la ejecucion se marca como no valida: el simulador no "
+                        "sostuvo el ritmo y sus cifras no miden el pipeline")
     return p.parse_args()
 
 
 if __name__ == "__main__":
+    configurar_logging("mqtt_simulator")
     try:
         raise SystemExit(run(parse_args()))
     except (FileNotFoundError, ValueError) as exc:
         logger.error("%s", exc)
         raise SystemExit(1)
-    except ConnectionRefusedError:
-        logger.error("No se pudo conectar al broker MQTT. Levanta el stack: "
-                     "docker compose -f pipeline/docker-compose.yml up -d")
+    except aiomqtt.MqttError as exc:
+        logger.error("No se pudo hablar con el broker MQTT: %s. Levanta el stack: "
+                     "docker compose -f pipeline/docker-compose.yml up -d", exc)
         raise SystemExit(1)

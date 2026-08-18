@@ -10,7 +10,7 @@ Existe porque Mosquitto no tiene puente nativo a Kafka. Se evaluo NanoMQ por
 tenerlo, pero se verifico que esa funcion es exclusiva de EMQX Enterprise (de
 pago), de modo que el puente es codigo propio.
 
-    iot/{company}/{site}/{machine}/telemetry          iot.telemetry.raw
+    iot/{building_id}/{meter_type}/telemetry          iot.telemetry.raw
         (JSON, QoS 1)  --> [ bridge ] --> Avro + cabecera de esquema
                                     \\
                                      --> iot.telemetry.dlq (JSON + motivo)
@@ -38,6 +38,7 @@ from kafka import KafkaProducer
 from kafka.errors import KafkaError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.logging_setup import configurar_logging  # noqa: E402
 from common.schema_registry import (  # noqa: E402
     DEFAULT_ARTIFACT,
     DEFAULT_GROUP,
@@ -47,14 +48,13 @@ from common.schema_registry import (  # noqa: E402
     encode_header,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("bridge")
 
-# Campos que el simulador publica como cadena ISO-8601 y que el esquema Avro
+# Campo que el simulador publica como cadena ISO-8601 y que el esquema Avro
 # declara como long/timestamp-millis. La conversion es responsabilidad del
 # bridge: el simulador emite el formato del dataset original y el contrato Avro
 # exige epoch en milisegundos.
-ISO_TIMESTAMP_FIELDS = ("timestamp", "ingest_ts")
+ISO_TIMESTAMP_FIELDS = ("timestamp",)
 
 MQTT_TOPIC_FILTER = "iot/#"
 
@@ -230,11 +230,22 @@ class Bridge:
     def _publicar(self, evento: dict, topico_mqtt: str) -> None:
         datos = self._serializar(evento)
 
-        # La clave de Kafka es machine_id: garantiza que todos los eventos de
-        # una misma maquina caen en la misma particion y por tanto se procesan
-        # en orden, que es lo que necesitan las agregaciones por ventana de
-        # Spark. Usar event_id como clave los repartiria al azar.
-        clave = evento.get("machine_id")
+        # LA CLAVE DE KAFKA IDENTIFICA AL SENSOR, es decir el par (edificio,
+        # tipo de contador): garantiza que todas las lecturas de un mismo
+        # contador caen en la misma particion y por tanto se procesan en orden,
+        # que es lo que necesitan las agregaciones por ventana de Spark.
+        #
+        # No confundirla con la clave natural del evento, que ademas incluye
+        # timestamp: esa identifica una lectura concreta y usarla aqui
+        # repartiria al azar las lecturas de un mismo contador, una por
+        # particion, perdiendo el orden.
+        #
+        # Un valor None NO es inocuo: el productor reparte esos mensajes en
+        # round-robin y el orden por sensor se pierde en silencio, sin ningun
+        # error. Por eso se construye con acceso directo y no con .get(): si el
+        # evento no trae estos campos, no cumple el contrato y debe acabar en
+        # la DLQ, no publicarse sin clave.
+        clave = f"{evento['building_id']}:{evento['meter_type']}"
 
         latencia = None
         sim_ts = evento.get("sim_publish_ts")
@@ -347,6 +358,7 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
+    configurar_logging("bridge")
     args = parse_args()
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)

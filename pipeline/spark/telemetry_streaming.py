@@ -20,7 +20,10 @@ que el ahorro de una lectura.
 Uso:
     python telemetry_streaming.py                      # ambos sumideros
     python telemetry_streaming.py --sink metrics       # solo TimescaleDB
-    python telemetry_streaming.py --console            # depuracion por consola
+
+El progreso de cada micro-lote se persiste en la tabla `streaming_progress` de
+TimescaleDB: es la fuente del KPI de latencia de lote del Objetivo 3, y sin
+persistirlo desaparece al terminar el job.
 """
 
 import argparse
@@ -50,6 +53,13 @@ from pyspark.sql import functions as F
 from pyspark.sql.avro.functions import from_avro
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.conexiones import (  # noqa: E402
+    POSTGRES,
+    TIMESCALE,
+    anadir_argumentos_bd,
+    props_bd,
+)
+from common.logging_setup import configurar_logging  # noqa: E402
 from common.schema_registry import (  # noqa: E402
     DEFAULT_ARTIFACT,
     DEFAULT_GROUP,
@@ -59,7 +69,6 @@ from common.schema_registry import (  # noqa: E402
     SchemaRegistryError,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("spark_job")
 
 # Dependencias JVM que no vienen con PySpark. Se resuelven de Maven Central en
@@ -477,48 +486,136 @@ def load_reference_tables(spark: SparkSession, dim_path: Path, base_path: Path,
         conn.close()
 
 
-def db_props(args: argparse.Namespace, cual: str) -> dict:
-    if cual == "metrics":
-        return {"host": args.timescale_host, "port": args.timescale_port,
-                "dbname": args.timescale_db, "user": args.db_user, "password": args.db_password}
-    return {"host": args.postgres_host, "port": args.postgres_port,
-            "dbname": args.postgres_db, "user": args.db_user, "password": args.db_password}
-
-
 # --------------------------------------------------------------------------
-def arrancar_monitor(consultas: list, intervalo: float) -> None:
-    """Hilo que publica las metricas de progreso de cada consulta.
+# Progreso de micro-lote: KPI 3
+# --------------------------------------------------------------------------
+DDL_PROGRESO = (Path(__file__).resolve().parents[1]
+                / "docker/timescaledb/init/02_streaming_progress.sql")
 
-    Spark las expone en `query.lastProgress`, pero no las escribe en el log con
-    la configuracion habitual. Sin ellas, diagnosticar una latencia alta es
-    adivinar: `durationMs` desglosa cuanto se va en leer offsets, planificar,
-    ejecutar el lote y escribir en el sumidero, que es justo lo que hace falta
-    para saber donde esta el cuello.
+
+def asegurar_tabla_progreso(props: dict) -> None:
+    """Aplica el DDL de `streaming_progress` si aun no existe.
+
+    Los scripts de `docker/timescaledb/init/` solo se ejecutan cuando se CREA el
+    volumen. Sin esto, anadir la tabla obligaria a destruir un volumen con datos
+    para que apareciera. Se ejecuta el mismo fichero .sql que usa el contenedor,
+    en vez de repetir aqui el CREATE TABLE, para que no existan dos definiciones
+    del esquema que puedan divergir.
     """
-    import threading
+    import psycopg2
 
-    def bucle():
-        while True:
-            _time.sleep(intervalo)
-            for q in consultas:
-                p = q.lastProgress
-                if not p:
+    # `with psycopg2.connect(...)` hace commit al salir pero NO cierra la
+    # conexion: hay que cerrarla a mano o se acumulan sockets abiertos.
+    conn = psycopg2.connect(**props)
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(DDL_PROGRESO.read_text())
+    finally:
+        conn.close()
+
+
+def _a_timestamp(valor) -> datetime | None:
+    """Convierte a datetime las marcas ISO que Spark publica como cadena."""
+    if not valor:
+        return None
+    try:
+        return datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+class RegistroProgreso:
+    """Vuelca a TimescaleDB el progreso de cada micro-lote.
+
+    Se lee `recentProgress` y no `lastProgress`, que es lo que hacia la version
+    anterior: con un trigger de 1 s y un sondeo de 10 s, `lastProgress` deja
+    fuera nueve de cada diez lotes. Eso vale para observar por encima, pero no
+    para un KPI —la mediana y el p95 de una muestra con huecos no son la
+    mediana y el p95 de los lotes—. `recentProgress` conserva los ultimos 100
+    informes, asi que sondeando mas a menudo que cada 100 lotes no se pierde
+    ninguno.
+
+    Los ya escritos se llevan en un conjunto en memoria porque esos 100
+    informes se solapan entre sondeos consecutivos.
+    """
+
+    def __init__(self, consultas: list, props: dict, run_id: str):
+        self.consultas = consultas
+        self.props = props
+        self.run_id = run_id
+        self.vistos: set[tuple[str, int]] = set()
+
+    def volcar(self) -> int:
+        import psycopg2
+        from psycopg2.extras import execute_values
+
+        filas = []
+        for q in self.consultas:
+            for p in q.recentProgress:
+                clave = (q.name, p.get("batchId"))
+                if clave in self.vistos:
                     continue
-                d = p.get("durationMs", {})
-                # eventTime lleva el watermark y el maximo tiempo de evento del
-                # lote. Compararlos con el reloj de pared es lo que permite
-                # separar el retraso de cierre de ventana del de escritura.
-                et = p.get("eventTime", {})
-                logger.info(
-                    "[%s] lote=%s filas=%s salida=%s | total=%sms (addBatch=%sms) | "
-                    "evento_max=%s watermark=%s",
-                    q.name, p.get("batchId"), p.get("numInputRows"),
-                    (p.get("sink") or {}).get("numOutputRows"),
-                    d.get("triggerExecution"), d.get("addBatch"),
-                    et.get("max"), et.get("watermark"),
-                )
+                self.vistos.add(clave)
 
-    threading.Thread(target=bucle, daemon=True).start()
+                d = p.get("durationMs", {}) or {}
+                et = p.get("eventTime", {}) or {}
+                filas.append((
+                    _a_timestamp(p.get("timestamp")), self.run_id, q.name, p.get("batchId"),
+                    p.get("numInputRows"),
+                    p.get("inputRowsPerSecond"), p.get("processedRowsPerSecond"),
+                    d.get("triggerExecution"), d.get("addBatch"), d.get("queryPlanning"),
+                    (p.get("sink") or {}).get("numOutputRows"),
+                    _a_timestamp(et.get("max")), _a_timestamp(et.get("watermark")),
+                ))
+
+        if not filas:
+            return 0
+
+        # Un fallo escribiendo telemetria NO puede tumbar el pipeline: se
+        # registra y se sigue. Es la excepcion a "fallar ruidosamente", y lo es
+        # porque aqui no hay dato del dominio en juego; perder unas metricas de
+        # progreso es recuperable repitiendo la medicion, parar la ingesta no.
+        # Se abre y se cierra una conexion por volcado en vez de mantener una
+        # viva: este hilo sigue corriendo mientras se prueba la recuperacion
+        # ante fallo del Objetivo 5, que consiste precisamente en tumbar la base
+        # de datos, y una conexion guardada quedaria inservible tras el reinicio.
+        conn = None
+        try:
+            conn = psycopg2.connect(**self.props)
+            with conn, conn.cursor() as cur:
+                execute_values(cur, """
+                    INSERT INTO streaming_progress (
+                        trigger_ts, run_id, query_name, batch_id,
+                        num_input_rows, input_rows_per_second, processed_rows_per_second,
+                        duration_ms, add_batch_ms, query_planning_ms, sink_num_output_rows,
+                        event_time_max, watermark
+                    ) VALUES %s
+                    ON CONFLICT (trigger_ts, run_id, query_name, batch_id) DO NOTHING
+                """, filas, page_size=500)
+        except Exception as exc:
+            logger.warning("No se pudo registrar el progreso de %d lotes: %s", len(filas), exc)
+            # Se reintentaran en el volcado siguiente: al no haberse escrito, se
+            # sacan del conjunto de vistos.
+            for fila in filas:
+                self.vistos.discard((fila[2], fila[3]))
+            return 0
+        finally:
+            if conn is not None:
+                conn.close()
+        return len(filas)
+
+    def arrancar(self, intervalo: float) -> None:
+        import threading
+
+        def bucle():
+            while True:
+                _time.sleep(intervalo)
+                escritos = self.volcar()
+                if escritos:
+                    logger.info("Progreso registrado: %d lotes nuevos (run_id=%s)",
+                                escritos, self.run_id)
+
+        threading.Thread(target=bucle, daemon=True).start()
 
 
 def run(args: argparse.Namespace) -> int:
@@ -546,61 +643,61 @@ def run(args: argparse.Namespace) -> int:
     consultas = []
     checkpoint_raiz = Path(args.checkpoint_dir).resolve()
 
-    if args.console:
+    if args.sink in ("metrics", "both"):
+        metricas = aggregate_metrics(enriquecidos, args.window, args.watermark)
         consultas.append(
-            eventos.writeStream.format("console")
-            .option("truncate", "false").option("numRows", 5)
+            metricas.writeStream
+            # outputMode append: emite cada ventana UNA vez, cuando el
+            # watermark garantiza que ya no llegaran mas eventos suyos. Es
+            # lo que hace medible el KPI "latencia de micro-lote < 3 s tras
+            # el cierre de ventana": la fila aparece justo al cerrarse.
+            .outputMode("append")
+            .foreachBatch(make_upsert_writer(
+                props_bd(args, TIMESCALE), "telemetry_metrics",
+                ["window_start", "site_id", "primary_use", "meter_type"]))
+            .option("checkpointLocation", str(checkpoint_raiz / "metrics"))
             .trigger(processingTime=args.trigger)
-            .option("checkpointLocation", str(checkpoint_raiz / "console"))
+            .queryName("metricas-timescaledb")
             .start()
         )
-    else:
-        if args.sink in ("metrics", "both"):
-            metricas = aggregate_metrics(enriquecidos, args.window, args.watermark)
-            consultas.append(
-                metricas.writeStream
-                # outputMode append: emite cada ventana UNA vez, cuando el
-                # watermark garantiza que ya no llegaran mas eventos suyos. Es
-                # lo que hace medible el KPI "latencia de micro-lote < 3 s tras
-                # el cierre de ventana": la fila aparece justo al cerrarse.
-                .outputMode("append")
-                .foreachBatch(make_upsert_writer(
-                    db_props(args, "metrics"), "telemetry_metrics",
-                    ["window_start", "site_id", "primary_use", "meter_type"]))
-                .option("checkpointLocation", str(checkpoint_raiz / "metrics"))
-                .trigger(processingTime=args.trigger)
-                .queryName("metricas-timescaledb")
-                .start()
-            )
 
-        if args.sink in ("events", "both"):
-            load_reference_tables(spark, Path(args.buildings), Path(args.baseline),
-                                  db_props(args, "events"))
+    if args.sink in ("events", "both"):
+        load_reference_tables(spark, Path(args.buildings), Path(args.baseline),
+                              props_bd(args, POSTGRES))
 
-            # PostgreSQL recibe SOLO el contrato mas la instrumentacion. Ni
-            # copias de la dimension ni campos derivados: Power BI tiene las dos
-            # tablas de referencia cargadas y calcula lo suyo con un join, que
-            # es justo para lo que sirve. La clave primaria es la clave natural
-            # del evento, lo que hace idempotente el reprocesamiento.
-            eventos_bd = enriquecidos.select(
-                "building_id", "meter_type",
-                F.col("timestamp").alias("event_time"),
-                "meter_reading", "sim_publish_ts",
-            )
-            consultas.append(
-                eventos_bd.writeStream
-                .outputMode("append")
-                .foreachBatch(make_upsert_writer(
-                    db_props(args, "events"), "telemetry_events",
-                    ["building_id", "meter_type", "event_time"]))
-                .option("checkpointLocation", str(checkpoint_raiz / "events"))
-                .trigger(processingTime=args.trigger)
-                .queryName("eventos-postgresql")
-                .start()
-            )
+        # PostgreSQL recibe SOLO el contrato mas la instrumentacion. Ni
+        # copias de la dimension ni campos derivados: Power BI tiene las dos
+        # tablas de referencia cargadas y calcula lo suyo con un join, que
+        # es justo para lo que sirve. La clave primaria es la clave natural
+        # del evento, lo que hace idempotente el reprocesamiento.
+        eventos_bd = enriquecidos.select(
+            "building_id", "meter_type",
+            F.col("timestamp").alias("event_time"),
+            "meter_reading", "sim_publish_ts",
+        )
+        consultas.append(
+            eventos_bd.writeStream
+            .outputMode("append")
+            .foreachBatch(make_upsert_writer(
+                props_bd(args, POSTGRES), "telemetry_events",
+                ["building_id", "meter_type", "event_time"]))
+            .option("checkpointLocation", str(checkpoint_raiz / "events"))
+            .trigger(processingTime=args.trigger)
+            .queryName("eventos-postgresql")
+            .start()
+        )
 
-    if args.log_progress:
-        arrancar_monitor(consultas, args.log_progress)
+    # run_id: identifica esta ejecucion en streaming_progress. Hace falta porque
+    # al dejar el sistema en estado limpio se borran los checkpoints y batch_id
+    # vuelve a 0, de modo que sin el no se distinguirian dos mediciones.
+    run_id = _time.strftime("%Y%m%dT%H%M%SZ", _time.gmtime())
+    registro = None
+    if args.progress_interval:
+        props_progreso = props_bd(args, TIMESCALE)
+        asegurar_tabla_progreso(props_progreso)
+        registro = RegistroProgreso(consultas, props_progreso, run_id)
+        registro.arrancar(args.progress_interval)
+        logger.info("Progreso de micro-lote -> TimescaleDB.streaming_progress (run_id=%s)", run_id)
 
     logger.info("Consultas en marcha: %s", [q.name for q in consultas])
     try:
@@ -610,6 +707,13 @@ def run(args: argparse.Namespace) -> int:
         logger.info("Parada solicitada; deteniendo consultas...")
         for q in consultas:
             q.stop()
+    finally:
+        # Volcado final: el hilo es daemon y muere con el proceso, asi que los
+        # ultimos lotes —justo los del final de una prueba de carga— se
+        # perderian sin esto.
+        if registro:
+            logger.info("Registrando el progreso de los ultimos lotes...")
+            registro.volcar()
     return 0
 
 
@@ -634,30 +738,26 @@ def parse_args() -> argparse.Namespace:
                    help="Linea base por sensor para la deteccion de picos (broadcast join)")
     p.add_argument("--shuffle-partitions", type=int, default=8)
 
-    p.add_argument("--sink", default="both", choices=["both", "metrics", "events"])
-    p.add_argument("--console", action="store_true", help="Escribe por consola en vez de a las BD")
+    p.add_argument("--sink", default="both", choices=["both", "metrics", "events"],
+                   help="Sumideros activos. Aislar uno solo sirve para la prueba de "
+                        "recuperacion ante fallo del Objetivo 5")
     p.add_argument("--checkpoint-dir", default=str(Path(__file__).parent / "checkpoints"))
 
-    p.add_argument("--timescale-host", default="localhost")
-    p.add_argument("--timescale-port", type=int, default=5432)
-    p.add_argument("--timescale-db", default="tfm_metrics")
-    p.add_argument("--postgres-host", default="localhost")
-    p.add_argument("--postgres-port", type=int, default=5433)
-    p.add_argument("--postgres-db", default="tfm_analytics")
-    p.add_argument("--db-user", default="tfm")
-    p.add_argument("--db-password", default="tfm_dev_password")
+    anadir_argumentos_bd(p)
 
     p.add_argument("--registry-url", default=DEFAULT_REGISTRY_URL)
     p.add_argument("--group", default=DEFAULT_GROUP)
     p.add_argument("--artifact", default=DEFAULT_ARTIFACT)
     p.add_argument("--spark-log-level", default="WARN")
-    p.add_argument("--log-progress", type=float, default=0,
-                   help="Segundos entre informes de progreso de cada consulta (0 = desactivado). "
-                        "Desglosa donde se va el tiempo de cada micro-lote")
+    p.add_argument("--progress-interval", type=float, default=10.0,
+                   help="Segundos entre volcados del progreso de micro-lote a "
+                        "streaming_progress (0 = no registrar). Es la fuente del KPI de "
+                        "latencia de lote del Objetivo 3")
     return p.parse_args()
 
 
 if __name__ == "__main__":
+    configurar_logging("spark_job")
     try:
         sys.exit(run(parse_args()))
     except SchemaRegistryError as exc:

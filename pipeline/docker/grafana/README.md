@@ -99,7 +99,7 @@ Los datos son de 2016, asi que los paneles con rangos relativos saldrian vacios.
 El simulador desplaza las marcas con un offset constante:
 
 ```bash
-python pipeline/simulator/mqtt_simulator.py --rebase-end now --rate 400 --limit 60000
+python pipeline/simulator/mqtt_simulator.py --rebase-end now --speedup 2000 --limit 60000
 ```
 
 El desplazamiento se aplica **despues** del recorte por `--limit`, de modo que

@@ -53,9 +53,16 @@ Uso:
 """
 
 import argparse
+import logging
+import sys
 from pathlib import Path
 
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.logging_setup import configurar_logging  # noqa: E402
+
+logger = logging.getLogger("prepare_ashrae")
 
 # Codigos de contador segun la documentacion de la competicion.
 METER_TYPES = {0: "electricity", 1: "chilledwater", 2: "steam", 3: "hotwater"}
@@ -80,19 +87,19 @@ def read_any(path: Path) -> pd.DataFrame:
 
 
 def prepare(train_path: Path, meta_path: Path, sites: tuple) -> None:
-    print(f"Leyendo metadatos de edificio: {meta_path}")
+    logger.info(f"Leyendo metadatos de edificio: {meta_path}")
     meta = read_any(meta_path)
     meta_sub = meta[meta["site_id"].isin(sites)]
-    print(f"  {len(meta)} edificios en total -> {len(meta_sub)} en los emplazamientos {list(sites)}")
+    logger.info(f"  {len(meta)} edificios en total -> {len(meta_sub)} en los emplazamientos {list(sites)}")
 
-    print(f"Leyendo lecturas de contador: {train_path}")
+    logger.info(f"Leyendo lecturas de contador: {train_path}")
     train = read_any(train_path)
-    print(f"  {len(train):,} lecturas en total")
+    logger.info(f"  {len(train):,} lecturas en total")
 
     # El join hace tambien de filtro: solo sobreviven las lecturas de edificios
     # de los emplazamientos elegidos.
     df = train.merge(meta_sub, on="building_id", how="inner")
-    print(f"  {len(df):,} lecturas tras filtrar por emplazamiento")
+    logger.info(f"  {len(df):,} lecturas tras filtrar por emplazamiento")
 
     df["timestamp"] = pd.to_datetime(df["timestamp"])
 
@@ -148,59 +155,59 @@ def prepare(train_path: Path, meta_path: Path, sites: tuple) -> None:
 
     resumen(telemetria, dimension, linea_base)
 
-    print()
+    logger.info()
     for datos, ruta in ((telemetria, SALIDA_TELEMETRIA),
                         (dimension, SALIDA_EDIFICIOS),
                         (linea_base, SALIDA_LINEA_BASE)):
         ruta.parent.mkdir(parents=True, exist_ok=True)
         datos.to_parquet(ruta, index=False)
-        print(f"Escrito {ruta} ({ruta.stat().st_size / 1024:.0f} KB)")
+        logger.info(f"Escrito {ruta} ({ruta.stat().st_size / 1024:.0f} KB)")
 
 
 def resumen(tel: pd.DataFrame, dim: pd.DataFrame, base: pd.DataFrame) -> None:
     n = len(tel)
-    print("\n--- Tabla de hechos (lo que emite el sensor) ---")
-    print(f"  columnas               : {list(tel.columns)}")
-    print(f"  eventos                : {n:,}")
-    print(f"  sensores (edificio + contador): {tel.groupby(['building_id','meter_type'], observed=True).ngroups}")
-    print(f"  rango temporal         : {tel['timestamp'].min()} -> {tel['timestamp'].max()}")
-    print(f"  nulos                  : {int(tel.isna().sum().sum())}")
+    logger.info("\n--- Tabla de hechos (lo que emite el sensor) ---")
+    logger.info(f"  columnas               : {list(tel.columns)}")
+    logger.info(f"  eventos                : {n:,}")
+    logger.info(f"  sensores (edificio + contador): {tel.groupby(['building_id','meter_type'], observed=True).ngroups}")
+    logger.info(f"  rango temporal         : {tel['timestamp'].min()} -> {tel['timestamp'].max()}")
+    logger.info(f"  nulos                  : {int(tel.isna().sum().sum())}")
 
     # La clave natural se COMPRUEBA, no se asume: es lo que sostiene la
     # idempotencia del pipeline. Si dejara de ser unica, el UPSERT de
     # PostgreSQL perderia eventos en silencio.
     clave = ["building_id", "meter_type", "timestamp"]
     grupos = tel.groupby(clave, observed=True).ngroups
-    print(f"\n  clave natural {tuple(clave)}:")
-    print(f"    grupos = {grupos:,} sobre {n:,} filas -> {'UNICA' if grupos == n else 'COLISIONA'}")
+    logger.info(f"\n  clave natural {tuple(clave)}:")
+    logger.info(f"    grupos = {grupos:,} sobre {n:,} filas -> {'UNICA' if grupos == n else 'COLISIONA'}")
     # (building_id, timestamp) no basta: un edificio puede tener varios
     # contadores midiendo a la misma hora.
     sin_contador = tel.groupby(["building_id", "timestamp"], observed=True).ngroups
-    print(f"    sin meter_type seria {sin_contador:,} grupos -> perderia {n - sin_contador:,} eventos")
+    logger.info(f"    sin meter_type seria {sin_contador:,} grupos -> perderia {n - sin_contador:,} eventos")
 
     ceros = (tel["meter_reading"] == 0).sum()
-    print(f"\n  lecturas a cero        : {ceros:,} ({100*ceros/n:.1f}%)")
-    print("  (no se eliminan: son dato real y material para el informe de anomalias)")
+    logger.info(f"\n  lecturas a cero        : {ceros:,} ({100*ceros/n:.1f}%)")
+    logger.info("  (no se eliminan: son dato real y material para el informe de anomalias)")
 
-    print("\n  eventos por tipo de contador:")
+    logger.info("\n  eventos por tipo de contador:")
     for tipo, c in tel["meter_type"].value_counts().items():
-        print(f"    {tipo:<14} {c:>10,}")
+        logger.info(f"    {tipo:<14} {c:>10,}")
 
-    print("\n--- Tabla de dimension (atributos del edificio) ---")
-    print(f"  columnas               : {list(dim.columns)}")
-    print(f"  edificios              : {len(dim):,}")
-    print(f"  emplazamientos         : {sorted(int(s) for s in dim['site_id'].unique())}")
-    print(f"  usos de edificio       : {dim['primary_use'].nunique()}")
-    print("  nulos por columna:")
+    logger.info("\n--- Tabla de dimension (atributos del edificio) ---")
+    logger.info(f"  columnas               : {list(dim.columns)}")
+    logger.info(f"  edificios              : {len(dim):,}")
+    logger.info(f"  emplazamientos         : {sorted(int(s) for s in dim['site_id'].unique())}")
+    logger.info(f"  usos de edificio       : {dim['primary_use'].nunique()}")
+    logger.info("  nulos por columna:")
     nulos = dim.isna().sum()
     for col, c in nulos[nulos > 0].items():
-        print(f"    {col:<16} {c:>5,} de {len(dim)}  ({100*c/len(dim):.1f}%)")
+        logger.info(f"    {col:<16} {c:>5,} de {len(dim)}  ({100*c/len(dim):.1f}%)")
 
-    print("\n--- Linea base por sensor (referencia de deteccion de picos) ---")
-    print(f"  sensores               : {len(base):,}")
-    print(f"  columnas               : {list(base.columns)}")
+    logger.info("\n--- Linea base por sensor (referencia de deteccion de picos) ---")
+    logger.info(f"  sensores               : {len(base):,}")
+    logger.info(f"  columnas               : {list(base.columns)}")
     sin_dispersion = (base.baseline_iqr == 0).sum()
-    print(f"  sensores con IQR = 0   : {sin_dispersion} (quedan exentos de la regla de picos)")
+    logger.info(f"  sensores con IQR = 0   : {sin_dispersion} (quedan exentos de la regla de picos)")
 
 
 def parse_args() -> argparse.Namespace:
@@ -215,5 +222,6 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
+    configurar_logging("prepare_ashrae")
     a = parse_args()
     prepare(a.train, a.metadata, tuple(a.sites))

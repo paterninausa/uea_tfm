@@ -48,84 +48,106 @@ depurar con `mosquitto_sub`.
 
 ## Uso
 
-Requiere los datos preparados (`python pipeline/data/prepare_ashrae.py`) y el
-stack levantado.
-
 ```bash
-python pipeline/simulator/mqtt_simulator.py --rate 100 --limit 5000
+python pipeline/simulator/mqtt_simulator.py --speedup 2000
 ```
 
 | Opcion | Para que |
 |---|---|
-| `--rate` | Eventos por segundo. `0` = sin limite, para pruebas de carga |
-| `--limit` | Numero maximo de eventos |
+| `--speedup` | Cuantas veces mas rapido avanza el reloj simulado |
+| `--clients` | Conexiones MQTT simultaneas (0 = una por sensor) |
 | `--max-sensors` | Publica solo los primeros N sensores (Objetivo 5) |
+| `--limit` | Techo de eventos publicados |
 | `--rebase-end` | Desplaza las marcas de tiempo (demostracion en vivo) |
-| `--qos` | QoS MQTT, 1 por defecto |
+| `--max-lag` | Retraso tolerado antes de invalidar la ejecucion |
 
-### `--max-sensors`: la escalera de carga del Objetivo 5
+Son tres grupos —seleccion de datos, ritmo y conexiones— y **ninguno es un
+artificio de banco de pruebas**. Lo que mide y orquesta vive en `herramientas/`.
 
-El objetivo pide soportar 500 sensores concurrentes con una degradacion de
-throughput inferior al 20% respecto a una carga base de 100. Esta opcion da los
-cuatro peldanos:
+## El parque real genera 0,1797 ev/s
 
-```bash
-python pipeline/simulator/mqtt_simulator.py --max-sensors 100 --rate 0
-```
+Verificado sobre el Parquet: cada contador mide una vez por hora —mediana y p95
+del intervalo son exactamente 3.600 s, sin dispersion— y los 652 contadores
+tienen datos en el 99,2% de las 8.784 horas de 2016. **El caso de uso completo
+son menos de dos decimas de evento por segundo.**
 
-| Sensores | Eventos |
-|---|---|
-| 100 | 875.090 |
-| 250 | 2.191.296 |
-| 500 | 4.356.884 |
-| 652 (todos) | 5.682.185 |
+Por eso el simulador acelera el reloj:
 
-La seleccion es **determinista y anidada**: los 100 primeros sensores estan
-contenidos en los 250, estos en los 500 y estos en los 652 —verificado—. Eso
-importa para la medida: la degradacion se compara sobre los mismos sensores mas
-otros, y no entre dos muestras aleatorias distintas que no serian comparables.
+    tasa agregada = n_sensores x speedup / 3600
 
-### `--rebase-end`: para la demostracion en vivo
+| `--speedup` | Cadencia por sensor | Con 652 sensores | Ano completo en |
+|---|---|---|---|
+| 1 | 1 h | 0,18 ev/s | 8.784 h |
+| 2.000 | 1,8 s | 359 ev/s | 4,4 h |
+| 7.145 | 0,5 s | 1.294 ev/s | 74 min |
 
-Los datos son de 2016, asi que un panel de Grafana a "ultimas 6 horas" saldria
-vacio. Esta opcion desplaza todas las marcas con un unico offset constante para
-que la ultima caiga en el instante indicado:
+**Es un factor POR SENSOR, no una tasa global**, y esa diferencia decide si la
+escalera del Objetivo 5 significa algo: con una tasa global fija, pasar de 100 a
+652 sensores reparte los mismos eventos entre mas identidades y la carga total no
+cambia. Con `--speedup`, cada contador mantiene su cadencia y la carga crece con
+el numero de contadores, que es lo que quiere decir "sensores concurrentes".
 
-```bash
-python pipeline/simulator/mqtt_simulator.py --rebase-end now --rate 0
-```
+Si el simulador no consigue sostener el ritmo pedido, **la ejecucion se marca
+como no valida** (codigo de salida 1) en lugar de recuperar el tiempo perdido
+publicando a rafagas: sus cifras medirian entonces esta maquina y no el pipeline.
 
-Al ser un offset constante, las distancias relativas entre eventos se conservan
-y los ciclos diario y estacional quedan intactos. Se ancla la **ultima** marca y
-no la primera para que todo el historico quede en el pasado: anclando la
-primera, el replay acelerado generaria marcas en el futuro.
+## Por que no se reproducen las rafagas horarias
 
-Tambien acepta un instante ISO concreto, util para preparar la vispera de una
-defensa: `--rebase-end 2026-09-15T09:00:00`.
+Los contadores reales miden en la hora en punto, asi que un replay literal
+publicaria los 652 de golpe y luego callaria durante todo el intervalo. No se
+hace, y el motivo es cuantitativo: con un drenaje del bridge de unos 4.000 ev/s,
+el replay fiel se sostiene hasta **x22.000** —de `652 / (3600/speedup) <= 4.000`—
+y por encima la cola de Mosquitto, 10.000 mensajes segun `mosquitto.conf`, se
+llena en menos de tres segundos y el broker **descarta en silencio**.
 
-## Comprobar el trafico
+En su lugar los sensores se escalonan de forma determinista dentro de cada
+intervalo, lo que equivale a suponer que sus relojes no estan sincronizados al
+milisegundo: mas realista que la rafaga perfecta y sin perdida artificial.
 
-En otra terminal, mientras corre el simulador:
+## Una conexion por sensor
 
-```bash
-docker exec tfm-mosquitto mosquitto_sub -h localhost -t 'iot/#' -v
-```
+Por defecto (`--clients 0`) el simulador abre **una conexion MQTT por sensor**:
+652 en el parque completo, verificadas simultaneas contra Mosquitto sin un solo
+fallo. Es lo que hace que "652 sensores concurrentes" signifique 652 sesiones y
+no 652 identidades compartiendo una conexion.
 
-Para ver solo un tipo de contador, aprovechando la jerarquia del topico:
+Con un valor menor, cada conexion agrupa varios contadores, y eso tambien modela
+algo real: en un edificio los contadores hablan BACnet o Modbus con una pasarela,
+y es la pasarela la que publica por todos. **El numero de conexiones MQTT de un
+despliegue real no lo fija el numero de sensores, sino el de pasarelas.**
 
-```bash
-docker exec tfm-mosquitto mosquitto_sub -h localhost -t 'iot/+/chilledwater/telemetry' -v
-```
+## Por que ya no hay un generador de carga aparte
 
-## Throughput y perdida
+Existio `herramientas/load_generator.py`, que alcanzaba tasas altas mediante una
+VENTANA DE MENSAJES EN VUELO: publicaba N mensajes sin esperar confirmacion desde
+un unico cliente. Se retiro en agosto de 2026 y **no debe volver**.
 
-Cada `publish()` espera la confirmacion del broker (`wait_for_publish` con QoS
-1). Eso hace fiable el contador de perdidas y a la vez fija el techo de
-throughput del simulador: **~740 ev/s medidos**, muy por encima de los 50 ev/s
-que exige el Objetivo 3.
+El motivo: esa ventana era un artificio para que un cliente hiciera el trabajo de
+652, y `--clients` consigue lo mismo sin inventar nada, porque 652 conexiones con
+un mensaje en vuelo cada una dan 652 mensajes en vuelo por la via realista. Se
+comprobo ademas que el generador con ventana 1 se comportaba exactamente como el
+simulador: eran el mismo programa con dos nombres.
 
-Al terminar imprime publicados, fallidos, tasa de perdida, duracion y
-throughput, y devuelve codigo de salida 1 si hubo algun fallo.
+## Ante una caida del broker
+
+Cada conexion es independiente: si el broker cae, la conexion afectada se anota
+como caida y deja de emitir, sin arrastrar a las demas ni terminar el proceso.
+
+Antes no era asi, y se descubrio midiendo: en la primera prueba de recuperacion
+ante fallo del Objetivo 5, la excepcion de `wait_for_publish` terminaba el
+proceso seis segundos despues de tumbar el broker. La prueba concluyo "el flujo
+no se restablecio" cuando el bridge se habia reconectado perfectamente; lo que no
+sobrevivia era el productor. Un contador real no se apaga porque se reinicie el
+broker.
+
+## De donde sale lo que publica
+
+La interpretacion del dataset —que subconjunto, con que marcas de tiempo, en que
+topico y con que payload— vive en `pipeline/common/replay.py`, no aqui. La
+comparten este simulador y el generador de carga asincrono: si cada uno
+interpretara los datos a su manera, lo que mide uno y lo que mide el otro no
+serian comparables. El orden en que se aplican el filtrado, el recorte y el
+rebase esta encapsulado ahi por el mismo motivo.
 
 ## Estado verificado
 
@@ -136,3 +158,10 @@ throughput, y devuelve codigo de salida 1 si hubo algun fallo.
 - Escalera de sensores anidada: 100 ⊂ 250 ⊂ 500 ⊂ 652.
 - `--rebase-end now` desplaza el rango completo conservando las distancias
   relativas entre eventos.
+- **646 conexiones MQTT simultaneas** publicando 20.000 eventos con 0 fallos y 0
+  conexiones caidas, a 357,7 ev/s efectivos frente a los 358,9 teoricos de
+  `--speedup 2000`, con un retraso maximo sobre la agenda de 0,47 s (18 de agosto
+  de 2026, recorrido completo hasta ambos sumideros).
+- Reparto por particiones de Kafka determinista y desigual —6.144 / 7.468 /
+  6.388 sobre 20.000 eventos—, que es lo que produce el hash de la clave de
+  sensor y no el round-robin de una clave nula.

@@ -33,6 +33,12 @@ pipeline/data/*.xlsx
 pipeline/data/*.parquet
 pipeline/data/power_measurements_parquet/
 
+# Registros de ejecucion de los procesos del pipeline. *.log ya queda ignorado
+# por la regla de LaTeX de arriba, pero los ficheros que produce la rotacion se
+# llaman .log.1, .log.2 ... y no la cumplen.
+pipeline/logs/*
+!pipeline/logs/.gitkeep
+
 # Material de consulta (TFM de terceros usados como referencia de estilo).
 # No se versiona: este repositorio es publico y son trabajos ajenos.
 references/

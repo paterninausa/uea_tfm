@@ -21,9 +21,11 @@ import sys
 from pathlib import Path
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.logging_setup import configurar_logging  # noqa: E402
 from fastavro import parse_schema
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("register_schema")
 
 REGISTRY_URL = "http://localhost:8080"
@@ -279,6 +281,7 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
+    configurar_logging("register_schema")
     try:
         sys.exit(run(parse_args()))
     except (RegistryError, FileNotFoundError) as exc:
