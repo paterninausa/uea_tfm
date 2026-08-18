@@ -84,7 +84,21 @@ Reproduce **solo lo que emitiría el contador**. Sin `event_id` ni `sensor_id` (
 4. **Visualización**: refresco de dashboards Grafana < 5s; ≥ 3 reportes en Power BI (consumo energético, eficiencia operativa, detección de anomalías).
 5. **Escalabilidad y resiliencia**: ≥ 500 sensores concurrentes con degradación de throughput < 20% respecto a una carga base de 100; recuperación ante fallo de un servicio < 60s sin pérdida de datos.
 
-**El KPI 1 mezcla dos magnitudes** (medido con el dataset anterior, pendiente de rehacer): la latencia de ingesta a grano de evento fue de 1,26 s en p95, por debajo del objetivo, pero la disponibilidad del agregado en TimescaleDB fue de 3,55 s. Un agregado no puede existir antes de que cierre su ventana; ese tiempo es parte de la definición de la métrica, no una ineficiencia. Conviene separar ambas cifras en el texto.
+### Cifras medidas sobre ASHRAE (estado limpio, 50.000 eventos a 400 ev/s)
+
+| Métrica | Resultado | Objetivo |
+|---|---|---|
+| Pérdida de mensajes | **0,0000%** | < 0,1% ✓ |
+| Latencia de ingesta (evento → PostgreSQL) p50 / p95 | **0,766 / 1,277 s** | < 2 s ✓ |
+| Disponibilidad del agregado (→ TimescaleDB) p50 / p95 | 5,660 / 6,916 s | ver abajo |
+| Duración de micro-lote, mediana / p95 | **572 / 776 ms** | < 3 s ✓ |
+| Throughput sostenido | **1.284 ev/s** | ≥ 50 ✓ |
+| Degradación 100 → 652 sensores | **0,6%** | < 20% ✓ |
+| Consultas de los paneles de Grafana | 1,9 – 15,4 ms | < 5 s ✓ |
+
+**El KPI 1 mezcla dos magnitudes.** La latencia de ingesta a grano de evento cumple el objetivo; la disponibilidad del agregado no, y no puede cumplirlo por diseño: un agregado horario no existe antes de que cierre su ventana, y con contadores que miden en punto eso obliga a esperar la lectura de la hora siguiente. Verificado con una predicción: al bajar la tasa de 262 a 110 ev/s la latencia pasó de 5,66 a 10,89 s, ajustándose a `1,5 × (652/tasa) + 1,9 s`. **Está acotada por la cadencia del sensor, no por el pipeline.**
+
+**El KPI 3 no discrimina, y conviene decirlo en el texto.** El caso de uso real exige **0,18 ev/s** (652 contadores × 1 lectura/hora), así que el umbral de 50 ev/s ya está 276× por encima de la necesidad: procede de la literatura, no del problema. Subirlo sería inventar un número; lo que aporta valor es la caracterización. Y ahí falta lo importante: **los 1.284 ev/s son el techo del SIMULADOR**, que confirma cada publicación con QoS 1 antes de emitir la siguiente. El bridge procesaba a 605 ev/s recibiendo 269 y Spark nunca acumuló retraso: **el punto de saturación del pipeline no se ha determinado.**
 
 ## Entorno de desarrollo
 
@@ -108,14 +122,18 @@ Reproduce **solo lo que emitiría el contador**. Sin `event_id` ni `sensor_id` (
 - **`spark.sql.session.timeZone=UTC` no gobierna la conversión a objetos Python.** `collect()` devuelve `datetime` naive en la zona del sistema del driver. Con la máquina en Europe/Madrid, cada evento se escribía con una hora de más, y de forma variable según el horario de verano. Se fuerza `TZ=UTC` en el proceso antes de crear la sesión.
 - **El UPSERT exige deduplicar dentro del micro-lote**: PostgreSQL aborta con `CardinalityViolation` ante una clave repetida en la misma sentencia, y las repeticiones son normales con garantía at-least-once.
 - **Un evento con fecha futura envenena el watermark** y hace que los eventos ordenados posteriores se descarten en silencio como tardíos.
+- **`ingested_at` debe refrescarse en el `ON CONFLICT DO UPDATE`.** Si no, al reescribir una fila se actualiza `sim_publish_ts` pero no el instante de ingesta, y la latencia calculada sale **negativa**: la fila parece escrita antes de publicarse. Se manifiesta siempre que se reprocesa el log de Kafka. Corregirlo bajó la medición del agregado de 10,25 a 6,92 s; buena parte de aquella cifra era medición contaminada.
+- **Una escalera de carga en orden creciente miente por calentamiento.** La primera pasada sugería que el throughput *mejora* al añadir sensores (1.062 → 1.332 ev/s). Repitiendo el primer peldaño al final, en caliente, la degradación real resultó ser del 0,6%. Hay que controlar el orden o repetir el peldaño base.
 - **Compose hace word-splitting** cuando `command` es un string multilínea y se come las continuaciones `\`.
 - **Apicurio devuelve las violaciones de regla como HTTP 400**, no 409; detectarlas por el campo `name` del cuerpo.
 
 ## Estado actual del pipeline
 
-**Funcionando y verificado**: stack completo en Docker; preparación de datos ASHRAE; esquema Avro v1 registrado con reglas de gobernanza; simulador con escalera de carga (`--max-sensors`) y rebase temporal (`--rebase-end`); bridge MQTT→Kafka con validación y DLQ; lectura, deserialización y guarda de versión de esquema en Spark.
+**El pipeline corre de extremo a extremo sobre ASHRAE.** Simulador → Mosquitto → bridge → Kafka → Spark → doble sumidero → Grafana, todo verificado y medido.
 
-**Desactualizado tras el cambio de dataset**: `enrich` y `aggregate_metrics` del job de Spark siguen escritos para el dataset anterior (~29 referencias a columnas inexistentes); el DDL de ambas tablas; las cifras de "Resultados medidos" de `pipeline/spark/README.md`. **El job no corre de extremo a extremo.**
+Funcionando: stack completo en Docker; preparación de datos (tres Parquet: hechos, dimensión de 498 edificios y línea base de 652 sensores); esquema Avro v1 registrado con sus reglas; simulador con escalera de carga (`--max-sensors`) y rebase temporal (`--rebase-end`); bridge con validación y DLQ; job de Spark con broadcast join contra las dos tablas de referencia, agregación por ventana y escritura idempotente en ambos sumideros; tres dashboards de Grafana aprovisionados declarativamente.
+
+**Reparto de cálculos, aplicado a propósito**: `prepare_ashrae.py` calcula la línea base una vez; `enrich` solo produce lo que consume la agregación de Grafana; PostgreSQL guarda lecturas crudas más las dos tablas de referencia; **Power BI deriva lo suyo con un join**. El criterio es: si el consumidor puede derivarlo con lo que ya tiene, que lo derive él. Por eso la tabla de eventos tiene seis columnas y ningún campo calculado.
 
 **Código muerto**: `pipeline/data/convert_to_parquet.py` (dataset anterior), `pipeline/data/power_measurements_parquet/`.
 
@@ -125,11 +143,11 @@ El job deserializa todo el flujo con **un único esquema**. En lugar de resoluci
 
 ## Pendiente de implementar
 
-- Adaptar `enrich` y `aggregate_metrics` del job de Spark a ASHRAE, con broadcast join contra la dimensión.
-- Reescribir el DDL de TimescaleDB y PostgreSQL.
-- Rehacer las mediciones de KPIs sobre el dataset nuevo.
-- Dashboards de Grafana y reportes de Power BI.
-- Suite de pruebas de carga y tolerancia a fallos (Objetivo 5), aprovechando la escalera 100/250/500/652.
+- **Informes de Power BI** (Objetivo 4): tiene en PostgreSQL las lecturas crudas, `buildings` y `sensor_baseline`, con eso puede calcular intensidad energética, atípicos y umbrales ajustables sin tocar el pipeline.
+- **Prueba formal de recuperación ante fallo** (Objetivo 5): verificada por separado para el bridge (sesión MQTT persistente) y para Spark (checkpoint), pero no como una prueba única y reproducible con su tiempo de recuperación medido.
+- **Determinar el punto de saturación real** con un generador de carga asíncrono, que no bloquee esperando confirmación en cada mensaje.
+- Redactar `Desarrollo.tex` y `Resumen.tex`, que siguen siendo plantilla. El material de las trampas medidas de arriba va ahí.
+- Retirar el código muerto cuando Boris lo confirme.
 
 ## Estilo de comunicación
 
