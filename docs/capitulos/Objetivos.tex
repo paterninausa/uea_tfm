@@ -40,7 +40,7 @@ Los objetivos concretos de este trabajo se definen a continuación, acompañados
 
 \subsection{Objetivo 3: Procesar y enriquecer los datos en streaming con baja latencia}
 
-\textbf{KPI}: latencia de procesamiento por micro-lote en Spark Structured Streaming inferior a 3 segundos tras el cierre de cada ventana; throughput sostenido de al menos 50 eventos por segundo sin acumulación de retraso entre lotes sucesivos.
+\textbf{KPI}: latencia de procesamiento por micro-lote en Spark Structured Streaming inferior a 3 segundos tras el cierre de cada ventana; throughput sostenido de al menos 50 eventos por segundo sin acumulación de retraso entre lotes sucesivos (este umbral procede de la literatura de referencia y no del caso de uso en este trabajo).
 
 \textbf{Acciones}: implementar el job de Spark Structured Streaming (DataFrame API) con ventanas de agregación temporal y \textit{watermarking} para el tratamiento de datos tardíos; instrumentar métricas de throughput y de duración de cada micro-lote (\textit{batch duration}) del job; ejecutar pruebas de carga incremental hasta identificar el punto de saturación y verificar el cumplimiento del KPI dentro del rango definido.
 
