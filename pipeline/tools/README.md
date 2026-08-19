@@ -22,7 +22,7 @@ el sintoma —unas latencias mejores de lo que tocaba— no se distingue de un b
 resultado.
 
 ```bash
-python pipeline/herramientas/reset_state.py --yes
+python pipeline/tools/reset_state.py --yes
 ```
 
 **2. Levantar el pipeline.** Cada pieza en su terminal, porque hay que poder
@@ -57,7 +57,7 @@ python pipeline/simulator/mqtt_simulator.py --speedup 2000 --limit 50000 --rebas
 **4. Emitir el cuadro.** Deja el informe en `pipeline/logs/informe_kpi.md`.
 
 ```bash
-python pipeline/herramientas/kpi_report.py
+python pipeline/tools/kpi_report.py
 ```
 
 ### El orden importa, y mucho
@@ -102,7 +102,7 @@ Ejecuta la escalera del Objetivo 5 invocando al simulador una vez por peldano,
 con el MISMO `--speedup` y distinto `--max-sensors`.
 
 ```bash
-python pipeline/herramientas/load_ladder.py --ladder 100,250,500,652 --speedup 2000
+python pipeline/tools/load_ladder.py --ladder 100,250,500,652 --speedup 2000
 ```
 
 **Por que el speedup se mantiene y la tasa no.** Con una tasa global fija, 100 y
@@ -139,7 +139,7 @@ Responde a otra pregunta: no "cuanto se degrada al crecer", sino "hasta donde
 aguanta".
 
 ```bash
-python pipeline/herramientas/load_ladder.py --speedups 5000,10000,20000,40000 --events-per-step 40000
+python pipeline/tools/load_ladder.py --speedups 5000,10000,20000,40000 --events-per-step 40000
 ```
 
 Medido el 19 de agosto de 2026 con los 652 sensores:
@@ -199,7 +199,7 @@ datos persistidos y no sobre el estado del contenedor porque que Docker diga
 a mover datos de un extremo al otro.
 
 ```bash
-python pipeline/herramientas/failover_test.py --target mosquitto --downtime 15
+python pipeline/tools/failover_test.py --target mosquitto --downtime 15
 ```
 
 Exige que el bridge y el job esten en marcha, y **informa de lo que pase,

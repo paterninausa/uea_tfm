@@ -62,7 +62,7 @@ python pipeline/simulator/mqtt_simulator.py --speedup 2000
 | `--max-lag` | Retraso tolerado antes de invalidar la ejecucion |
 
 Son tres grupos —seleccion de datos, ritmo y conexiones— y **ninguno es un
-artificio de banco de pruebas**. Lo que mide y orquesta vive en `herramientas/`.
+artificio de banco de pruebas**. Lo que mide y orquesta vive en `tools/`.
 
 ## El parque real genera 0,1797 ev/s
 
@@ -118,7 +118,7 @@ despliegue real no lo fija el numero de sensores, sino el de pasarelas.**
 
 ## Por que ya no hay un generador de carga aparte
 
-Existio `herramientas/load_generator.py`, que alcanzaba tasas altas mediante una
+Existio `tools/load_generator.py`, que alcanzaba tasas altas mediante una
 VENTANA DE MENSAJES EN VUELO: publicaba N mensajes sin esperar confirmacion desde
 un unico cliente. Se retiro en agosto de 2026 y **no debe volver**.
 

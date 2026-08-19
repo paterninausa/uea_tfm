@@ -43,7 +43,7 @@ mensajes sin esperar confirmacion desde un solo cliente. Se retiro en agosto de
 2026 y no debe volver. El motivo: esa ventana era un artificio para que UN
 cliente hiciera el trabajo de 652, y `--clients` consigue lo mismo sin inventar
 nada, porque 652 conexiones con un mensaje en vuelo cada una dan 652 mensajes en
-vuelo por la via realista. Todo lo que mide y orquesta vive en `herramientas/`.
+vuelo por la via realista. Todo lo que mide y orquesta vive en `tools/`.
 
 Uso:
     python mqtt_simulator.py --speedup 2000

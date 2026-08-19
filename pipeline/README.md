@@ -19,7 +19,7 @@ Cada componente tiene su propio README con las decisiones de diseño y lo medido
 [simulator](simulator/README.md), [bridge](bridge/README.md),
 [schemas](schemas/README.md), [spark](spark/README.md),
 [grafana](docker/grafana/README.md), [data](data/README.md) y
-[herramientas](herramientas/README.md).
+[tools](tools/README.md).
 
 ## Por que Spark no esta containerizado
 
@@ -153,17 +153,17 @@ Python 3.11 + PySpark 4.2.0):
   pico, factor de carga, intensidad) y calidad/anomalias. Consultas medidas
   entre 1,9 y 15,4 ms (ver [docker/grafana/README.md](docker/grafana/README.md)).
 
-- Herramientas de medicion (`herramientas/`): estado limpio reproducible,
+- Herramientas de medicion (`tools/`): estado limpio reproducible,
   generador de carga asincrono, cuadro de KPIs y prueba de recuperacion ante
-  fallo. Ver [herramientas/README.md](herramientas/README.md).
+  fallo. Ver [tools/README.md](tools/README.md).
 
 ## Medir los KPIs
 
 El ciclo completo —estado limpio, carga, informe— esta en
-[herramientas/README.md](herramientas/README.md). En resumen:
+[tools/README.md](tools/README.md). En resumen:
 
 ```bash
-python pipeline/herramientas/reset_state.py --yes
+python pipeline/tools/reset_state.py --yes
 ```
 
 ```bash
@@ -171,7 +171,7 @@ python pipeline/simulator/mqtt_simulator.py --speedup 2000 --limit 50000 --rebas
 ```
 
 ```bash
-python pipeline/herramientas/kpi_report.py
+python pipeline/tools/kpi_report.py
 ```
 
 ## Registro de actividad

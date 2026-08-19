@@ -257,7 +257,7 @@ prueba de recuperacion ante fallo), `--window`, `--watermark`, `--trigger`,
 El job vuelca cada `--progress-interval` segundos (10 por defecto) el progreso de
 cada micro-lote a la tabla `streaming_progress` de TimescaleDB. **Es la fuente
 del KPI de latencia de lote del Objetivo 3**, y de ahi lo lee
-`herramientas/kpi_report.py`.
+`tools/kpi_report.py`.
 
 Se leen los informes de `recentProgress` y no `lastProgress`, que es lo que hacia
 la version anterior de esta instrumentacion: con un trigger de 1 s y un sondeo de

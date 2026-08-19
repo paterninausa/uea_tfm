@@ -102,7 +102,7 @@ Reproduce **solo lo que emitiría el contador**. Sin `event_id` ni `sensor_id` (
 
 ### Cifras del 18 de agosto de 2026, ya con las herramientas de medición
 
-Obtenidas con `herramientas/kpi_report.py` sobre 20.000 eventos a 400 ev/s, y reproducibles repitiendo el ciclo de `herramientas/README.md`.
+Obtenidas con `tools/kpi_report.py` sobre 20.000 eventos a 400 ev/s, y reproducibles repitiendo el ciclo de `tools/README.md`.
 
 | Métrica | Resultado | Objetivo |
 |---|---|---|
@@ -169,7 +169,7 @@ Medido con el generador asíncrono el 18 de agosto de 2026, con el bridge suscri
 - **Gestión de dependencias**: versiones exactas para dependencias directas. `pandas` y `pyarrow` **se declaran explícitamente**: se comprobó que `pip install pyspark` NO los instala (solo llegan con extras).
 - **Fallar ruidosamente, nunca descartar en silencio.** Con 7 días de retención en Kafka, detenerse es recuperable y descartar es irreversible.
 - **Comprobar las invariantes en cada ejecución** en lugar de asumirlas (`prepare_ashrae.py` verifica la unicidad de la clave natural; `register_schema.py` verifica el orden de los enums).
-- **Los scripts del pipeline solo contienen lo que hace falta para mover datos.** Lo que se usa únicamente al preparar o medir una prueba vive en `herramientas/`, y lo que usan dos piezas vive en `common/`, nunca duplicado. Criterio de Boris, agosto de 2026.
+- **Los scripts del pipeline solo contienen lo que hace falta para mover datos.** Lo que se usa únicamente al preparar o medir una prueba vive en `tools/`, y lo que usan dos piezas vive en `common/`, nunca duplicado. Criterio de Boris, agosto de 2026.
 - **Archivos binarios nunca se suben vía herramientas MCP** (se corrompen al tratarse como texto UTF-8).
 
 ### Trampas encontradas midiendo (material para el capítulo de desarrollo)
@@ -205,7 +205,7 @@ Funcionando: stack completo en Docker; preparación de datos (tres Parquet: hech
 
 **No se reproducen las ráfagas horarias, y el motivo es cuantitativo**: con un drenaje del bridge de ~4.000 ev/s, el replay fiel se sostiene hasta ×22.000; por encima, la cola de Mosquitto (10.000 mensajes) se llena en menos de tres segundos y el broker descarta en silencio. Los sensores se escalonan de forma determinista dentro del intervalo, que equivale a suponer relojes no sincronizados al milisegundo.
 
-**Medición de KPIs, en `pipeline/herramientas/`** (agosto de 2026). Cuatro scripts que NO forman parte del pipeline: `reset_state.py` (estado limpio reproducible), `load_ladder.py` (escalera del Objetivo 5, midiendo en el consumo), `kpi_report.py` (cuadro completo en Markdown) y `failover_test.py` (recuperación ante fallo). El ciclo de medición está en `pipeline/herramientas/README.md`.
+**Medición de KPIs, en `pipeline/tools/`** (agosto de 2026). Cuatro scripts que NO forman parte del pipeline: `reset_state.py` (estado limpio reproducible), `load_ladder.py` (escalera del Objetivo 5, midiendo en el consumo), `kpi_report.py` (cuadro completo en Markdown) y `failover_test.py` (recuperación ante fallo). El ciclo de medición está en `pipeline/tools/README.md`.
 
 **`load_generator.py` se retiró y no debe volver.** Alcanzaba tasas altas con una ventana de mensajes en vuelo: N publicaciones sin confirmar desde un único cliente. Era un artificio para que un cliente hiciera el trabajo de 652, y `--clients` consigue lo mismo sin inventar nada. Se comprobó además que con ventana 1 se comportaba exactamente igual que el simulador: eran el mismo programa con dos nombres.
 
