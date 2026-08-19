@@ -309,6 +309,27 @@ def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str) -> Da
     Junto a site_id y primary_use dan 46 combinaciones, y con lecturas horarias
     cada ventana de una hora agrega una lectura por cada sensor del grupo.
     """
+    # SE APARTAN LOS EVENTOS SIN DIMENSION antes de agrupar. El join contra la
+    # dimension es LEFT, asi que un building_id que no este en la tabla de
+    # referencia llega hasta aqui con site_id y primary_use a NULL, y esas dos
+    # columnas son parte de la clave primaria de telemetry_metrics, declaradas
+    # NOT NULL.
+    #
+    # Medido el 20 de agosto de 2026 publicando un evento con building_id=99999:
+    # la escritura fallaba con NotNullViolation, la consulta se detenia, el
+    # supervisor la relanzaba y volvia a fallar —el mismo lote, el mismo evento—
+    # hasta agotar los reinicios. Y como el evento se queda en Kafka, cualquier
+    # arranque posterior repetia el bloqueo: UN SOLO evento huerfano dejaba la
+    # ruta operativa inservible de forma permanente.
+    #
+    # El dato NO se pierde al apartarlo: la ruta de eventos lo persiste igual en
+    # telemetry_events, que no necesita la dimension. Lo que no se puede es
+    # agregarlo, porque no hay emplazamiento ni uso por el que agruparlo.
+    # El aviso de que existen huerfanos no se da aqui —contarlos obligaria a una
+    # accion sobre el flujo en cada micro-lote—, sino en `tools/kpi_report.py`,
+    # que los detecta con un LEFT JOIN entre telemetry_events y buildings.
+    df = df.filter(F.col("site_id").isNotNull())
+
     return (
         df.withWatermark("timestamp", watermark)
         .groupBy(

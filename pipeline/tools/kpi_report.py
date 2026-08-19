@@ -108,6 +108,31 @@ def kpi_ingesta(props_pg: dict, props_ts: dict) -> dict:
             "agregados": agregados, "agregado_p50": ap50, "agregado_p95": ap95}
 
 
+def eventos_sin_dimension(props_pg: dict) -> list[tuple]:
+    """Edificios presentes en los eventos pero ausentes de la tabla de dimension.
+
+    Estos eventos entran al pipeline sin problema —cumplen el esquema Avro, asi
+    que el bridge no los rechaza— y se persisten en telemetry_events, pero NO
+    pueden agregarse: sin site_id ni primary_use no hay por donde agruparlos, y
+    el job los aparta antes de la ventana.
+
+    Antes de apartarlos, uno solo bastaba para inutilizar la ruta operativa: la
+    escritura fallaba con NotNullViolation, el supervisor relanzaba la consulta y
+    volvia a fallar con el mismo lote, y el evento se quedaba en Kafka
+    envenenando cualquier arranque posterior.
+
+    Que aparezca algo aqui significa que la dimension esta incompleta o que
+    alguien esta publicando edificios que no existen.
+    """
+    return consultar(props_pg, """
+        SELECT e.building_id, count(*) AS eventos
+        FROM telemetry_events e
+        LEFT JOIN buildings b ON b.building_id = e.building_id
+        WHERE b.building_id IS NULL
+        GROUP BY e.building_id ORDER BY 2 DESC LIMIT 10
+    """)
+
+
 def offsets_kafka(topico: str) -> int:
     """Mensajes acumulados en un topico: fin menos principio, por particion.
 
@@ -290,6 +315,15 @@ def construir_informe(ingesta, esquema, run_id, procesamiento, grafana, carga) -
               "ningun otro indicador: ni en el productor, ni en el bridge, ni en la DLQ. "
               "Contar solo lo que el pipeline registra da un 0% de perdida que es falso.", ""]
 
+    if ingesta.get("huerfanos"):
+        total = sum(n for _, n in ingesta["huerfanos"])
+        L += [f"| **Eventos sin dimension** | **{total:,}** de {len(ingesta['huerfanos'])} "
+              "edificios desconocidos | 0 |", "",
+              "> **Aviso**: esos edificios no estan en la tabla `buildings`. Sus eventos se "
+              "persisten en `telemetry_events` pero **quedan fuera de los agregados**, porque "
+              "sin `site_id` ni `primary_use` no hay por donde agruparlos. Edificios afectados: "
+              + ", ".join(str(b) for b, _ in ingesta["huerfanos"][:5]) + ".", ""]
+
     if ingesta["negativas"]:
         L += [f"> **Aviso**: {ingesta['negativas']:,} filas tienen `ingested_at` anterior a "
               "`sim_publish_ts`, es decir latencia negativa. Es el sintoma de que el UPSERT no "
@@ -372,6 +406,7 @@ def run(args: argparse.Namespace) -> int:
     ingesta = kpi_ingesta(props_pg, props_ts)
     logger.info("Objetivo 1: leyendo el contador de descartes del broker...")
     ingesta["descartados"] = descartes_mosquitto()
+    ingesta["huerfanos"] = eventos_sin_dimension(props_pg)
 
     esquema = None
     try:

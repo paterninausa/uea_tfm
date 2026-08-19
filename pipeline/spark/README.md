@@ -236,6 +236,41 @@ Las dos formas contradecian la promesa del doble sumidero. Hoy hay tres capas:
 
 El job permanecio vivo en ambos casos. Objetivo 5: recuperacion < 60 s.
 
+## Eventos sin dimension: apartar en vez de romper
+
+Un `building_id` que no este en la tabla de dimension **no lo rechaza el bridge**:
+cumple el esquema Avro —es un int, con su enum y su timestamp validos— asi que
+entra al pipeline con normalidad. El problema aparece en el join, que es LEFT y
+lo deja con `site_id` y `primary_use` a NULL, y esas dos columnas forman parte de
+la clave primaria de `telemetry_metrics`, declarada NOT NULL.
+
+Medido el 20 de agosto de 2026 publicando un evento con `building_id=99999`:
+
+| Paso | Resultado |
+|---|---|
+| Bridge | Lo acepta. DLQ vacia |
+| `telemetry_events` | Se escribe sin problema: esa tabla no usa la dimension |
+| Agregacion | Forma un grupo con `site_id` NULL |
+| TimescaleDB | `NotNullViolation` |
+| Supervisor | Relanza 3 veces; el fallo es determinista y falla las 3 |
+| Resultado | Consulta abandonada, **y el evento sigue en Kafka**: cualquier arranque posterior repetia el bloqueo |
+
+Un solo evento huerfano inutilizaba la ruta operativa de forma permanente. Ahora
+la agregacion los aparta antes de la ventana, y **el dato no se pierde**: la ruta
+de eventos lo persiste igual, porque no necesita la dimension. Lo unico que no se
+puede hacer con el es agregarlo, y eso es correcto: sin emplazamiento ni uso no
+hay por donde agruparlo.
+
+Quien avisa es `tools/kpi_report.py`, con un LEFT JOIN entre `telemetry_events` y
+`buildings`. Se hace ahi y no en el job porque contarlos en cada micro-lote
+exigiria una accion sobre el flujo, y esto no deberia ocurrir nunca: si ocurre, o
+la dimension esta incompleta o alguien publica edificios que no existen.
+
+**Si un pipeline ya quedo bloqueado por esto**, el filtro no basta: el estado de
+la agregacion guardado en el checkpoint conserva el grupo con NULL y se vuelve a
+intentar escribir al reanudar. Hay que borrar `spark/checkpoints/metrics`; el de
+eventos se puede conservar.
+
 ## Invariantes: registrar lo que NO ocurre
 
 `database_writers.py` vigila una tercera, en el propio UPSERT: **la colision de
