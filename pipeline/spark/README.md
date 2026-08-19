@@ -182,6 +182,45 @@ evento con `globalId=99` en un flujo donde `meter_reading` solo se usa dentro
 de una agregacion, el job aborta con el mensaje completo, y la traza muestra
 que la comprobacion se evaluo dentro del propio `hashAgg`.
 
+## Resiliencia: el proceso ya no es un punto unico de fallo
+
+Hasta agosto de 2026 el job hacia esto al final:
+
+```python
+for q in consultas:
+    q.awaitTermination()
+```
+
+Espera SECUENCIALMENTE, de modo que solo vigilaba la primera consulta. Las
+consecuencias se midieron tumbando cada base de datos por separado:
+
+| Base tumbada | Que ocurria |
+|---|---|
+| TimescaleDB | Moria `metricas-timescaledb`, la primera de la lista, y su excepcion terminaba **el proceso entero**, arrastrando a la consulta de PostgreSQL que no dependia de ella |
+| PostgreSQL | Moria `eventos-postgresql`, la segunda, y como nadie la esperaba **el proceso seguia vivo** escribiendo metricas con normalidad: media arquitectura parada, sin un solo aviso, con la tabla de eventos congelada |
+
+Las dos formas contradecian la promesa del doble sumidero. Hoy hay tres capas:
+
+1. **Reintentos en la escritura** (`--db-retries`, `--db-retry-wait`): una caida
+   corta se absorbe sin que muera nada. Solo se reintenta `OperationalError`
+   —"no pude hablar con el servidor"—; un error de datos no se reintenta, porque
+   eso es un incumplimiento del contrato y tiene que salir a la luz.
+2. **Supervision de todas las consultas** (`--supervision-interval`): se
+   comprueba `isActive` de cada una, no se espera a ninguna en particular.
+3. **Relanzado automatico** (`--max-reinicios`): la consulta caida se vuelve a
+   arrancar desde su propio checkpoint, que es lo que hace que reanudar no
+   pierda ni duplique nada. Agotados los reinicios, se abandona esa consulta y
+   se dice por que.
+
+### Medido con las tres capas
+
+| Base tumbada 15 s | Flujo restablecido | La otra consulta |
+|---|---|---|
+| TimescaleDB | **4,1 s** tras levantar el servicio | siguio con 21 micro-lotes durante la caida |
+| PostgreSQL | **5,1 s** | sin interrupcion |
+
+El job permanecio vivo en ambos casos. Objetivo 5: recuperacion < 60 s.
+
 ## Uso
 
 Requiere el stack levantado, el esquema registrado y el bridge en marcha:

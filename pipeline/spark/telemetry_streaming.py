@@ -348,7 +348,8 @@ def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str) -> Da
 # --------------------------------------------------------------------------
 # Escritura
 # --------------------------------------------------------------------------
-def make_upsert_writer(props: dict, table: str, conflict_cols: list[str]):
+def make_upsert_writer(props: dict, table: str, conflict_cols: list[str],
+                       reintentos: int = 5, espera_reintento: float = 3.0):
     """Devuelve una funcion foreachBatch que hace UPSERT en PostgreSQL.
 
     Por que no `batchDF.write.jdbc(mode="append")`: el escritor JDBC de Spark
@@ -416,16 +417,39 @@ def make_upsert_writer(props: dict, table: str, conflict_cols: list[str]):
             + ", ingested_at = now()"
         )
 
-        conn = psycopg2.connect(
-            host=props["host"], port=props["port"], dbname=props["dbname"],
-            user=props["user"], password=props["password"],
-        )
-        try:
-            with conn, conn.cursor() as cur:
-                execute_values(cur, sql, valores, page_size=500)
-            logger.info("[batch %d] %d filas -> %s", batch_id, len(filas), table)
-        finally:
-            conn.close()
+        # REINTENTOS ANTE UN FALLO DE LA BASE DE DATOS. Sin esto, una caida de
+        # unos segundos mataba la consulta entera: la excepcion de psycopg2 sube
+        # por foreachBatch y Structured Streaming la convierte en
+        # FOREACH_BATCH_USER_FUNCTION_ERROR, que termina la query. Medido el 19
+        # de agosto de 2026 tumbando TimescaleDB 15 s.
+        #
+        # Solo se reintenta OperationalError, que es "no pude hablar con el
+        # servidor". Un error de datos —una violacion de restriccion, un tipo
+        # incorrecto— no se reintenta: eso es un fallo del contrato y tiene que
+        # salir a la luz, no repetirse cinco veces.
+        for intento in range(1, reintentos + 1):
+            conn = None
+            try:
+                conn = psycopg2.connect(
+                    host=props["host"], port=props["port"], dbname=props["dbname"],
+                    user=props["user"], password=props["password"],
+                )
+                with conn, conn.cursor() as cur:
+                    execute_values(cur, sql, valores, page_size=500)
+                logger.info("[batch %d] %d filas -> %s", batch_id, len(filas), table)
+                return
+            except psycopg2.OperationalError as exc:
+                if intento == reintentos:
+                    logger.error("[batch %d] %s sigue inaccesible tras %d intentos: %s",
+                                 batch_id, table, reintentos, exc)
+                    raise
+                logger.warning("[batch %d] %s inaccesible (intento %d/%d), reintento en "
+                               "%.0f s: %s", batch_id, table, intento, reintentos,
+                               espera_reintento, str(exc).strip().splitlines()[0])
+                _time.sleep(espera_reintento)
+            finally:
+                if conn is not None:
+                    conn.close()
 
     return write_batch
 
@@ -539,11 +563,21 @@ class RegistroProgreso:
     informes se solapan entre sondeos consecutivos.
     """
 
-    def __init__(self, consultas: list, props: dict, run_id: str):
-        self.consultas = consultas
+    def __init__(self, consultas, props: dict, run_id: str):
+        self.consultas = list(consultas)
         self.props = props
         self.run_id = run_id
         self.vistos: set[tuple[str, int]] = set()
+
+    def seguir(self, consultas) -> None:
+        """Actualiza la lista de consultas vigiladas.
+
+        Hace falta porque el supervisor relanza las que caen, y el objeto
+        StreamingQuery del relanzamiento es OTRO: sin esto, el registro seguiria
+        sondeando una consulta muerta y el KPI de micro-lote se quedaria
+        congelado justo despues de una recuperacion.
+        """
+        self.consultas = list(consultas)
 
     def volcar(self) -> int:
         import psycopg2
@@ -618,6 +652,66 @@ class RegistroProgreso:
         threading.Thread(target=bucle, daemon=True).start()
 
 
+def supervisar(arrancadores: dict, intervalo: float, max_reinicios: int,
+               registro=None) -> int:
+    """Vigila todas las consultas y relanza la que se caiga, sin tocar las demas.
+
+    Sustituye a `for q in consultas: q.awaitTermination()`, que esperaba
+    SECUENCIALMENTE y por tanto solo vigilaba la primera. Las consecuencias se
+    midieron el 19 de agosto de 2026 tumbando cada base de datos por separado:
+
+    - Al caer TimescaleDB moria `metricas-timescaledb`, que era la primera de la
+      lista, y su excepcion terminaba el proceso ENTERO, arrastrando a la
+      consulta de PostgreSQL que no dependia de ella.
+    - Al caer PostgreSQL moria `eventos-postgresql`, que era la segunda, y como
+      nadie la esperaba el proceso seguia vivo escribiendo metricas con toda
+      normalidad. Media arquitectura parada y ni un aviso: la tabla de eventos
+      llevaba veinte minutos congelada mientras el job aparentaba salud.
+
+    Con esto, cada consulta se relanza por su cuenta desde su propio checkpoint
+    —que es lo que hace que reanudar no pierda ni duplique nada— y la caida de
+    un sumidero no toca al otro. El limite de reinicios existe para que un
+    servicio que no vuelve no deje al job dando vueltas para siempre: agotado,
+    se detiene todo y se dice por que.
+    """
+    consultas = {nombre: arrancar() for nombre, arrancar in arrancadores.items()}
+    reinicios = {nombre: 0 for nombre in arrancadores}
+    if registro:
+        registro.seguir(consultas.values())
+    logger.info("Consultas en marcha: %s", list(consultas))
+
+    while consultas:
+        _time.sleep(intervalo)
+        for nombre in list(consultas):
+            consulta = consultas[nombre]
+            if consulta.isActive:
+                continue
+
+            motivo = consulta.exception()
+            logger.error("LA CONSULTA %s SE HA DETENIDO: %s", nombre,
+                         str(motivo).strip().splitlines()[0] if motivo else "sin excepcion")
+
+            if reinicios[nombre] >= max_reinicios:
+                logger.error("Agotados los %d reinicios de %s; se abandona esa consulta",
+                             max_reinicios, nombre)
+                del consultas[nombre]
+                continue
+
+            reinicios[nombre] += 1
+            logger.warning("Relanzando %s desde su checkpoint (reinicio %d de %d)...",
+                           nombre, reinicios[nombre], max_reinicios)
+            try:
+                consultas[nombre] = arrancadores[nombre]()
+                if registro:
+                    registro.seguir(consultas.values())
+            except Exception as exc:
+                logger.error("No se pudo relanzar %s: %s", nombre, exc)
+                del consultas[nombre]
+
+    logger.error("No queda ninguna consulta activa; el job termina")
+    return 1
+
+
 def run(args: argparse.Namespace) -> int:
     registry = ApicurioClient(args.registry_url)
     registry.check()
@@ -640,12 +734,15 @@ def run(args: argparse.Namespace) -> int:
     dimension, linea_base = load_reference(spark, Path(args.buildings), Path(args.baseline))
     enriquecidos = enrich(eventos, dimension, linea_base)
 
-    consultas = []
+    # Se guardan ARRANCADORES, no consultas ya arrancadas: para poder relanzar
+    # una que se caiga hay que saber construirla de nuevo. Cada una conserva su
+    # checkpoint, asi que relanzarla reanuda donde estaba.
+    arrancadores = {}
     checkpoint_raiz = Path(args.checkpoint_dir).resolve()
 
     if args.sink in ("metrics", "both"):
         metricas = aggregate_metrics(enriquecidos, args.window, args.watermark)
-        consultas.append(
+        arrancadores["metricas-timescaledb"] = lambda: (
             metricas.writeStream
             # outputMode append: emite cada ventana UNA vez, cuando el
             # watermark garantiza que ya no llegaran mas eventos suyos. Es
@@ -654,7 +751,8 @@ def run(args: argparse.Namespace) -> int:
             .outputMode("append")
             .foreachBatch(make_upsert_writer(
                 props_bd(args, TIMESCALE), "telemetry_metrics",
-                ["window_start", "site_id", "primary_use", "meter_type"]))
+                ["window_start", "site_id", "primary_use", "meter_type"],
+                args.db_retries, args.db_retry_wait))
             .option("checkpointLocation", str(checkpoint_raiz / "metrics"))
             .trigger(processingTime=args.trigger)
             .queryName("metricas-timescaledb")
@@ -675,12 +773,13 @@ def run(args: argparse.Namespace) -> int:
             F.col("timestamp").alias("event_time"),
             "meter_reading", "sim_publish_ts",
         )
-        consultas.append(
+        arrancadores["eventos-postgresql"] = lambda: (
             eventos_bd.writeStream
             .outputMode("append")
             .foreachBatch(make_upsert_writer(
                 props_bd(args, POSTGRES), "telemetry_events",
-                ["building_id", "meter_type", "event_time"]))
+                ["building_id", "meter_type", "event_time"],
+                args.db_retries, args.db_retry_wait))
             .option("checkpointLocation", str(checkpoint_raiz / "events"))
             .trigger(processingTime=args.trigger)
             .queryName("eventos-postgresql")
@@ -695,18 +794,16 @@ def run(args: argparse.Namespace) -> int:
     if args.progress_interval:
         props_progreso = props_bd(args, TIMESCALE)
         asegurar_tabla_progreso(props_progreso)
-        registro = RegistroProgreso(consultas, props_progreso, run_id)
+        registro = RegistroProgreso([], props_progreso, run_id)
         registro.arrancar(args.progress_interval)
         logger.info("Progreso de micro-lote -> TimescaleDB.streaming_progress (run_id=%s)", run_id)
 
-    logger.info("Consultas en marcha: %s", [q.name for q in consultas])
     try:
-        for q in consultas:
-            q.awaitTermination()
+        codigo = supervisar(arrancadores, args.supervision_interval,
+                            args.max_reinicios, registro)
     except KeyboardInterrupt:
-        logger.info("Parada solicitada; deteniendo consultas...")
-        for q in consultas:
-            q.stop()
+        logger.info("Parada solicitada")
+        codigo = 0
     finally:
         # Volcado final: el hilo es daemon y muere con el proceso, asi que los
         # ultimos lotes —justo los del final de una prueba de carga— se
@@ -714,7 +811,7 @@ def run(args: argparse.Namespace) -> int:
         if registro:
             logger.info("Registrando el progreso de los ultimos lotes...")
             registro.volcar()
-    return 0
+    return codigo
 
 
 def parse_args() -> argparse.Namespace:
@@ -749,6 +846,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--group", default=DEFAULT_GROUP)
     p.add_argument("--artifact", default=DEFAULT_ARTIFACT)
     p.add_argument("--spark-log-level", default="WARN")
+    p.add_argument("--db-retries", type=int, default=5,
+                   help="Intentos de escritura antes de dar por perdida la base de datos. "
+                        "Absorbe una caida corta sin que muera la consulta")
+    p.add_argument("--db-retry-wait", type=float, default=3.0,
+                   help="Segundos entre intentos de escritura")
+    p.add_argument("--supervision-interval", type=float, default=5.0,
+                   help="Segundos entre comprobaciones de que las consultas siguen vivas")
+    p.add_argument("--max-reinicios", type=int, default=3,
+                   help="Veces que se relanza una consulta caida antes de abandonarla")
     p.add_argument("--progress-interval", type=float, default=10.0,
                    help="Segundos entre volcados del progreso de micro-lote a "
                         "streaming_progress (0 = no registrar). Es la fuente del KPI de "

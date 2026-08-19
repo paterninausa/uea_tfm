@@ -59,6 +59,7 @@ RESULTADOS_ESCALERA = DIRECTORIO_LOGS / "ultima_escalera.json"
 DIRECTORIO_DASHBOARDS = Path(__file__).resolve().parents[1] / "docker/grafana/dashboards"
 
 CONTENEDOR_KAFKA = "tfm-kafka"
+CONTENEDOR_MOSQUITTO = "tfm-mosquitto"
 
 
 def consultar(props: dict, sql: str) -> list[tuple]:
@@ -130,6 +131,32 @@ def offsets_kafka(topico: str) -> int:
     )
     iniciales = sum(int(l.rsplit(":", 1)[1]) for l in r.stdout.splitlines() if ":" in l)
     return finales - iniciales
+
+
+def descartes_mosquitto(timeout: int = 12) -> int | None:
+    """Mensajes que el broker ACEPTO y nunca entrego, segun su propio contador.
+
+    ES LA UNICA PERDIDA QUE NO DEJA RASTRO EN NINGUN OTRO SITIO. Medido el 19 de
+    agosto de 2026 empujando por encima del punto de saturacion: el productor
+    registro 40.000 publicados y 0 fallidos —recibio su PUBACK de cada uno— pero
+    al bridge solo llegaron 38.221. Mosquitto habia descartado 1.779 al llenarse
+    su cola de salida (`max_queued_messages`, 10.000 en este stack).
+
+    Nadie da error en ese escenario: el productor cree que entrego, el bridge no
+    ve ningun hueco, la DLQ esta vacia y los logs del broker callan. Un 4,4% de
+    perdida invisible con todos los indicadores del pipeline en verde. Este
+    contador es lo que la convierte en una medida.
+
+    Mosquitto publica las estadisticas $SYS cada 10 s por defecto, de ahi la
+    espera.
+    """
+    r = subprocess.run(
+        ["docker", "exec", CONTENEDOR_MOSQUITTO, "mosquitto_sub", "-h", "localhost",
+         "-t", "$SYS/broker/publish/messages/dropped", "-C", "1", "-W", str(timeout)],
+        capture_output=True, text=True,
+    )
+    salida = r.stdout.strip()
+    return int(salida) if salida.isdigit() else None
 
 
 # --------------------------------------------------------------------------
@@ -251,6 +278,18 @@ def construir_informe(ingesta, esquema, run_id, procesamiento, grafana, carga) -
           f"| Agregados en TimescaleDB | {ingesta['agregados']:,} | — |",
           f"| Disponibilidad del agregado p50 / p95 | {_fmt(ingesta['agregado_p50'])} / "
           f"{_fmt(ingesta['agregado_p95'])} s | acotada por la cadencia del sensor |", ""]
+    if ingesta.get("descartados"):
+        L += [f"| **Mensajes descartados por Mosquitto** | **{ingesta['descartados']:,}** | "
+              "0 (perdida invisible) |", ""]
+    elif ingesta.get("descartados") == 0:
+        L += ["| Mensajes descartados por Mosquitto | 0 | 0 ✓ |", ""]
+
+    if ingesta.get("descartados"):
+        L += ["> **Aviso**: el broker acepto esos mensajes —el productor recibio su PUBACK— y "
+              "no llego a entregarlos, por cola de salida llena. No aparecen como fallo en "
+              "ningun otro indicador: ni en el productor, ni en el bridge, ni en la DLQ. "
+              "Contar solo lo que el pipeline registra da un 0% de perdida que es falso.", ""]
+
     if ingesta["negativas"]:
         L += [f"> **Aviso**: {ingesta['negativas']:,} filas tienen `ingested_at` anterior a "
               "`sim_publish_ts`, es decir latencia negativa. Es el sintoma de que el UPSERT no "
@@ -289,20 +328,38 @@ def construir_informe(ingesta, esquema, run_id, procesamiento, grafana, carga) -
         L += ["", f"Panel mas lento: **{peor['ms']:,.1f} ms** (objetivo < 5.000 ms).", ""]
 
     if carga:
-        L += ["## Objetivo 5 — Escalabilidad", "",
-              f"Escalera del {carga['instante']} con speedup x{carga['speedup']:,.0f} "
-              f"identico en todos los peldanos, de modo que la carga crece con el numero "
-              f"de sensores. **Medido en el consumo**, no en el productor.", "",
-              "| Peldano | Sensores | Tasa teorica | Entregado a Kafka | Persistido | Lote p95 |",
-              "|---|---|---|---|---|---|"]
+        saturacion = carga.get("modo") == "saturacion"
+        titulo = ("## Objetivo 5 — Punto de saturacion" if saturacion
+                  else "## Objetivo 5 — Escalabilidad")
+        preambulo = (
+            "Rampa de ritmo creciente con los sensores fijos: busca hasta donde aguanta."
+            if saturacion else
+            "Escalera de sensores con el ritmo por sensor fijo, de modo que la carga crece "
+            "con el numero de contadores.")
+        L += [titulo, "",
+              f"{preambulo} Ejecutada el {carga['instante']}, "
+              f"{carga['eventos_por_peldano']:,} eventos por peldano y **medida en el "
+              f"consumo**, no en el productor.", "",
+              "| Peldano | Sensores | Ritmo pedido | Publicado real | Persistido | Latencia p95 | Lote p95 |",
+              "|---|---|---|---|---|---|---|"]
         for r in carga["peldanos"]:
-            aviso = "" if r["productor_sostuvo_el_ritmo"] else " ⚠ productor saturado"
+            # Se recalcula aqui en vez de confiar en la bandera del fichero:
+            # sostener el ritmo es publicar lo que se pidio, no carecer de picos.
+            sostuvo = (r.get("ritmo_publicado_ev_s") or 0) >= 0.95 * r["tasa_teorica_ev_s"]
+            aviso = "" if sostuvo else " ⚠"
             L.append(f"| {r['etiqueta']}{aviso} | {r['sensores']} | "
-                     f"{r['tasa_teorica_ev_s']:,.1f} ev/s | "
-                     f"**{r['throughput_entregado_ev_s']:,.1f} ev/s** | "
+                     f"{r['tasa_teorica_ev_s']:,.0f} ev/s | "
+                     f"**{_fmt(r.get('ritmo_publicado_ev_s'), 1, ' ev/s')}** | "
                      f"{r['persistidos_en_postgresql']:,} | "
-                     f"{_fmt(r['micro_lote_p95_ms'], 0, ' ms')} |")
-        L.append("")
+                     f"{_fmt(r.get('latencia_p95_s'), 3, ' s')} | "
+                     f"{_fmt(r.get('micro_lote_p95_ms'), 0, ' ms')} |")
+        if any((r.get("ritmo_publicado_ev_s") or 0) < 0.95 * r["tasa_teorica_ev_s"]
+               for r in carga["peldanos"]):
+            L += ["", "> Los peldanos marcados con ⚠ miden **el techo del simulador**, no el "
+                  "del pipeline: el productor no sostuvo el ritmo pedido. Un peldano en el que "
+                  "el productor satura no dice nada sobre donde esta el limite del sistema.", ""]
+        else:
+            L.append("")
 
     return "\n".join(L)
 
@@ -313,6 +370,8 @@ def run(args: argparse.Namespace) -> int:
 
     logger.info("Objetivo 1: consultando latencias de ingesta...")
     ingesta = kpi_ingesta(props_pg, props_ts)
+    logger.info("Objetivo 1: leyendo el contador de descartes del broker...")
+    ingesta["descartados"] = descartes_mosquitto()
 
     esquema = None
     try:

@@ -132,6 +132,41 @@ el throughput MEJORA al anadir sensores (1.062 → 1.332 ev/s). El sesgo era de
 calentamiento y solo se ve repitiendo el peldano base cuando el sistema ya lleva
 rato en marcha.
 
+### La rampa de saturacion
+
+`--speedups` en lugar de `--ladder` mantiene los sensores fijos y sube el ritmo.
+Responde a otra pregunta: no "cuanto se degrada al crecer", sino "hasta donde
+aguanta".
+
+```bash
+python pipeline/herramientas/load_ladder.py --speedups 5000,10000,20000,40000 --events-per-step 40000
+```
+
+Medido el 19 de agosto de 2026 con los 652 sensores:
+
+| Ritmo pedido | Publicado real | Persistido | Latencia p95 | Lote p95 |
+|---|---|---|---|---|
+| 906 ev/s | 896,5 (99%) | 40.000 | 1,28 s | 629 ms |
+| 1.811 ev/s | **1.798,6** (99,3%) | 40.000 | 1,97 s | 906 ms |
+| 3.622 ev/s | 2.550,5 (70%) | 40.000 | 3,02 s | 1.108 ms |
+| 7.244 ev/s | 2.297,0 (32%) | 39.316 | 6,44 s | 1.192 ms |
+
+**El pipeline sostiene 1.800 ev/s con todo dentro de objetivo**, que son 10.000
+veces el caso de uso real de 0,1797 ev/s.
+
+**El techo de ~2.900 ev/s es del simulador, no del pipeline**: a partir de ahi
+publica MENOS cuanto mas se le pide (2.920 -> 2.686 -> 2.421), la curva
+descendente tipica de saturacion. El pipeline persistio el 100% de lo que le
+llego en todos los peldanos.
+
+**Y por encima de ese punto, Mosquitto descarta en silencio.** En el peldano mas
+alto el simulador registro 40.000 publicados y 0 fallidos —recibio su PUBACK de
+cada uno— pero al bridge solo llegaron 38.221. El broker habia tirado 1.779 al
+llenarse su cola de salida. Nadie da error: ni el productor, ni el bridge, ni la
+DLQ, ni los logs del broker. Es un 4,4% de perdida invisible con todos los
+indicadores en verde, y por eso `kpi_report.py` lee ahora
+`$SYS/broker/publish/messages/dropped`.
+
 ## kpi_report.py
 
 Interroga las cuatro fuentes donde el pipeline deja constancia:
@@ -171,24 +206,34 @@ Exige que el bridge y el job esten en marcha, y **informa de lo que pase,
 incluido que no se recupere**: un servicio cuyo fallo detiene el pipeline es un
 resultado publicable; afirmar una recuperacion que no se ha observado, no.
 
-### Resultado medido (Mosquitto)
+### Resultados medidos
 
-| Metrica | Resultado | Objetivo |
+| Servicio tumbado 15 s | Flujo restablecido | Nota |
 |---|---|---|
-| Flujo restablecido tras levantar el servicio | **16,1 s** | < 60 s |
-| Tiempo total desde el fallo (incluye 15 s caido a proposito) | 31,5 s | — |
-| Eventos perdidos | **1** (el que estaba en vuelo al caer el broker) | sin perdida |
+| Mosquitto | **16,1 s** | El bridge reconecta solo por su sesion persistente. Se pierde 1 evento: el que el productor tenia en vuelo |
+| Kafka | **15,2 s** | Reintentos del productor del bridge; sin intervencion |
+| TimescaleDB | **4,1 s** | Reintentos de escritura y relanzado de la consulta; `eventos-postgresql` siguio con 21 micro-lotes durante la caida |
+| PostgreSQL | **5,1 s** | Igual, sin muerte silenciosa |
 
-La primera ejecucion de esta prueba dio "no se recupero", y la causa no estaba
-en el pipeline: **el simulador moria** seis segundos despues de tumbar el
-broker, al propagarse la excepcion de `wait_for_publish`. Lo que se estaba
-midiendo era si el simulador sobrevive, no si el sistema se recupera. Corregido
-—un contador real no se apaga porque se reinicie el broker—, el bridge
-demostro reconectar solo gracias a su sesion MQTT persistente.
+Objetivo: recuperacion < 60 s. Al reiniciar, cada consulta reanuda desde su
+checkpoint y **no se pierde ningun evento**: los publicados durante la caida
+siguen en Kafka y la clave natural hace idempotente el reproceso.
 
-Queda una decision de diseño abierta: ese unico evento se pierde porque el
-simulador no reintenta lo que no se confirmo. Un contador real con QoS 1 y
-memoria local si lo haria.
+### Tres trampas que costaron cuatro ejecuciones falsas
+
+**El productor tambien es parte del experimento.** La primera prueba concluyo
+"el flujo no se restablecio". Falso: el bridge habia reconectado en 17 s. Lo que
+moria era el simulador, seis segundos despues de tumbar el broker, al propagarse
+la excepcion de `wait_for_publish`.
+
+**La tabla testigo tiene que ser la que corta el fallo.** Al tumbar TimescaleDB
+se contaban filas en PostgreSQL, que no se habia caido: daba "recuperado en 1,0
+s" sin que la parte afectada hubiera hecho nada.
+
+**La referencia hay que tomarla con el servicio vivo.** Cuando el servicio
+tumbado es la propia base testigo, `contar` devuelve -1 mientras esta muerta.
+Tomar eso como referencia hacia que, al volver, sus filas ANTIGUAS ya superaran
+el umbral y se declarara "flujo restablecido" sin que hubiera llegado nada nuevo.
 
 ## Registro de actividad
 

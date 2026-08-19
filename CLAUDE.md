@@ -117,6 +117,28 @@ Obtenidas con `herramientas/kpi_report.py` sobre 20.000 eventos a 400 ev/s, y re
 | Confirmaciones de Mosquitto, ventana 100 y bridge suscrito | **7.324 – 8.539 ev/s** | — |
 | Lo mismo con ventana 1 (equivale al simulador) | 1.971 ev/s | — |
 
+### Punto de saturacion y resiliencia (19 de agosto de 2026)
+
+Rampa de ritmo creciente con los 652 sensores, medida en el consumo:
+
+| Ritmo pedido | Publicado real | Persistido | Latencia p95 | Lote p95 |
+|---|---|---|---|---|
+| 906 ev/s | 896,5 (99%) | 40.000 | 1,28 s | 629 ms |
+| 1.811 ev/s | **1.798,6** (99,3%) | 40.000 | 1,97 s | 906 ms |
+| 3.622 ev/s | 2.550,5 (70%) | 40.000 | 3,02 s | 1.108 ms |
+| 7.244 ev/s | 2.297,0 (32%) | 39.316 | 6,44 s | 1.192 ms |
+
+**El pipeline sostiene 1.800 ev/s con todo dentro de objetivo: 10.000 veces el caso de uso real de 0,1797 ev/s.** El techo de ~2.900 ev/s es del SIMULADOR —por encima publica menos cuanto mas se le pide— y el pipeline persistio el 100% de lo que le llego en todos los peldanos.
+
+Recuperacion ante fallo, tumbando cada servicio 15 s:
+
+| Servicio | Flujo restablecido | Nota |
+|---|---|---|
+| Mosquitto | 16,1 s | 1 evento perdido, el que estaba en vuelo |
+| Kafka | 15,2 s | sin intervencion |
+| TimescaleDB | **4,1 s** | la otra consulta siguio con 21 micro-lotes |
+| PostgreSQL | **5,1 s** | sin muerte silenciosa |
+
 **El KPI 3 no discrimina, y conviene decirlo en el texto.** El caso de uso real exige **0,18 ev/s** (652 contadores × 1 lectura/hora), así que el umbral de 50 ev/s ya está 276× por encima de la necesidad: procede de la literatura, no del problema. Subirlo sería inventar un número; lo que aporta valor es la caracterización. Y ahí falta lo importante: **los 1.284 ev/s son el techo del SIMULADOR**, que confirma cada publicación con QoS 1 antes de emitir la siguiente.
 
 Medido con el generador asíncrono el 18 de agosto de 2026, con el bridge suscrito y la ventana de mensajes en vuelo como única variable (40.000 eventos, 652 sensores):
@@ -161,6 +183,12 @@ Medido con el generador asíncrono el 18 de agosto de 2026, con el bridge suscri
 - **Una clave de Kafka a `None` no da ningún error.** El bridge seguía usando `evento.get("machine_id")`, campo que el contrato de ASHRAE no tiene, así que todos los mensajes salían sin clave y el productor los repartía en round-robin: el orden por sensor que la documentación daba por garantizado no existía. `.get()` sobre un campo obligatorio convierte un incumplimiento del contrato en un valor nulo silencioso; con acceso directo, el evento habría acabado en la DLQ el primer día.
 - **El productor de una prueba de resiliencia también es parte del experimento.** La primera prueba de recuperación ante fallo concluyó "el flujo no se restableció". Falso: el bridge reconectó solo en 17 s. Lo que había muerto era el simulador, seis segundos después de tumbar el broker, al propagarse la excepción de `wait_for_publish`. La prueba medía si el simulador sobrevive, no si el sistema se recupera.
 - **El orden de arranque contamina la medición tanto como un error de código.** El mismo sistema con la misma carga dio una latencia de ingesta p95 de **1,38 s o de 92,53 s** según si Spark estaba en marcha antes de publicar o se arrancaba después: en el segundo caso los eventos esperan en Kafka y esa espera cuenta, porque el reloj arranca en el `sim_publish_ts` del productor. El micro-lote p95 pasó igualmente de 692 a 2.745 ms, porque el primer lote absorbe de golpe todo lo acumulado. Ninguna de las dos cifras delata el problema por sí sola.
+- **Mosquitto descarta en silencio pasado su punto de saturacion.** Empujando por encima del techo, el productor registro 40.000 publicados y 0 fallidos —recibio su PUBACK de cada uno— pero al bridge llegaron 38.221. El broker tiro 1.779 al llenarse `max_queued_messages`. No hay error en el productor, ni en el bridge, ni en la DLQ, ni en los logs del broker: **4,4% de perdida invisible con todos los indicadores en verde**. Solo lo delata `$SYS/broker/publish/messages/dropped`, que ahora lee `kpi_report.py`.
+- **`for q in consultas: q.awaitTermination()` vigila UNA sola consulta.** Espera secuencialmente: si moria la primera, su excepcion terminaba el proceso entero y arrastraba a la otra; si moria la segunda, nadie la esperaba y el job seguia vivo escribiendo la mitad de los datos **sin un solo aviso**. Se sustituyo por un supervisor que comprueba `isActive` de todas y relanza la caida desde su checkpoint.
+- **Un `--rebase-end now` repetido inutiliza la agregacion por ventana.** El watermark es monotono: una vez en "ahora", cada ejecucion nueva publica eventos que cubren las horas ANTERIORES a ese instante y Spark los descarta como tardios. `telemetry_metrics` se queda a cero mientras la ruta de eventos, que no tiene watermark, sigue llenandose con normalidad.
+- **`sink_num_output_rows` vale -1 con `foreachBatch`**: Spark no sabe cuantas filas escribio un sumidero propio. No sirve para comprobar si un lote escribio algo.
+- **Una marca de tiempo del reloj local no filtra una columna que escribe el servidor.** Los contenedores corren en UTC y los scripts en hora local: `WHERE ingested_at >= '12:37:14'` se interpretaba como UTC, dos horas en el futuro, y devolvia percentiles a NULL, que parece "no hubo trafico". La marca se pide con `SELECT now()` a la propia base.
+- **`EXTRACT(EPOCH ...)` devuelve NUMERIC y psycopg2 lo convierte en Decimal**, que `json.dumps` no serializa. El fallo aparece al final, con toda la medicion hecha y perdida.
 - **Los logs del job de Spark van en UTC** y los del resto en hora local, porque el job fuerza `TZ=UTC` en su proceso. Al comparar `spark_job.log` con `bridge.log` hay dos horas de desfase que no son un fallo.
 - **`lastProgress` no sirve para un KPI.** Sondeando cada 10 s con un trigger de 1 s se pierden nueve de cada diez lotes, y la mediana de una muestra con huecos no es la mediana de los lotes. `recentProgress` conserva los últimos 100 informes y permite deduplicar por `batchId`.
 - **`with psycopg2.connect(...)` hace commit pero NO cierra la conexión.** En un hilo que escribe cada 10 segundos, eso es una fuga de sockets que tarda horas en manifestarse.
@@ -195,9 +223,7 @@ El job deserializa todo el flujo con **un único esquema**. En lugar de resoluci
 
 ## Pendiente de implementar
 
-- **Informes de Power BI** (Objetivo 4): tiene en PostgreSQL las lecturas crudas, `buildings` y `sensor_baseline`, con eso puede calcular intensidad energética, atípicos y umbrales ajustables sin tocar el pipeline. **Es el único objetivo sin nada empezado.**
-- **Determinar el punto de saturación de extremo a extremo.** El codo ya se ha visto —con ventana 500 el throughput baja y la latencia se multiplica por siete— y el drenaje del bridge se estimó del orden de 4.000 ev/s, pero falta situarlo con precisión y con Spark corriendo a la vez. Medir por el lado del consumo (bridge y Kafka), no del productor: Mosquitto confirma aunque el pipeline esté encolando.
-- **Repetir la prueba de recuperación sobre Kafka, TimescaleDB y PostgreSQL.** Hecha y medida sobre Mosquitto (16,1 s). `failover_test.py --target` admite los otros tres; se espera que tumbar una base de datos detenga la consulta de Spark, porque en `local[*]` no hay reintentos de tarea, y ese resultado hay que medirlo y decidir si se corrige.
+- **Los informes de Power BI los hace Boris**, y van despues de cerrar las pruebas del pipeline: necesita el esquema estable antes de empezar. Mi parte es que `telemetry_events`, `buildings` y `sensor_baseline` no se muevan y avisar si algun cambio las altera.
 - **Decidir si el simulador debe reintentar lo no confirmado.** Hoy pierde un evento por caída del broker: el que tenía en vuelo. Un contador real con QoS 1 y memoria local lo reenviaría al reconectar. Afecta a cómo se redacta "sin pérdida de datos" en el Objetivo 5.
 - Redactar `Desarrollo.tex` y `Resumen.tex`, que siguen siendo plantilla. El material de las trampas medidas de arriba va ahí.
 - Retirar el código muerto cuando Boris lo confirme.

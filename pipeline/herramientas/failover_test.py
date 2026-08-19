@@ -37,7 +37,12 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.conexiones import POSTGRES, anadir_argumentos_bd, props_bd  # noqa: E402
+from common.conexiones import (  # noqa: E402
+    POSTGRES,
+    TIMESCALE,
+    anadir_argumentos_bd,
+    props_bd,
+)
 from common.logging_setup import DIRECTORIO_LOGS, configurar_logging  # noqa: E402
 from common.proceso import evento_de_parada  # noqa: E402
 
@@ -88,22 +93,39 @@ def procesos_ausentes() -> list[str]:
     return faltan
 
 
-def contar(props: dict) -> int:
+# Que tabla demuestra que el flujo volvio, segun el servicio que se tumba. NO
+# vale mirar siempre PostgreSQL: al matar TimescaleDB, la consulta que escribe en
+# PostgreSQL sigue tan campante, asi que contar sus filas daba "recuperado en 1,0
+# s" sin que la parte afectada hubiera hecho nada. La prueba tiene que observar
+# el camino que el fallo interrumpe.
+TABLA_TESTIGO = {
+    "timescaledb": (TIMESCALE, "telemetry_metrics"),
+    "postgres": (POSTGRES, "telemetry_events"),
+    "mosquitto": (POSTGRES, "telemetry_events"),
+    "kafka": (POSTGRES, "telemetry_events"),
+}
+
+
+def contar(props: dict, tabla: str = "telemetry_events") -> int:
     import psycopg2
 
-    conn = psycopg2.connect(**props)
+    try:
+        conn = psycopg2.connect(**props)
+    except Exception:
+        # Si el caido es el propio servidor, no poder conectar es lo esperado.
+        return -1
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM telemetry_events")
+            cur.execute(f"SELECT count(*) FROM {tabla}")
             return cur.fetchone()[0]
     except Exception:
-        # Si el que esta caido es PostgreSQL, no poder contar es lo esperado.
         return -1
     finally:
         conn.close()
 
 
-def esperar_flujo(props: dict, referencia: int, timeout: float, parada) -> float | None:
+def esperar_flujo(props: dict, tabla: str, referencia: int, timeout: float,
+                  parada) -> float | None:
     """Segundos hasta ver filas NUEVAS respecto a `referencia`, o None si no llegan.
 
     Se mide sobre filas persistidas y no sobre el estado del contenedor a
@@ -115,7 +137,7 @@ def esperar_flujo(props: dict, referencia: int, timeout: float, parada) -> float
     while time.monotonic() - t0 < timeout:
         if parada.is_set():
             return None
-        actual = contar(props)
+        actual = contar(props, tabla)
         if actual > referencia:
             return time.monotonic() - t0
         time.sleep(1)
@@ -124,7 +146,10 @@ def esperar_flujo(props: dict, referencia: int, timeout: float, parada) -> float
 
 def run(args: argparse.Namespace) -> int:
     parada = evento_de_parada("prueba de recuperacion")
-    props = props_bd(args, POSTGRES)
+    cual_bd, tabla = TABLA_TESTIGO[args.target]
+    props = props_bd(args, cual_bd)
+    logger.info("Se observara el flujo en %s.%s, que es el camino que corta un fallo de %s",
+                cual_bd, tabla, args.target)
 
     faltan = procesos_ausentes()
     if faltan:
@@ -136,23 +161,37 @@ def run(args: argparse.Namespace) -> int:
 
     logger.info("Lanzando el simulador con speedup x%g en segundo plano...", args.speedup)
     simulador = subprocess.Popen(
+        # SIN --rebase-end a proposito. Desplazar las marcas al presente en cada
+        # ejecucion deja el watermark de Spark clavado en "ahora", y entonces
+        # todo lo que se publique despues —que cubre las horas ANTERIORES a ese
+        # instante— llega tarde y la agregacion por ventana lo descarta en
+        # silencio. Con eso, la consulta de metricas no escribe nada y una
+        # prueba de fallo sobre TimescaleDB no demuestra nada: la consulta
+        # "sobrevive" porque no llego a tocar la base.
         [sys.executable, str(SIMULADOR), "--speedup", str(args.speedup),
-         "--limit", str(args.limit), "--rebase-end", "now"],
+         "--limit", str(args.limit)],
     )
     try:
-        filas_inicio = contar(props)
-        if esperar_flujo(props, filas_inicio, args.warmup, parada) is None:
+        filas_inicio = contar(props, tabla)
+        if esperar_flujo(props, tabla, filas_inicio, args.warmup, parada) is None:
             logger.error("No llega flujo al sumidero antes del fallo; se aborta la prueba")
             return 1
-        logger.info("Flujo confirmado. Filas antes del fallo: %s", f"{contar(props):,}")
+        logger.info("Flujo confirmado. Filas antes del fallo: %s", f"{contar(props, tabla):,}")
 
-        logger.info("--- MATANDO %s ---", args.target)
+        # El recuento de referencia se toma con el servicio TODAVIA VIVO. Si se
+        # toma despues del kill y el servicio caido es la propia base testigo,
+        # `contar` devuelve -1 y entonces cualquier lectura posterior lo supera:
+        # se declara "flujo restablecido" en cuanto la base vuelve a responder,
+        # aunque no haya llegado ni una fila nueva.
+        filas_antes_del_fallo = contar(props, tabla)
+        logger.info("--- MATANDO %s (filas antes: %s) ---", args.target,
+                    f"{filas_antes_del_fallo:,}")
         compose("kill", args.target)
         instante_fallo = time.monotonic()
         logger.info("Estado de %s: %s", args.target, estado_contenedor(args.target))
 
         time.sleep(args.downtime)
-        filas_durante = contar(props)
+        filas_durante = contar(props, tabla)
         logger.info("Filas tras %g s caido: %s", args.downtime,
                     f"{filas_durante:,}" if filas_durante >= 0 else "(base de datos caida)")
 
@@ -160,8 +199,15 @@ def run(args: argparse.Namespace) -> int:
         compose("start", args.target)
         instante_reinicio = time.monotonic()
 
-        referencia = max(filas_durante, 0)
-        recuperacion = esperar_flujo(props, referencia, args.timeout, parada)
+        # La referencia es el ULTIMO RECUENTO VALIDO, no el de durante la caida.
+        # Cuando el servicio tumbado es la propia base testigo, `contar` devuelve
+        # -1 mientras esta muerta; tomar eso como referencia (con un max(...,0))
+        # hacia que al volver el servicio sus filas ANTIGUAS ya superaran el
+        # umbral y se declarara "flujo restablecido" sin que hubiera llegado
+        # nada nuevo. Daba 2,0 s de recuperacion que no median nada.
+        referencia = filas_durante if filas_durante >= 0 else filas_antes_del_fallo
+        logger.info("Se esperan filas nuevas por encima de %s", f"{referencia:,}")
+        recuperacion = esperar_flujo(props, tabla, referencia, args.timeout, parada)
         total = time.monotonic() - instante_fallo
 
         if recuperacion is None:
@@ -184,10 +230,11 @@ def run(args: argparse.Namespace) -> int:
     # solo estaba en transito.
     logger.info("Esperando %g s al drenaje antes de contar...", args.drain)
     time.sleep(args.drain)
-    filas_final = contar(props)
+    filas_final = contar(props, tabla)
 
     resultado = {
         "servicio": args.target,
+        "tabla_testigo": f"{cual_bd}.{tabla}",
         "instante": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "downtime_s": args.downtime,
         "recuperacion_s": round(recuperacion, 1) if recuperacion is not None else None,
