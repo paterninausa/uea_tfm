@@ -109,10 +109,17 @@ def read_kafka(spark: SparkSession, args: argparse.Namespace) -> DataFrame:
         .option("kafka.bootstrap.servers", args.bootstrap_servers)
         .option("subscribe", args.topic)
         .option("startingOffsets", args.starting_offsets)
-        # failOnDataLoss=false evita que el job muera si la retencion de Kafka
-        # (7 dias) descarta offsets que aun no se habian leido. En desarrollo
-        # es lo practico; en produccion conviene lo contrario, para enterarse.
-        .option("failOnDataLoss", "false")
+        # failOnDataLoss ACTIVO por defecto: si la retencion de Kafka (7 dias)
+        # borro offsets que el job aun no habia leido, la consulta se detiene en
+        # vez de saltarselos.
+        #
+        # Estuvo en "false" y era el fallo silencioso mas grave que quedaba en el
+        # pipeline: con el job parado mas de una semana se perdian eventos sin
+        # una sola linea en el log, y ninguna de las comprobaciones lo habria
+        # notado —los offsets saltados no cuentan como descartados ni como
+        # atraso—. Un trabajo que afirma "sin perdida de datos" no puede
+        # permitirse que la unica prueba sea que nadie lo miro.
+        .option("failOnDataLoss", "true" if args.fail_on_data_loss else "false")
         .option("maxOffsetsPerTrigger", str(args.max_offsets_per_trigger))
         .load()
     )
@@ -459,6 +466,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--bootstrap-servers", default="localhost:29092")
     p.add_argument("--topic", default="iot.telemetry.raw")
     p.add_argument("--starting-offsets", default="earliest", choices=["earliest", "latest"])
+    p.add_argument("--no-fail-on-data-loss", dest="fail_on_data_loss", action="store_false",
+                   help="Continuar aunque Kafka haya borrado por retencion offsets sin leer. "
+                        "Por defecto el job se DETIENE: saltarselos es perdida silenciosa, "
+                        "invisible para el log y para las invariantes")
     p.add_argument("--max-offsets-per-trigger", type=int, default=10000,
                    help="Techo de eventos por micro-lote; acota la latencia del lote")
 
