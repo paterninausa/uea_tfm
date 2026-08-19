@@ -236,6 +236,29 @@ Las dos formas contradecian la promesa del doble sumidero. Hoy hay tres capas:
 
 El job permanecio vivo en ambos casos. Objetivo 5: recuperacion < 60 s.
 
+## Invariantes: registrar lo que NO ocurre
+
+De los fallos que aparecieron probando este pipeline, los peores no producian
+ninguna excepcion: eran ausencias. Un log que registra actividad —"publicados=N",
+"batch 12 escrito"— sirve para reconstruir que paso despues del incidente, pero
+no puede delatar lo que no pasa. Para eso hay que comprobar invariantes.
+
+`monitoring.py` vigila dos, en el mismo bucle que ya vuelca el progreso:
+
+| Invariante | Que caza |
+|---|---|
+| `rows_dropped_by_watermark > 0` | Spark esta tirando eventos por tardios. Ocurre al reproducir el dataset dos veces con `--rebase-end now`: el watermark es monotono, ya esta en "ahora", y lo que llega despues cubre horas anteriores |
+| `offsets_behind` crece con cero filas de entrada | La consulta no consume mientras Kafka acumula. Se exige que persista tres volcados seguidos para no avisar por un pico de carga |
+
+Las dos salen del informe de progreso que Spark ya produce
+—`stateOperators[].numRowsDroppedByWatermark` y
+`sources[].metrics.maxOffsetsBehindLatest`—, asi que no cuestan una consulta
+extra a nadie, y quedan ademas en `streaming_progress` para revisarlas despues.
+
+Comprobado provocando el fallo a proposito: dos reproducciones seguidas con
+`--rebase-end now` dejaron 1.614 eventos descartados, y el log lo dijo mientras
+ocurria. Antes, el unico sintoma era que `telemetry_metrics` aparecia vacia.
+
 ## Uso
 
 Requiere el stack levantado, el esquema registrado y el bridge en marcha:

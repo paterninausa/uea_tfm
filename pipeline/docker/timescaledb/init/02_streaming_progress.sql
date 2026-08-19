@@ -47,6 +47,20 @@ CREATE TABLE IF NOT EXISTS streaming_progress (
     query_planning_ms         BIGINT,
     sink_num_output_rows      BIGINT,
 
+    -- INVARIANTES DE SALUD, no volumen. Las dos delatan fallos que no producen
+    -- ninguna excepcion y que solo se detectaron por casualidad: una tabla que
+    -- aparecio vacia y otra que llevaba veinte minutos congelada.
+    --
+    -- rows_dropped_by_watermark > 0 significa que Spark esta TIRANDO eventos por
+    -- llegar tarde. Ocurre, por ejemplo, si se reproduce el dataset con
+    -- --rebase-end now dos veces seguidas: el watermark es monotono y ya esta en
+    -- "ahora", asi que lo que llega despues cubre horas anteriores y se descarta.
+    --
+    -- offsets_behind es lo que Kafka tiene y la consulta aun no ha leido. Si
+    -- crece mientras no entran filas, la consulta no esta trabajando.
+    rows_dropped_by_watermark  BIGINT,
+    offsets_behind             BIGINT,
+
     -- Cierre de ventana. Comparar el maximo tiempo de evento con el watermark
     -- es lo que permitio demostrar que la latencia del agregado la fija la
     -- cadencia horaria del contador y no el pipeline: el watermark solo avanza
@@ -70,6 +84,11 @@ SELECT create_hypertable(
 -- ejecucion, por consulta".
 CREATE INDEX IF NOT EXISTS idx_progress_run
     ON streaming_progress (run_id, query_name, trigger_ts DESC);
+
+-- Las columnas de invariantes se anadieron despues de crear la tabla, asi que
+-- CREATE TABLE IF NOT EXISTS no basta para un volumen que ya existia.
+ALTER TABLE streaming_progress ADD COLUMN IF NOT EXISTS rows_dropped_by_watermark BIGINT;
+ALTER TABLE streaming_progress ADD COLUMN IF NOT EXISTS offsets_behind BIGINT;
 
 COMMENT ON TABLE streaming_progress IS
     'Progreso por micro-lote de Spark. Fuente del KPI de latencia de lote del Objetivo 3.';

@@ -56,6 +56,36 @@ def _a_timestamp(valor) -> datetime | None:
         return None
 
 
+def _descartados_por_watermark(progreso: dict) -> int | None:
+    """Eventos que Spark tiro por llegar tarde, sumando todos los operadores.
+
+    Spark lo sabe y no se lo cuenta a nadie: no hay excepcion ni aviso, solo
+    agregados que no aparecen. Es como se paso por alto que reproducir el
+    dataset dos veces con --rebase-end now dejaba `telemetry_metrics` a cero.
+    """
+    operadores = progreso.get("stateOperators") or []
+    valores = [o.get("numRowsDroppedByWatermark") for o in operadores]
+    presentes = [v for v in valores if v is not None]
+    return sum(presentes) if presentes else None
+
+
+def _offsets_pendientes(progreso: dict) -> int | None:
+    """Cuanto tiene Kafka que la consulta todavia no ha leido.
+
+    Viene ya calculado en el informe de la fuente, asi que no hace falta
+    preguntarle al broker.
+    """
+    for fuente in progreso.get("sources") or []:
+        metricas = fuente.get("metrics") or {}
+        valor = metricas.get("maxOffsetsBehindLatest")
+        if valor is not None:
+            try:
+                return int(valor)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
 class RegistroProgreso:
     """Vuelca a TimescaleDB el progreso de cada micro-lote.
 
@@ -71,11 +101,14 @@ class RegistroProgreso:
     informes se solapan entre sondeos consecutivos.
     """
 
-    def __init__(self, consultas, props: dict, run_id: str):
+    def __init__(self, consultas, props: dict, run_id: str, umbral_atraso: int = 1000):
         self.consultas = list(consultas)
         self.props = props
         self.run_id = run_id
         self.vistos: set[tuple[str, int]] = set()
+        self.umbral_atraso = umbral_atraso
+        self._descartados_avisados: dict[str, int] = {}
+        self._volcados_atascada: dict[str, int] = {}
 
     def seguir(self, consultas) -> None:
         """Actualiza la lista de consultas vigiladas.
@@ -86,6 +119,37 @@ class RegistroProgreso:
         congelado justo despues de una recuperacion.
         """
         self.consultas = list(consultas)
+
+    def _avisar_si_procede(self, nombre: str, progreso: dict,
+                           descartados: int | None, atraso: int | None) -> None:
+        """Convierte en aviso lo que si no seria una ausencia silenciosa.
+
+        Los dos casos que vigila se detectaron en agosto de 2026 por casualidad
+        —una tabla vacia y otra congelada—, no porque el sistema los dijera. Un
+        log que solo registra actividad no puede delatar lo que NO ocurre.
+        """
+        if descartados:
+            acumulado = self._descartados_avisados.get(nombre, 0)
+            if descartados > acumulado:
+                logger.warning(
+                    "[%s] SPARK ESTA DESCARTANDO EVENTOS POR TARDIOS: %d en este lote. "
+                    "El watermark ya paso su tiempo de evento; si se reprodujo el dataset "
+                    "otra vez con --rebase-end, los agregados de esas ventanas no se "
+                    "escribiran", nombre, descartados)
+                self._descartados_avisados[nombre] = descartados
+
+        # Una consulta atascada no da error: simplemente deja de consumir
+        # mientras Kafka sigue acumulando. Se exige que el atraso persista varios
+        # volcados seguidos para no avisar por un pico normal de carga.
+        if atraso is not None and atraso > self.umbral_atraso and not progreso.get("numInputRows"):
+            self._volcados_atascada[nombre] = self._volcados_atascada.get(nombre, 0) + 1
+            if self._volcados_atascada[nombre] >= 3:
+                logger.warning(
+                    "[%s] LA CONSULTA NO CONSUME MIENTRAS KAFKA ACUMULA: %d mensajes "
+                    "pendientes y cero filas de entrada en los ultimos %d informes",
+                    nombre, atraso, self._volcados_atascada[nombre])
+        else:
+            self._volcados_atascada[nombre] = 0
 
     def volcar(self) -> int:
         import psycopg2
@@ -101,6 +165,9 @@ class RegistroProgreso:
 
                 d = p.get("durationMs", {}) or {}
                 et = p.get("eventTime", {}) or {}
+                descartados = _descartados_por_watermark(p)
+                atraso = _offsets_pendientes(p)
+                self._avisar_si_procede(q.name, p, descartados, atraso)
                 filas.append((
                     _a_timestamp(p.get("timestamp")), self.run_id, q.name, p.get("batchId"),
                     p.get("numInputRows"),
@@ -108,6 +175,7 @@ class RegistroProgreso:
                     d.get("triggerExecution"), d.get("addBatch"), d.get("queryPlanning"),
                     (p.get("sink") or {}).get("numOutputRows"),
                     _a_timestamp(et.get("max")), _a_timestamp(et.get("watermark")),
+                    descartados, atraso,
                 ))
 
         if not filas:
@@ -130,7 +198,8 @@ class RegistroProgreso:
                         trigger_ts, run_id, query_name, batch_id,
                         num_input_rows, input_rows_per_second, processed_rows_per_second,
                         duration_ms, add_batch_ms, query_planning_ms, sink_num_output_rows,
-                        event_time_max, watermark
+                        event_time_max, watermark,
+                        rows_dropped_by_watermark, offsets_behind
                     ) VALUES %s
                     ON CONFLICT (trigger_ts, run_id, query_name, batch_id) DO NOTHING
                 """, filas, page_size=500)
