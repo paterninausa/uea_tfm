@@ -18,8 +18,8 @@ log de Kafka es la fuente de verdad reproducible, esa independencia vale mas
 que el ahorro de una lectura.
 
 Uso:
-    python telemetry_streaming.py                      # ambos sumideros
-    python telemetry_streaming.py --sink metrics       # solo TimescaleDB
+    python stream_processing.py                      # ambos sumideros
+    python stream_processing.py --sink metrics       # solo TimescaleDB
 
 El progreso de cada micro-lote se persiste en la tabla `streaming_progress` de
 TimescaleDB: es la fuente del KPI de latencia de lote del Objetivo 3, y sin

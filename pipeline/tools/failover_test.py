@@ -59,7 +59,7 @@ RESULTADO = DIRECTORIO_LOGS / "ultimo_failover.json"
 # demostraria nada.
 OBJETIVOS = ("mosquitto", "kafka", "timescaledb", "postgres")
 
-PROCESOS_NECESARIOS = ("mqtt_kafka_bridge.py", "telemetry_streaming.py")
+PROCESOS_NECESARIOS = ("mqtt_kafka_bridge.py", "stream_processing.py")
 
 
 def compose(*argumentos: str) -> None:

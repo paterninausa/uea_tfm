@@ -60,7 +60,7 @@ SIMULADOR = RAIZ / "simulator" / "mqtt_simulator.py"
 RESULTADOS = DIRECTORIO_LOGS / "ultima_escalera.json"
 
 CONTENEDOR_KAFKA = "tfm-kafka"
-PROCESOS_NECESARIOS = ("mqtt_kafka_bridge.py", "telemetry_streaming.py")
+PROCESOS_NECESARIOS = ("mqtt_kafka_bridge.py", "stream_processing.py")
 
 
 def procesos_ausentes() -> list[str]:

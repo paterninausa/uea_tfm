@@ -17,7 +17,7 @@ de streaming sino fontaneria. Se partio en:
 
 | Modulo | Lineas | De que responde |
 |---|---|---|
-| `telemetry_streaming.py` | 510 | QUE se calcula: leer Kafka, decodificar Avro, enriquecer, agregar por ventana y orquestar |
+| `stream_processing.py` | 510 | QUE se calcula: leer Kafka, decodificar Avro, enriquecer, agregar por ventana y orquestar |
 | `database_writers.py` | 183 | COMO se persiste: el UPSERT idempotente con sus reintentos y la carga de las tablas de referencia. No sabe de Spark mas alla de recibir un DataFrame resuelto |
 | `monitoring.py` | 220 | Lo que el job hace sobre SI MISMO: registrar el progreso de cada micro-lote y vigilar que sus consultas sigan vivas |
 
@@ -268,7 +268,7 @@ docker compose -f pipeline/docker-compose.yml up -d
 ```
 
 ```bash
-python pipeline/spark/telemetry_streaming.py --sink both
+python pipeline/spark/stream_processing.py --sink both
 ```
 
 Opciones: `--sink metrics|events|both` (aislar un sumidero es lo que necesita la

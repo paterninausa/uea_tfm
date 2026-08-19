@@ -41,7 +41,7 @@ python pipeline/bridge/mqtt_kafka_bridge.py
 ```
 
 ```bash
-python pipeline/spark/telemetry_streaming.py --trigger "1 second"
+python pipeline/spark/stream_processing.py --trigger "1 second"
 ```
 
 Esperar a que el job escriba `Consultas en marcha` antes de generar carga: el

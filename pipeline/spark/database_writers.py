@@ -5,7 +5,7 @@ Todo lo que este job habla en SQL vive aqui: el UPSERT que hace idempotente el
 reprocesamiento del log de Kafka, sus reintentos ante una caida de la base, y la
 carga de las tablas de referencia que consume Power BI.
 
-Esta separado de `telemetry_streaming.py` porque son responsabilidades
+Esta separado de `stream_processing.py` porque son responsabilidades
 distintas: alli se decide QUE se calcula —ventanas, agregados, enriquecimiento—
 y aqui COMO se persiste. La frontera se nota en que este modulo no sabe nada de
 Spark salvo que recibe un DataFrame ya resuelto.
