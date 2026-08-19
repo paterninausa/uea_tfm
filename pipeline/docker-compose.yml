@@ -115,7 +115,9 @@ services:
         set -e
         echo '==> Creando topicos del pipeline'
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic iot.telemetry.raw --partitions 3 --replication-factor 1
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic iot.telemetry.dlq --partitions 1 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic iot.telemetry.dlq --partitions 1 --replication-factor 1 --config retention.ms=-1
+        echo '==> Fijando retencion infinita en la DLQ'
+        /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:9092 --entity-type topics --entity-name iot.telemetry.dlq --alter --add-config retention.ms=-1
         echo '==> Topicos existentes:'
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
     restart: "no"

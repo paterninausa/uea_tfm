@@ -51,6 +51,10 @@ BOOTSTRAP_INTERNO = "kafka:9092"
 
 DIRECTORIO_CHECKPOINTS = Path(__file__).resolve().parents[1] / "spark" / "checkpoints"
 
+# Se compara por nombre para no perder la configuracion propia de la DLQ al
+# recrearla: `kafka-topics.sh --create` no hereda nada del topico que se borro.
+TOPICO_DLQ = "iot.telemetry.dlq"
+
 # Procesos que deben estar parados: recrear un topico o borrar un checkpoint
 # mientras el job corre lo deja leyendo de algo que ya no existe.
 PROCESOS_INCOMPATIBLES = ("telemetry_streaming.py", "mqtt_kafka_bridge.py",
@@ -132,9 +136,18 @@ def recrear_topico(topico: str, particiones_defecto: int) -> None:
     else:
         raise RuntimeError(f"El topico {topico} sigue existiendo 30 s despues de borrarlo")
 
+    extra = []
+    if topico == TOPICO_DLQ:
+        # La DLQ conserva su contenido sin caducar: es la evidencia de por que se
+        # rechazo un evento, y con la retencion por defecto del broker (7 dias)
+        # un rechazo del viernes desaparecia antes de que nadie lo mirara.
+        extra = ["--config", "retention.ms=-1"]
+
     kafka_topics("--create", "--topic", topico,
-                 "--partitions", str(particiones), "--replication-factor", str(replicas))
-    logger.info("Recreado %s con %d particiones", topico, particiones)
+                 "--partitions", str(particiones), "--replication-factor", str(replicas),
+                 *extra)
+    logger.info("Recreado %s con %d particiones%s", topico, particiones,
+                " y retencion infinita" if extra else "")
 
 
 def truncar(props: dict, tablas: list[str]) -> None:

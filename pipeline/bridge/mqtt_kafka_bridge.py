@@ -27,7 +27,7 @@ import signal
 import sys
 import threading
 import time
-from collections import deque
+from collections import Counter, deque
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -90,6 +90,7 @@ class Stats:
         # Ventana deslizante de latencias: acotada para que un proceso de larga
         # duracion no crezca en memoria sin limite.
         self.latencias_ms = deque(maxlen=latency_window)
+        self.motivos: Counter[str] = Counter()
         self._t0 = time.monotonic()
 
     def recibido(self):
@@ -102,9 +103,14 @@ class Stats:
             if latencia_ms is not None:
                 self.latencias_ms.append(latencia_ms)
 
-    def a_dlq(self):
+    def a_dlq(self, motivo: str = ""):
         with self._lock:
             self.dlq += 1
+            # Se agrupa aqui, en el momento del rechazo, en vez de consumir
+            # despues el topico: el bridge ya sabe por que rechazo cada evento y
+            # asi el desglose sale en el log del proceso que lo produjo, sin
+            # depender de que alguien vaya a mirar la DLQ.
+            self.motivos[motivo] += 1
 
     def fallo_kafka(self):
         with self._lock:
@@ -129,6 +135,7 @@ class Stats:
                 "latencia_p50_ms": lat[len(lat) // 2] if lat else None,
                 "latencia_p95_ms": lat[int(len(lat) * 0.95)] if lat else None,
                 "latencia_max_ms": lat[-1] if lat else None,
+                "motivos_dlq": self.motivos.most_common(),
             }
 
 
@@ -277,8 +284,8 @@ class Bridge:
         asi que no puede serializarse con el. Se conserva el payload original
         intacto para poder reprocesarlo una vez corregida la causa.
         """
-        self.stats.a_dlq()
         motivo = f"{type(exc).__name__}: {exc}"
+        self.stats.a_dlq(motivo)
         logger.warning("Evento rechazado de %s -> DLQ (%s)", msg.topic, motivo)
 
         registro = {
@@ -304,6 +311,24 @@ class Bridge:
             s["recibidos"], s["publicados"], s["dlq"], s["perdidos"],
             s["tasa_perdida_pct"], s["eventos_por_segundo"], p50, p95,
         )
+        self._desglosar_dlq(s)
+
+    def _desglosar_dlq(self, s: dict) -> None:
+        """Por que se rechazaron los eventos, agrupado por motivo.
+
+        Un contador a secas —"dlq=37"— obliga a ir a leer el topico para saber
+        si son 37 sintomas del mismo problema o 37 problemas distintos. Con el
+        desglose, el log del bridge responde solo: "37, todos porque meter_type
+        trae un simbolo fuera del enum".
+        """
+        if not s["motivos_dlq"]:
+            return
+        logger.warning("  desglose de los %d eventos rechazados:", s["dlq"])
+        for motivo, veces in s["motivos_dlq"][:5]:
+            logger.warning("    %6d x %s", veces, motivo[:120])
+        restantes = len(s["motivos_dlq"]) - 5
+        if restantes > 0:
+            logger.warning("    y %d motivos distintos mas", restantes)
 
     def run(self) -> int:
         signal.signal(signal.SIGINT, self._senal_parada)
@@ -340,7 +365,10 @@ class Bridge:
         s = self.stats.snapshot()
         logger.info("--- Resumen final ---")
         for k, v in s.items():
+            if k == "motivos_dlq":
+                continue
             logger.info("  %-22s %s", k, f"{v:.4f}" if isinstance(v, float) else v)
+        self._desglosar_dlq(s)
 
 
 def parse_args() -> argparse.Namespace:
