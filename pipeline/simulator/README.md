@@ -128,17 +128,44 @@ un mensaje en vuelo cada una dan 652 mensajes en vuelo por la via realista. Se
 comprobo ademas que el generador con ventana 1 se comportaba exactamente como el
 simulador: eran el mismo programa con dos nombres.
 
-## Ante una caida del broker
+## Ante una caida del broker: reconecta y reintenta
 
-Cada conexion es independiente: si el broker cae, la conexion afectada se anota
-como caida y deja de emitir, sin arrastrar a las demas ni terminar el proceso.
+Cada conexion sobrevive por su cuenta. Al perder el enlace guarda el evento que
+no llego a confirmarse, reintenta la conexion cada `--espera-reconexion` segundos
+hasta `--max-reconexiones` veces, y al volver reenvia primero ese pendiente. Su
+`sim_publish_ts` se sella entonces, no antes: la marca dice cuando se emitio de
+verdad, que es lo que mide el KPI de latencia.
 
-Antes no era asi, y se descubrio midiendo: en la primera prueba de recuperacion
-ante fallo del Objetivo 5, la excepcion de `wait_for_publish` terminaba el
-proceso seis segundos despues de tumbar el broker. La prueba concluyo "el flujo
-no se restablecio" cuando el bridge se habia reconectado perfectamente; lo que no
-sobrevivia era el productor. Un contador real no se apaga porque se reinicie el
-broker.
+Es lo que hace un medidor real, que guarda el perfil de carga y lo vuelca cuando
+recupera el enlace.
+
+### Como se llego aqui, en cuatro medidas
+
+Todas con la misma prueba: 60.000 eventos, 652 conexiones y Mosquitto tumbado 15
+segundos a mitad.
+
+| Version | Publica | Llegan al bridge | Descarta el broker |
+|---|---|---|---|
+| Sin reconexion | 12.814 y se congela, con 35.597 fallos | 13.314 | — |
+| Con reconexion y reintento | 60.000 | 53.977 | 6.025 |
+| Anadiendo volcado acotado | 60.000 | 53.405 | 6.595 |
+| **Acotando el backoff del bridge** | **60.000** | **60.000** | **0** |
+
+Dos cosas que solo se vieron midiendo:
+
+**`aiomqtt` no reconecta solo.** En la primera version, cada `publish` sobre el
+cliente muerto lanzaba `MqttError`, se contaba como fallo y se pasaba al evento
+siguiente: el simulador quemaba su agenda entera a velocidad de CPU sin publicar
+nada y sin recuperarse jamas, aunque el broker volviera. No perdia "un evento",
+perdia todos los que quedaban.
+
+**La perdida que quedaba no era del productor.** Al reconectar, los 652 sensores
+publicaban con normalidad mientras el bridge tardaba **17 segundos mas** en
+resuscribirse, porque paho aumenta su espera de reconexion hasta 120 s y el
+bridge no la acotaba. En esa ventana Mosquitto encolaba para la sesion
+persistente del bridge hasta llenar `max_queued_messages` y descartaba el resto.
+Se probo un volcado acotado en el productor antes de dar con esto: no cambio
+nada, y se retiro. **El consumidor tardon era la causa, no el productor rapido.**
 
 ## De donde sale lo que publica
 

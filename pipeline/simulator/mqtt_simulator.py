@@ -134,6 +134,9 @@ class Contadores:
     def retraso(self, segundos: float) -> None:
         self.retraso_max_s = max(self.retraso_max_s, segundos)
 
+    def reconexion(self) -> None:
+        self.reconexiones += 1
+
     def resumen(self) -> dict:
         duracion = time.monotonic() - self.t0
         total = self.publicados + self.fallidos
@@ -190,55 +193,81 @@ def _programa(filas, fraccion: float, t_sim0, speedup: float):
 
 async def cliente_mqtt(indice: int, trabajo: list, args, contadores: Contadores,
                        parada, t0: float, t_sim0) -> None:
-    """Una conexion MQTT publicando las lecturas de los sensores que le tocaron."""
-    identificador = f"{args.client_id}-{indice}"
-    try:
-        async with aiomqtt.Client(args.broker_host, args.broker_port,
-                                  identifier=identificador) as cliente:
-            # Los sensores de esta conexion se intercalan por instante de
-            # publicacion con heapq.merge, que consume UN GENERADOR POR SENSOR de
-            # forma perezosa. Materializar la agenda completa costaba tanta
-            # memoria como el propio dataset: son 5,68 millones de eventos.
-            agenda = heapq.merge(
-                *(_programa(filas, fraccion, t_sim0, args.speedup)
-                  for filas, fraccion in trabajo),
-                key=lambda x: x[0],
-            )
+    """Una conexion MQTT publicando las lecturas de los sensores que le tocaron.
 
-            for instante, fila in agenda:
-                if parada.is_set():
-                    return
-                espera = (t0 + instante) - time.monotonic()
-                if espera > 0:
-                    # Se espera SOBRE la senal de parada en vez de dormir a
-                    # secas: asi una interrupcion se atiende al instante y el
-                    # `async with` cierra la conexion como es debido, en lugar de
-                    # dejar 652 clientes colgados cuando muere el bucle.
-                    try:
-                        await asyncio.wait_for(parada.wait(), timeout=espera)
-                        return
-                    except asyncio.TimeoutError:
-                        pass
-                else:
-                    # Espera negativa: el simulador va por detras de su propia
-                    # agenda porque el speedup pedido supera lo que esta maquina
-                    # sostiene. Se registra en vez de recuperar el tiempo
-                    # publicando a rafagas, que es justo lo que este simulador
-                    # evita por diseno y ademas falsearia la medicion.
-                    contadores.retraso(-espera)
-                try:
+    RECONECTA Y REINTIENTA LO NO CONFIRMADO, que es lo que hace un contador real:
+    los medidores inteligentes guardan el perfil de carga y lo vuelcan cuando
+    recuperan el enlace. Sin esto, el comportamiento medido al tumbar el broker
+    era el peor posible: `aiomqtt` no reconecta por su cuenta, asi que cada
+    `publish` lanzaba MqttError, se contaba como fallo y se pasaba al evento
+    siguiente. El simulador quemaba su agenda entera a velocidad de CPU —12.814
+    publicados frente a 35.597 fallidos en 40 s— sin volver a publicar nada y sin
+    recuperarse aunque el broker volviera.
+
+    El evento que no llega a confirmarse se guarda en `pendiente` y es el primero
+    que sale tras reconectar. Su `sim_publish_ts` se sella entonces, no antes:
+    la marca dice cuando se EMITIO de verdad, que es lo que mide el KPI.
+    """
+    identificador = f"{args.client_id}-{indice}"
+    # La agenda se construye UNA vez y se conserva entre reconexiones: es un
+    # iterador perezoso, asi que reanudar es seguir consumiendolo, no repetirlo.
+    agenda = heapq.merge(
+        *(_programa(filas, fraccion, t_sim0, args.speedup)
+          for filas, fraccion in trabajo),
+        key=lambda x: x[0],
+    )
+    pendiente = None
+    intentos = 0
+
+    while not parada.is_set():
+        try:
+            async with aiomqtt.Client(args.broker_host, args.broker_port,
+                                      identifier=identificador) as cliente:
+                intentos = 0
+                while not parada.is_set():
+                    if pendiente is None:
+                        pendiente = next(agenda, None)
+                        if pendiente is None:
+                            return
+                    instante, fila = pendiente
+
+                    espera = (t0 + instante) - time.monotonic()
+                    if espera > 0:
+                        # Se espera SOBRE la senal de parada en vez de dormir a
+                        # secas: asi una interrupcion se atiende al instante y el
+                        # `async with` cierra la conexion como es debido.
+                        try:
+                            await asyncio.wait_for(parada.wait(), timeout=espera)
+                            return
+                        except asyncio.TimeoutError:
+                            pass
+                    else:
+                        # El simulador va por detras de su agenda porque el
+                        # speedup pedido supera lo que esta maquina sostiene, o
+                        # porque acaba de reconectar y arrastra lo acumulado.
+                        contadores.retraso(-espera)
+
                     await cliente.publish(build_topic(fila),
                                           payload=json.dumps(build_payload(fila)),
                                           qos=args.qos)
                     contadores.publicados += 1
-                except aiomqtt.MqttError as exc:
-                    contadores.fallidos += 1
-                    logger.warning("[%s] publicacion fallida: %s", identificador, exc)
-    except aiomqtt.MqttError as exc:
-        # Un contador no se apaga porque se caiga el broker: se anota y esta
-        # conexion deja de emitir, sin arrastrar a las demas ni al proceso.
-        contadores.reconexiones += 1
-        logger.warning("[%s] conexion perdida: %s", identificador, exc)
+                    pendiente = None
+
+        except aiomqtt.MqttError as exc:
+            intentos += 1
+            contadores.reconexion()
+            if intentos > args.max_reconexiones:
+                logger.error("[%s] sin conexion tras %d intentos, se abandona este sensor: %s",
+                             identificador, intentos, exc)
+                return
+            logger.warning("[%s] conexion perdida (intento %d de %d), reintento en %.0f s: %s",
+                           identificador, intentos, args.max_reconexiones,
+                           args.espera_reconexion, exc)
+            try:
+                await asyncio.wait_for(parada.wait(), timeout=args.espera_reconexion)
+                return
+            except asyncio.TimeoutError:
+                pass
 
 
 async def informar(contadores: Contadores, intervalo: float, parada) -> None:
@@ -312,6 +341,11 @@ def parse_args() -> argparse.Namespace:
                         "conexion, como haria una pasarela de edificio")
     p.add_argument("--report-interval", type=float, default=10.0,
                    help="Segundos entre informes de progreso")
+    p.add_argument("--max-reconexiones", type=int, default=20,
+                   help="Intentos de reconexion por sensor antes de abandonarlo. Un contador "
+                        "real reintenta y vuelca lo acumulado cuando recupera el enlace")
+    p.add_argument("--espera-reconexion", type=float, default=3.0,
+                   help="Segundos entre intentos de reconexion")
     p.add_argument("--max-lag", type=float, default=1.0,
                    help="Retraso maximo tolerado respecto a la agenda, en segundos. Por "
                         "encima, la ejecucion se marca como no valida: el simulador no "

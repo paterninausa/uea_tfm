@@ -166,6 +166,15 @@ class Bridge:
             # Es parte de la recuperacion sin perdida de datos del Objetivo 5.
             clean_session=False,
         )
+        # Backoff de reconexion acotado. Por defecto paho crece exponencialmente
+        # hasta 120 s, y eso se midio caro: tras una caida de 15 s el broker
+        # volvia pero el bridge tardaba 17 s mas en resuscribirse. En esa ventana
+        # los 652 productores ya publicaban con normalidad y Mosquitto encolaba
+        # los mensajes para la sesion persistente del bridge hasta llenar
+        # `max_queued_messages` (10.000) y descartar 6.595 en silencio. El
+        # consumidor tardon es lo que provoca la perdida, no el productor.
+        self.mqtt_client.reconnect_delay_set(min_delay=1, max_delay=5)
+
         self.mqtt_client.on_connect = self._on_connect
         self.mqtt_client.on_disconnect = self._on_disconnect
         self.mqtt_client.on_message = self._on_message

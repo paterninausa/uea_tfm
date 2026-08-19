@@ -50,6 +50,13 @@ los mensajes**, el productor los repartia en round-robin y el orden por sensor s
 perdia sin un solo error en el log. Con acceso directo, un evento que no traiga
 esos campos no cumple el contrato y acaba en la DLQ, que es donde debe acabar.
 
+**El backoff de reconexion esta acotado a 5 segundos.** Por defecto paho lo
+aumenta exponencialmente hasta 120 s, y eso costaba datos: tras una caida de 15 s
+el broker volvia pero el bridge tardaba 17 s mas en resuscribirse, y en esa
+ventana Mosquitto encolaba para su sesion persistente hasta llenar
+`max_queued_messages` y descartar 6.595 mensajes en silencio. Con el tope, el
+bridge vuelve en unos 2 s y la perdida desaparece.
+
 **Los timestamps ISO se interpretan como UTC de forma explicita.** El dataset
 los trae sin zona horaria (`2025-01-01T00:00:00`). Dejarlos a merced de la zona
 local haria que el mismo evento cayera en una ventana temporal distinta segun
