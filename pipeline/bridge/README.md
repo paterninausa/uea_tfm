@@ -16,7 +16,7 @@ pago), asi que el puente es codigo propio.
 
 ## Formato del mensaje en Kafka
 
-Definido en [`../common/schema_registry.py`](../common/schema_registry.py) y
+Definido en [`../common/apicurio.py`](../common/apicurio.py) y
 compartido con el job de Spark, para que productor y consumidor no puedan
 divergir:
 

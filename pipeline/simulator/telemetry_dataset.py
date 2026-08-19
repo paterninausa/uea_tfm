@@ -6,14 +6,15 @@ sensores": que subconjunto se reproduce y con que marcas de tiempo lo hace.
 
 AQUI NO SE SABE QUE EXISTE MQTT. Este modulo decide QUE filas se reproducen y
 con que marcas de tiempo; el topico, el payload y la conexion son cosa del
-productor, en `pipeline/simulator/mqtt_simulator.py`. La frontera se nota en que
+productor, en `mqtt_simulator.py`. La frontera se nota en que
 aqui no hay una sola linea de protocolo, y alli no hay ninguna decision sobre los
 datos.
 
-Vive aparte del simulador —aunque hoy sea su unico consumidor— porque el orden en
-que se aplican el filtrado, el recorte y el rebase temporal es una decision con
-consecuencias medidas, y merece un sitio donde este documentada y no mezclada con
-el codigo de publicacion.
+Vive en un fichero aparte del simulador porque el orden en que se aplican el
+filtrado, el recorte y el rebase temporal es una decision con consecuencias
+medidas, y merece un sitio donde este documentada y no mezclada con el codigo de
+publicacion. Estuvo en `common/replay.py` mientras habia dos productores; al
+quedar uno solo, se movio aqui.
 
 UN SENSOR ES EL PAR (edificio, tipo de contador). Un mismo edificio con contador
 de electricidad y de agua fria son dos sensores con series independientes; el

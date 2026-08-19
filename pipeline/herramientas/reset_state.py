@@ -34,7 +34,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.conexiones import (  # noqa: E402
+from common.connection_args import (  # noqa: E402
     POSTGRES,
     TIMESCALE,
     anadir_argumentos_bd,

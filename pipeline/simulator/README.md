@@ -142,16 +142,16 @@ broker.
 
 ## De donde sale lo que publica
 
-La frontera con `pipeline/common/replay.py` es esta:
+La frontera con `pipeline/simulator/telemetry_dataset.py` es esta:
 
-| Aqui, en el simulador | En `replay.py` |
+| Aqui, en el simulador | En `telemetry_dataset.py` |
 |---|---|
 | `build_topic()`, `build_payload()` — como se serializa un mensaje | `preparar()` — que filas se reproducen y con que marcas |
 | `repartir()` — que sensores van en cada conexion | `filtrar_sensores()` — cuales entran, en orden determinista |
 | `_programa()` — cuando publica cada sensor | `rebasar()` — a que instante se anclan las marcas |
 | Los argumentos del broker: host, puerto, QoS | Los argumentos del dataset: fichero, limite, sensores |
 
-Dicho corto: **replay es el guion —que se dice y en que orden— y el simulador son
+Dicho corto: **`telemetry_dataset` es el guion —que se dice y en que orden— y el simulador son
 los actores y el reloj —quien lo dice, por que canal y en que instante—**.
 
 `build_payload` esta aqui y no alli por una razon concreta: sella

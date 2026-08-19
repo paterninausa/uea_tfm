@@ -1,27 +1,17 @@
 """
-Cliente de Apicurio Schema Registry y formato de serializacion en Kafka.
+Cliente del registro de esquemas Apicurio y formato de cable de los eventos.
 
-Lo usan tanto el bridge MQTT->Kafka (productor) como el job de Spark
-(consumidor), de modo que ambos extremos comparten una unica definicion del
-formato del mensaje y no puedan divergir.
+Dos cosas que van juntas porque una depende de la otra: resolver el esquema Avro
+vigente contra Apicurio, y la cabecera de 5 bytes —byte magico 0x00 mas el
+`globalId` en big-endian— que precede al payload Avro schemaless. Sin esa
+cabecera, el consumidor tendria que asumir con que version se escribio cada
+mensaje; con ella, cada evento declara la suya.
 
-FORMATO DEL MENSAJE EN KAFKA
-----------------------------
-Cada mensaje del topico iot.telemetry.raw se compone de:
-
-    [ 1 byte  ] byte magico, siempre 0x00
-    [ 4 bytes ] globalId del esquema en Apicurio, entero big-endian sin signo
-    [ resto   ] payload Avro binario (schemaless: sin cabecera de fichero Avro)
-
-Es el formato de cable de Confluent, adoptado aqui como estandar de facto del
-ecosistema Kafka. La alternativa era enviar el Avro "pelado", sin cabecera,
-pero entonces el consumidor tendria que asumir con que esquema se escribio cada
-mensaje. Con la cabecera, **cada evento declara la version de esquema con la
-que fue serializado**, que es justo lo que permite que conviva mas de una
-version en el mismo topico durante una evolucion de esquema (Objetivo 2).
-
-Los 4 bytes limitan el globalId a 2^32-1, holgado de sobra: Apicurio los asigna
-de forma incremental por artefacto registrado.
+NO CONFUNDIR CON `pipeline/schemas/register_schema.py`. Aquel es el script que
+REGISTRA el contrato y sus reglas, y se ejecuta a mano cuando el esquema cambia.
+Este es la biblioteca que LEE el registro, y la importan el bridge, el job de
+Spark y el informe de KPIs en cada arranque. Se llamaba `schema_registry.py`, que
+era practicamente el mismo nombre al reves.
 """
 
 import json

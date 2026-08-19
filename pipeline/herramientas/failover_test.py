@@ -37,14 +37,14 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.conexiones import (  # noqa: E402
+from common.connection_args import (  # noqa: E402
     POSTGRES,
     TIMESCALE,
     anadir_argumentos_bd,
     props_bd,
 )
 from common.logging_setup import DIRECTORIO_LOGS, configurar_logging  # noqa: E402
-from common.proceso import evento_de_parada  # noqa: E402
+from common.stop_event import evento_de_parada  # noqa: E402
 
 logger = logging.getLogger("failover_test")
 

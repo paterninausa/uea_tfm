@@ -1,7 +1,8 @@
 """
-Parametros de conexion a las bases de datos y a Kafka, en un solo sitio.
+Argumentos de conexion a las bases de datos y a Kafka, en un solo sitio.
 
-Los comparten el job de Spark y las cuatro herramientas de `herramientas/`. Sin
+Los comparten CINCO piezas: el job de Spark y las cuatro herramientas de
+`herramientas/`. Sin
 esto, cada uno declararia sus propios `--timescale-host`, `--postgres-port`,
 `--db-password`... y bastaria con que uno quedara desactualizado para que una
 medicion fuera contra una base de datos distinta de la que escribe el pipeline,

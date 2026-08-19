@@ -56,14 +56,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from spark.escritura import load_reference_tables, make_upsert_writer  # noqa: E402
 from spark.supervision import RegistroProgreso, asegurar_tabla_progreso, supervisar  # noqa: E402
 
-from common.conexiones import (  # noqa: E402
+from common.connection_args import (  # noqa: E402
     POSTGRES,
     TIMESCALE,
     anadir_argumentos_bd,
     props_bd,
 )
 from common.logging_setup import configurar_logging  # noqa: E402
-from common.schema_registry import (  # noqa: E402
+from common.apicurio import (  # noqa: E402
     DEFAULT_ARTIFACT,
     DEFAULT_GROUP,
     DEFAULT_REGISTRY_URL,

@@ -39,7 +39,7 @@ from kafka.errors import KafkaError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.logging_setup import configurar_logging  # noqa: E402
-from common.schema_registry import (  # noqa: E402
+from common.apicurio import (  # noqa: E402
     DEFAULT_ARTIFACT,
     DEFAULT_GROUP,
     DEFAULT_REGISTRY_URL,

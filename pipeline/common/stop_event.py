@@ -1,5 +1,5 @@
 """
-Parada ordenada de los procesos de larga duracion del pipeline.
+Senal de parada para los procesos de larga duracion.
 
 Simulador, generador de carga y prueba de recuperacion se interrumpen con Ctrl-C
 a mitad de una medicion mas veces de las que se completan, y los tres necesitan

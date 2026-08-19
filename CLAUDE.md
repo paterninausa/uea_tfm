@@ -211,7 +211,7 @@ Funcionando: stack completo en Docker; preparación de datos (tres Parquet: hech
 
 **El job de Spark son tres módulos**, cada uno con una responsabilidad: `telemetry_streaming.py` (qué se calcula), `escritura.py` (cómo se persiste, con el UPSERT y sus reintentos) y `supervision.py` (progreso de micro-lote y vigilancia de las consultas). Antes era un fichero de 871 líneas donde más de la mitad no era lógica de streaming.
 
-**Código compartido, en `pipeline/common/`**: `replay.py` (interpretación del dataset, que comparten simulador y generador), `logging_setup.py`, `conexiones.py`, `metrics.py` y `proceso.py`. El criterio es que nada que usen dos piezas viva duplicado en ambas.
+**Código compartido, en `pipeline/common/`**: `logging_setup.py`, `connection_args.py`, `apicurio.py` y `stop_event.py`. La interpretación del dataset vive en `simulator/telemetry_dataset.py`, junto a su único consumidor. El criterio es que nada que usen dos piezas viva duplicado en ambas.
 
 **Registro de actividad**: todos los procesos escriben en `pipeline/logs/<nombre>.log` además de por consola, con la orden completa en la cabecera de cada arranque. Rotan a 3 MB × 3. No se versionan.
 
