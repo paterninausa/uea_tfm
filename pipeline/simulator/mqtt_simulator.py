@@ -67,19 +67,58 @@ import aiomqtt
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.logging_setup import configurar_logging  # noqa: E402
 from common.proceso import evento_de_parada_async  # noqa: E402
-from common.replay import (  # noqa: E402
-    anadir_argumentos_dataset,
-    anadir_argumentos_mqtt,
-    build_payload,
-    build_topic,
-    preparar,
-)
+from common.replay import anadir_argumentos_dataset, preparar  # noqa: E402
 
 logger = logging.getLogger("mqtt_simulator")
+
+TOPIC_TEMPLATE = "iot/{building_id}/{meter_type}/telemetry"
 
 # Cadencia del contador real, en segundos. Es la constante de la que sale todo:
 # el factor de aceleracion, la tasa agregada y el escalonado entre sensores.
 PERIODO_SENSOR_S = 3600.0
+
+
+def build_topic(fila) -> str:
+    """Topico del sensor que emite esta lectura.
+
+    EL TOPICO SOLO IDENTIFICA AL SENSOR. No lleva nivel de emplazamiento:
+    `site_id` es derivable de `building_id` a traves de la tabla de dimension.
+    Ponerlo tambien aqui creaba una segunda fuente de verdad —topico y dimension
+    podrian discrepar si un edificio se reasignara— sin que nada lo consumiera:
+    el bridge se suscribe a `iot/#` y nunca parte el topico. El emplazamiento
+    entra en el analisis donde importa, en el broadcast join de Spark.
+    """
+    return TOPIC_TEMPLATE.format(building_id=fila.building_id, meter_type=fila.meter_type)
+
+
+def build_payload(fila) -> dict:
+    """Mensaje con los campos del contrato y nada mas.
+
+    `timestamp` se envia como cadena ISO-8601 y el bridge lo convierte a epoch en
+    milisegundos, que es lo que declara el esquema Avro. Se mantiene en ISO aqui
+    porque hace legible el trafico al depurar con `mosquitto_sub`.
+
+    `sim_publish_ts` se sella AL CONSTRUIR EL MENSAJE, no al leer el dataset: es
+    el instante real de emision y el origen de tiempo del KPI de latencia del
+    Objetivo 1. Por eso esta funcion vive en el productor y no en el modulo que
+    interpreta los datos: lo que hace no es leer una fila, es emitirla.
+    """
+    return {
+        "building_id": int(fila.building_id),
+        "meter_type": str(fila.meter_type),
+        "timestamp": fila.timestamp.isoformat(),
+        "meter_reading": float(fila.meter_reading),
+        "sim_publish_ts": int(time.time() * 1000),
+    }
+
+
+def anadir_argumentos_mqtt(p: argparse.ArgumentParser, client_id: str) -> None:
+    """Conexion al broker."""
+    p.add_argument("--broker-host", default="localhost")
+    p.add_argument("--broker-port", type=int, default=1883)
+    p.add_argument("--client-id", default=client_id)
+    p.add_argument("--qos", type=int, default=1, choices=[0, 1, 2],
+                   help="QoS MQTT (1 por defecto, ver Objetivo 1)")
 
 
 class Contadores:

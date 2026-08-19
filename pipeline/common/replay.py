@@ -1,47 +1,33 @@
 """
-Reproduccion del dataset historico como mensajes MQTT.
+Interpretacion del dataset historico de ASHRAE.
 
 Aqui vive todo lo que significa "convertir el Parquet de ASHRAE en trafico de
-sensores": que subconjunto se publica, con que marcas de tiempo, en que topico y
-con que payload.
+sensores": que subconjunto se reproduce y con que marcas de tiempo lo hace.
 
-Esta separado de `pipeline/simulator/mqtt_simulator.py` porque son dos cosas
-distintas: este modulo INTERPRETA el dataset y el simulador lo EMITE por MQTT. La
-frontera se nota en que aqui no hay ni una linea de protocolo, y alli no hay
-ninguna decision sobre los datos.
+AQUI NO SE SABE QUE EXISTE MQTT. Este modulo decide QUE filas se reproducen y
+con que marcas de tiempo; el topico, el payload y la conexion son cosa del
+productor, en `pipeline/simulator/mqtt_simulator.py`. La frontera se nota en que
+aqui no hay una sola linea de protocolo, y alli no hay ninguna decision sobre los
+datos.
 
-Hubo un segundo productor —un generador de carga asincrono— que tambien lo usaba.
-Se retiro en agosto de 2026 al asumir el simulador su funcion, pero la separacion
-se mantiene: el orden en que se aplican el filtrado, el recorte y el rebase
-temporal es una decision con consecuencias medidas, y merece un sitio propio
-donde este documentada y no mezclada con el codigo de publicacion.
+Vive aparte del simulador —aunque hoy sea su unico consumidor— porque el orden en
+que se aplican el filtrado, el recorte y el rebase temporal es una decision con
+consecuencias medidas, y merece un sitio donde este documentada y no mezclada con
+el codigo de publicacion.
 
 UN SENSOR ES EL PAR (edificio, tipo de contador). Un mismo edificio con contador
 de electricidad y de agua fria son dos sensores con series independientes; el
 subconjunto en uso tiene 652.
-
-EL TOPICO SOLO IDENTIFICA AL SENSOR. No lleva nivel de emplazamiento: `site_id`
-es derivable de `building_id` a traves de la tabla de dimension. Ponerlo tambien
-en el topico creaba una segunda fuente de verdad —topico y dimension podrian
-discrepar si un edificio se reasignara— sin que nada lo consumiera: el bridge se
-suscribe a `iot/#` y nunca parte el topico. El emplazamiento entra en el analisis
-donde importa, en el broadcast join de Spark contra la dimension.
-
-EL PAYLOAD SOLO LLEVA LO QUE EMITIRIA EL CONTADOR: identidad, instante y medida,
-mas `sim_publish_ts`.
 """
 
 import argparse
 import logging
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
-
-TOPIC_TEMPLATE = "iot/{building_id}/{meter_type}/telemetry"
 
 RUTA_TELEMETRIA = Path(__file__).resolve().parents[1] / "data" / "ashrae_telemetry.parquet"
 
@@ -50,8 +36,12 @@ RUTA_TELEMETRIA = Path(__file__).resolve().parents[1] / "data" / "ashrae_telemet
 # Seleccion del subconjunto a publicar
 # --------------------------------------------------------------------------
 def cargar(telemetry_path: Path) -> pd.DataFrame:
-    """Carga la tabla de hechos. No necesita la dimension: el topico se
-    construye solo con los campos que emite el propio contador."""
+    """Carga la tabla de hechos.
+
+    No necesita la dimension de edificios: todo lo que identifica a un contador
+    —`building_id` y `meter_type`— viaja ya en la propia lectura. El resto de
+    atributos los incorpora Spark mas adelante con un broadcast join.
+    """
     if not telemetry_path.exists():
         raise FileNotFoundError(
             f"No se encontro {telemetry_path}. Genera los datos primero: "
@@ -153,36 +143,6 @@ def preparar(telemetry_path: Path | None = None, max_sensores: int | None = None
     return df
 
 
-# --------------------------------------------------------------------------
-# Mensaje MQTT
-# --------------------------------------------------------------------------
-def build_topic(fila) -> str:
-    return TOPIC_TEMPLATE.format(building_id=fila.building_id, meter_type=fila.meter_type)
-
-
-def build_payload(fila) -> dict:
-    """Payload con los campos del contrato y nada mas.
-
-    `timestamp` se envia como cadena ISO-8601 y el bridge lo convierte a epoch
-    en milisegundos, que es lo que declara el esquema Avro. Se mantiene en ISO
-    aqui porque hace legible el trafico al depurar con `mosquitto_sub`.
-
-    `sim_publish_ts` se sella en el momento de construir el mensaje, no al cargar
-    el dataset: es el origen de tiempo del KPI de latencia del Objetivo 1 y el
-    unico campo del payload que no emite el contador.
-    """
-    return {
-        "building_id": int(fila.building_id),
-        "meter_type": str(fila.meter_type),
-        "timestamp": fila.timestamp.isoformat(),
-        "meter_reading": float(fila.meter_reading),
-        "sim_publish_ts": int(time.time() * 1000),
-    }
-
-
-# --------------------------------------------------------------------------
-# Argumentos comunes a los dos productores
-# --------------------------------------------------------------------------
 def anadir_argumentos_dataset(p: argparse.ArgumentParser) -> None:
     """Opciones de seleccion del subconjunto, identicas en ambos productores."""
     p.add_argument("--telemetry", type=Path, default=RUTA_TELEMETRIA,
@@ -196,12 +156,3 @@ def anadir_argumentos_dataset(p: argparse.ArgumentParser) -> None:
                    help="Desplaza las marcas de tiempo para que la ultima caiga en este "
                         "instante. Para la demostracion en vivo: los datos son de 2016 y "
                         "los paneles miran a fechas recientes")
-
-
-def anadir_argumentos_mqtt(p: argparse.ArgumentParser, client_id: str) -> None:
-    """Conexion al broker, identica en ambos productores."""
-    p.add_argument("--broker-host", default="localhost")
-    p.add_argument("--broker-port", type=int, default=1883)
-    p.add_argument("--client-id", default=client_id)
-    p.add_argument("--qos", type=int, default=1, choices=[0, 1, 2],
-                   help="QoS MQTT (1 por defecto, ver Objetivo 1)")

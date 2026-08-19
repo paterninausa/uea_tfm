@@ -142,12 +142,21 @@ broker.
 
 ## De donde sale lo que publica
 
-La interpretacion del dataset —que subconjunto, con que marcas de tiempo, en que
-topico y con que payload— vive en `pipeline/common/replay.py`, no aqui. La
-comparten este simulador y el generador de carga asincrono: si cada uno
-interpretara los datos a su manera, lo que mide uno y lo que mide el otro no
-serian comparables. El orden en que se aplican el filtrado, el recorte y el
-rebase esta encapsulado ahi por el mismo motivo.
+La frontera con `pipeline/common/replay.py` es esta:
+
+| Aqui, en el simulador | En `replay.py` |
+|---|---|
+| `build_topic()`, `build_payload()` — como se serializa un mensaje | `preparar()` — que filas se reproducen y con que marcas |
+| `repartir()` — que sensores van en cada conexion | `filtrar_sensores()` — cuales entran, en orden determinista |
+| `_programa()` — cuando publica cada sensor | `rebasar()` — a que instante se anclan las marcas |
+| Los argumentos del broker: host, puerto, QoS | Los argumentos del dataset: fichero, limite, sensores |
+
+Dicho corto: **replay es el guion —que se dice y en que orden— y el simulador son
+los actores y el reloj —quien lo dice, por que canal y en que instante—**.
+
+`build_payload` esta aqui y no alli por una razon concreta: sella
+`sim_publish_ts` con el instante REAL de emision, que es el origen de tiempo del
+KPI de latencia. Lo que hace no es leer una fila, es emitirla.
 
 ## Estado verificado
 
