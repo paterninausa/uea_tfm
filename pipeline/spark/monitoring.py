@@ -5,9 +5,20 @@ Dos cosas que el job hace sobre SI MISMO, no sobre los datos: registrar cuanto
 tarda cada micro-lote —la fuente del KPI del Objetivo 3— y comprobar que sus
 consultas siguen vivas, relanzando la que caiga.
 
-Separado de `telemetry_streaming.py` por la misma razon que `database_writers.py`: alli
-esta el procesamiento, aqui la instrumentacion y la resiliencia. Son cosas que se
-leen, se prueban y se cambian por separado.
+Separado de `telemetry_streaming.py` por la misma razon que
+`database_writers.py`: alli esta el procesamiento, aqui la instrumentacion y la
+resiliencia.
+
+MEDIR Y VIGILAR CONVIVEN AQUI A PROPOSITO. Son dos usos de la misma observacion
+—el informe de progreso que Spark publica para cada micro-lote—: uno lo persiste
+y el otro reacciona a lo que ve. Separarlos en dos ficheros obligaria a leer ese
+informe dos veces, y ademas el supervisor tiene que avisar al registro cada vez
+que relanza una consulta, porque el objeto StreamingQuery resultante es otro y el
+registro se quedaria sondeando uno muerto.
+
+El fichero esta dividido en tres secciones marcadas: leer el progreso,
+registrarlo y vigilar. Si alguna vez crece de mas, esa es la linea por donde
+partirlo.
 """
 
 import logging
@@ -19,8 +30,10 @@ logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------
-# Progreso de micro-lote: KPI 3
+# Lectura del progreso
 # --------------------------------------------------------------------------
+# Extraer de los informes que Spark ya produce lo que interesa. Nada de esto
+# consulta a nadie: el dato viene en `recentProgress`.
 DDL_PROGRESO = (Path(__file__).resolve().parents[1]
                 / "docker/timescaledb/init/02_streaming_progress.sql")
 
@@ -86,6 +99,12 @@ def _offsets_pendientes(progreso: dict) -> int | None:
     return None
 
 
+# --------------------------------------------------------------------------
+# Registro en TimescaleDB: la fuente del KPI 3
+# --------------------------------------------------------------------------
+# Persistir el progreso de cada micro-lote. Sin esto vive solo en memoria y
+# desaparece al terminar el job, de modo que el KPI no se puede comprobar
+# despues de la ejecucion.
 class RegistroProgreso:
     """Vuelca a TimescaleDB el progreso de cada micro-lote.
 
@@ -119,37 +138,6 @@ class RegistroProgreso:
         congelado justo despues de una recuperacion.
         """
         self.consultas = list(consultas)
-
-    def _avisar_si_procede(self, nombre: str, progreso: dict,
-                           descartados: int | None, atraso: int | None) -> None:
-        """Convierte en aviso lo que si no seria una ausencia silenciosa.
-
-        Los dos casos que vigila se detectaron en agosto de 2026 por casualidad
-        —una tabla vacia y otra congelada—, no porque el sistema los dijera. Un
-        log que solo registra actividad no puede delatar lo que NO ocurre.
-        """
-        if descartados:
-            acumulado = self._descartados_avisados.get(nombre, 0)
-            if descartados > acumulado:
-                logger.warning(
-                    "[%s] SPARK ESTA DESCARTANDO EVENTOS POR TARDIOS: %d en este lote. "
-                    "El watermark ya paso su tiempo de evento; si se reprodujo el dataset "
-                    "otra vez con --rebase-end, los agregados de esas ventanas no se "
-                    "escribiran", nombre, descartados)
-                self._descartados_avisados[nombre] = descartados
-
-        # Una consulta atascada no da error: simplemente deja de consumir
-        # mientras Kafka sigue acumulando. Se exige que el atraso persista varios
-        # volcados seguidos para no avisar por un pico normal de carga.
-        if atraso is not None and atraso > self.umbral_atraso and not progreso.get("numInputRows"):
-            self._volcados_atascada[nombre] = self._volcados_atascada.get(nombre, 0) + 1
-            if self._volcados_atascada[nombre] >= 3:
-                logger.warning(
-                    "[%s] LA CONSULTA NO CONSUME MIENTRAS KAFKA ACUMULA: %d mensajes "
-                    "pendientes y cero filas de entrada en los ultimos %d informes",
-                    nombre, atraso, self._volcados_atascada[nombre])
-        else:
-            self._volcados_atascada[nombre] = 0
 
     def volcar(self) -> int:
         import psycopg2
@@ -229,6 +217,46 @@ class RegistroProgreso:
         threading.Thread(target=bucle, daemon=True).start()
 
 
+    # --- Vigilancia -------------------------------------------------------
+    # Lo que sigue no mide, reacciona: convierte en aviso lo que de otro modo
+    # seria una ausencia. Vive en esta clase porque trabaja sobre el mismo
+    # informe que se acaba de leer, sin volver a pedirlo.
+
+    def _avisar_si_procede(self, nombre: str, progreso: dict,
+                           descartados: int | None, atraso: int | None) -> None:
+        """Convierte en aviso lo que si no seria una ausencia silenciosa.
+
+        Los dos casos que vigila se detectaron en agosto de 2026 por casualidad
+        —una tabla vacia y otra congelada—, no porque el sistema los dijera. Un
+        log que solo registra actividad no puede delatar lo que NO ocurre.
+        """
+        if descartados:
+            acumulado = self._descartados_avisados.get(nombre, 0)
+            if descartados > acumulado:
+                logger.warning(
+                    "[%s] SPARK ESTA DESCARTANDO EVENTOS POR TARDIOS: %d en este lote. "
+                    "El watermark ya paso su tiempo de evento; si se reprodujo el dataset "
+                    "otra vez con --rebase-end, los agregados de esas ventanas no se "
+                    "escribiran", nombre, descartados)
+                self._descartados_avisados[nombre] = descartados
+
+        # Una consulta atascada no da error: simplemente deja de consumir
+        # mientras Kafka sigue acumulando. Se exige que el atraso persista varios
+        # volcados seguidos para no avisar por un pico normal de carga.
+        if atraso is not None and atraso > self.umbral_atraso and not progreso.get("numInputRows"):
+            self._volcados_atascada[nombre] = self._volcados_atascada.get(nombre, 0) + 1
+            if self._volcados_atascada[nombre] >= 3:
+                logger.warning(
+                    "[%s] LA CONSULTA NO CONSUME MIENTRAS KAFKA ACUMULA: %d mensajes "
+                    "pendientes y cero filas de entrada en los ultimos %d informes",
+                    nombre, atraso, self._volcados_atascada[nombre])
+        else:
+            self._volcados_atascada[nombre] = 0
+
+
+# --------------------------------------------------------------------------
+# Vigilancia de las consultas y relanzado
+# --------------------------------------------------------------------------
 def supervisar(arrancadores: dict, intervalo: float, max_reinicios: int,
                registro=None) -> int:
     """Vigila todas las consultas y relanza la que se caiga, sin tocar las demas.
