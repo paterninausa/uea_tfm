@@ -238,6 +238,30 @@ El job permanecio vivo en ambos casos. Objetivo 5: recuperacion < 60 s.
 
 ## Invariantes: registrar lo que NO ocurre
 
+`database_writers.py` vigila una tercera, en el propio UPSERT: **la colision de
+clave natural**.
+
+Deduplicar el micro-lote es obligatorio —PostgreSQL aborta con
+CardinalityViolation si la misma clave aparece dos veces en la misma sentencia—
+y las repeticiones son normales, porque la cadena MQTT QoS 1 mas los reintentos
+del productor dan garantia at-least-once. Pero `dropDuplicates` confundia dos
+casos muy distintos:
+
+| Caso | Que es | Que hacer |
+|---|---|---|
+| Misma clave, **misma medida** | Reentrega del mismo evento | Quedarse con una. Normal, sin aviso |
+| Misma clave, **medida distinta** | Dos lecturas reales compitiendo | Una se pierde. **Hay que gritarlo** |
+
+Se distinguen comparando solo las columnas del dominio. No vale comparar las
+filas enteras: desde que el simulador reintenta lo no confirmado, un evento
+reenviado tras reconectar trae un `sim_publish_ts` nuevo siendo el mismo evento,
+y eso marcaria como colision cada reentrega legitima.
+
+No cuesta una pasada extra: el escritor ya recogia las filas al driver, asi que
+se recogen sin deduplicar y se agrupan alli mismo.
+
+
+
 De los fallos que aparecieron probando este pipeline, los peores no producian
 ninguna excepcion: eran ausencias. Un log que registra actividad —"publicados=N",
 "batch 12 escrito"— sirve para reconstruir que paso despues del incidente, pero

@@ -21,6 +21,45 @@ from pyspark.sql import DataFrame, SparkSession
 logger = logging.getLogger(__name__)
 
 
+# Columna de instrumentacion, no del dominio: la sella el productor en el momento
+# de emitir, asi que un evento reenviado tras una reconexion trae una distinta
+# siendo el mismo evento. Comparar filas enteras marcaria esas reentregas
+# legitimas como colisiones.
+COLUMNAS_INSTRUMENTACION = ("sim_publish_ts", "ingested_at", "max_sim_publish_ts")
+
+
+def _deduplicar(filas: list, columnas: list[str], claves: list[str]) -> tuple[list, list]:
+    """Quita las claves repetidas y delata las que no son reentregas.
+
+    Deduplicar es OBLIGATORIO, no una optimizacion: PostgreSQL aborta con
+    CardinalityViolation si la misma clave aparece dos veces en la misma
+    sentencia, y las repeticiones son normales —la cadena MQTT QoS 1 mas los
+    reintentos del productor de Kafka dan garantia at-least-once, asi que un
+    mismo evento puede llegar dos veces y caer en el mismo micro-lote—.
+
+    Lo que no es normal es que dos lecturas DISTINTAS compartan clave natural:
+    eso incumple el contrato —la terna se verifico unica sobre los 5,68 millones
+    de eventos— y significa que una medida real se esta perdiendo. Se distinguen
+    comparando solo las columnas del dominio, no las de instrumentacion.
+    """
+    indices_clave = [columnas.index(c) for c in claves]
+    indices_dominio = [i for i, c in enumerate(columnas)
+                       if c not in claves and c not in COLUMNAS_INSTRUMENTACION]
+
+    por_clave: dict[tuple, object] = {}
+    colisiones: list[tuple] = []
+    for fila in filas:
+        clave = tuple(fila[i] for i in indices_clave)
+        previa = por_clave.get(clave)
+        if previa is not None:
+            medida_previa = tuple(previa[i] for i in indices_dominio)
+            medida_actual = tuple(fila[i] for i in indices_dominio)
+            if medida_previa != medida_actual:
+                colisiones.append((clave, (medida_previa, medida_actual)))
+        por_clave[clave] = fila
+    return list(por_clave.values()), colisiones
+
+
 def make_upsert_writer(props: dict, table: str, conflict_cols: list[str],
                        reintentos: int = 5, espera_reintento: float = 3.0):
     """Devuelve una funcion foreachBatch que hace UPSERT en PostgreSQL.
@@ -52,11 +91,19 @@ def make_upsert_writer(props: dict, table: str, conflict_cols: list[str],
         # at-least-once, asi que un mismo event_id puede llegar mas de una vez
         # y caer en el mismo micro-lote. Como los duplicados son reentregas del
         # mismo evento, quedarse con cualquiera de ellos es equivalente.
-        deduplicado = batch_df.dropDuplicates(conflict_cols)
-        filas = deduplicado.collect()
+        # Se recoge SIN deduplicar y se agrupa aqui, en vez de usar
+        # dropDuplicates: cuesta lo mismo —una sola pasada, y el lote son unos
+        # cientos de filas— y permite distinguir los dos casos que
+        # dropDuplicates confunde en silencio.
+        columnas = batch_df.columns
+        filas, colisiones = _deduplicar(batch_df.collect(), columnas, conflict_cols)
         if not filas:
             return
-        columnas = deduplicado.columns
+
+        for clave, medidas in colisiones:
+            logger.error("[batch %d] COLISION DE CLAVE NATURAL en %s: %s comparte %s con "
+                         "medidas distintas %s. Se escribe una y la otra SE PIERDE",
+                         batch_id, table, clave, conflict_cols, medidas)
 
         def a_utc(valor):
             """Marca explicitamente como UTC los datetime sin zona.
