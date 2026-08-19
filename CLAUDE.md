@@ -209,7 +209,7 @@ Funcionando: stack completo en Docker; preparación de datos (tres Parquet: hech
 
 **`load_generator.py` se retiró y no debe volver.** Alcanzaba tasas altas con una ventana de mensajes en vuelo: N publicaciones sin confirmar desde un único cliente. Era un artificio para que un cliente hiciera el trabajo de 652, y `--clients` consigue lo mismo sin inventar nada. Se comprobó además que con ventana 1 se comportaba exactamente igual que el simulador: eran el mismo programa con dos nombres.
 
-**El job de Spark son tres módulos**, cada uno con una responsabilidad: `telemetry_streaming.py` (qué se calcula), `escritura.py` (cómo se persiste, con el UPSERT y sus reintentos) y `supervision.py` (progreso de micro-lote y vigilancia de las consultas). Antes era un fichero de 871 líneas donde más de la mitad no era lógica de streaming.
+**El job de Spark son tres módulos**, cada uno con una responsabilidad: `telemetry_streaming.py` (qué se calcula), `database_writers.py` (cómo se persiste, con el UPSERT y sus reintentos) y `monitoring.py` (progreso de micro-lote y vigilancia de las consultas). Antes era un fichero de 871 líneas donde más de la mitad no era lógica de streaming.
 
 **Código compartido, en `pipeline/common/`**: `logging_setup.py`, `connection_args.py`, `apicurio.py` y `stop_event.py`. La interpretación del dataset vive en `simulator/telemetry_dataset.py`, junto a su único consumidor. El criterio es que nada que usen dos piezas viva duplicado en ambas.
 

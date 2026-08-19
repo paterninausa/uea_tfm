@@ -5,7 +5,7 @@ Dos cosas que el job hace sobre SI MISMO, no sobre los datos: registrar cuanto
 tarda cada micro-lote —la fuente del KPI del Objetivo 3— y comprobar que sus
 consultas siguen vivas, relanzando la que caiga.
 
-Separado de `telemetry_streaming.py` por la misma razon que `escritura.py`: alli
+Separado de `telemetry_streaming.py` por la misma razon que `database_writers.py`: alli
 esta el procesamiento, aqui la instrumentacion y la resiliencia. Son cosas que se
 leen, se prueban y se cambian por separado.
 """
