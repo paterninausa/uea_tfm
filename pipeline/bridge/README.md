@@ -50,6 +50,19 @@ los mensajes**, el productor los repartia en round-robin y el orden por sensor s
 perdia sin un solo error en el log. Con acceso directo, un evento que no traiga
 esos campos no cumple el contrato y acaba en la DLQ, que es donde debe acabar.
 
+**Dos guardas de dominio, ademas de la validacion de esquema.** Avro comprueba la
+FORMA —que los campos esten y sean del tipo declarado— pero no el significado. Se
+verifico que pasan sin objecion un `meter_reading` de 1e308, uno negativo y una
+marca de tiempo del ano 2099:
+
+| Guarda | Por que |
+|---|---|
+| `timestamp` no futuro (margen de 5 min, `--margen-futuro`) | Es el caso que mas dano hace y no da ningun error: Spark adelanta su watermark a esa fecha y **descarta como tardio todo el trafico legitimo posterior**. El pipeline sigue vivo, los contadores dicen que todo va bien y los agregados dejan de escribirse |
+| `meter_reading` finito y no negativo | Un valor negativo no existe en un contador, y un infinito o un NaN arruinan la suma y la media de toda la ventana en la que caigan |
+
+No hay limite por abajo en la fecha a proposito: el simulador reproduce el
+historico de 2016 y sus marcas son legitimamente antiguas.
+
 **El backoff de reconexion esta acotado a 5 segundos.** Por defecto paho lo
 aumenta exponencialmente hasta 120 s, y eso costaba datos: tras una caida de 15 s
 el broker volvia pero el bridge tardaba 17 s mas en resuscribirse, y en esa

@@ -23,6 +23,8 @@ Uso:
 import argparse
 import json
 import logging
+import math
+import re
 import signal
 import sys
 import threading
@@ -74,6 +76,57 @@ def iso_to_epoch_millis(value: str) -> int:
     return int(dt.timestamp() * 1000)
 
 
+def _clase_de_motivo(motivo: str) -> str:
+    """Quita los valores concretos para que el desglose agrupe de verdad.
+
+    Sin esto, "timestamp en el futuro (2099-01-01...)" y "timestamp en el futuro
+    (2027-01-01...)" cuentan como dos motivos distintos, y con trafico real el
+    resumen se convertiria en cientos de lineas de "1 x ...". El valor exacto no
+    se pierde: va integro al registro de la DLQ y al aviso individual de cada
+    rechazo.
+    """
+    return re.sub(r"\([^)]*\)|'[^']*'|\"[^\"]*\"", "...", motivo)
+
+
+def validar_dominio(evento: dict, margen_futuro_s: float) -> None:
+    """Comprueba lo que el esquema Avro NO puede comprobar.
+
+    Avro valida la FORMA —que los campos esten y sean del tipo declarado— pero
+    no el significado. Se comprobo que pasan sin objecion un `meter_reading` de
+    1e308, uno negativo y una marca de tiempo del ano 2099.
+
+    Las dos guardas de aqui cubren los dos casos que hacen dano de verdad:
+
+    FECHA FUTURA. Es el peor de todos y no da ningun error: Spark adelanta su
+    watermark a ese instante y **descarta como tardio todo el trafico legitimo
+    que llegue despues**. El pipeline sigue vivo, los contadores del bridge
+    dicen que todo va bien, y los agregados simplemente dejan de escribirse.
+    Ningun contador puede medir manana; se admite un margen pequeno por
+    desajuste de relojes.
+
+    No se pone limite por abajo a proposito: el simulador reproduce el historico
+    de 2016 y sus marcas son legitimamente antiguas.
+
+    LECTURA IMPOSIBLE. Un valor negativo no existe en un contador, y un infinito
+    o un NaN arruinan la suma y la media de toda la ventana en la que caigan: un
+    solo evento basta para dejar sin sentido un agregado horario completo.
+    """
+    marca = evento.get("timestamp")
+    if isinstance(marca, int):
+        limite = (time.time() + margen_futuro_s) * 1000
+        if marca > limite:
+            raise ValueError(
+                f"timestamp en el futuro ({datetime.fromtimestamp(marca / 1000, timezone.utc)}), "
+                f"lo que envenenaria el watermark de Spark")
+
+    lectura = evento.get("meter_reading")
+    if isinstance(lectura, (int, float)):
+        if not math.isfinite(lectura):
+            raise ValueError(f"meter_reading no finito ({lectura})")
+        if lectura < 0:
+            raise ValueError(f"meter_reading negativo ({lectura}), imposible en un contador")
+
+
 class Stats:
     """Contadores del bridge, base de la evidencia de los KPIs.
 
@@ -110,7 +163,7 @@ class Stats:
             # despues el topico: el bridge ya sabe por que rechazo cada evento y
             # asi el desglose sale en el log del proceso que lo produjo, sin
             # depender de que alguien vaya a mirar la DLQ.
-            self.motivos[motivo] += 1
+            self.motivos[_clase_de_motivo(motivo)] += 1
 
     def fallo_kafka(self):
         with self._lock:
@@ -211,6 +264,7 @@ class Bridge:
         self.stats.recibido()
         try:
             evento = self._a_registro_avro(msg.payload)
+            validar_dominio(evento, self.args.margen_futuro)
             self._publicar(evento, msg.topic)
         except Exception as exc:
             self._a_dlq(msg, exc)
@@ -388,6 +442,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--registry-url", default=DEFAULT_REGISTRY_URL)
     p.add_argument("--group", default=DEFAULT_GROUP)
     p.add_argument("--artifact", default=DEFAULT_ARTIFACT)
+    p.add_argument("--margen-futuro", type=float, default=300.0,
+                   help="Segundos de adelanto tolerados en el timestamp de un evento. Por "
+                        "encima se rechaza a la DLQ: una fecha futura envenena el watermark "
+                        "de Spark y hace que se descarte todo el trafico posterior")
     p.add_argument("--report-interval", type=float, default=10.0,
                    help="Segundos entre informes de metricas")
     p.add_argument("--verbose", action="store_true")
