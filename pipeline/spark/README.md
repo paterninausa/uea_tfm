@@ -10,6 +10,21 @@ iot.telemetry.raw --------+
    (Avro + cabecera)      +--> enriquecimiento --------> PostgreSQL --> Power BI
 ```
 
+## Tres modulos, tres responsabilidades
+
+El job estaba en un solo fichero de 871 lineas, y mas de la mitad no era logica
+de streaming sino fontaneria. Se partio en:
+
+| Modulo | Lineas | De que responde |
+|---|---|---|
+| `telemetry_streaming.py` | 510 | QUE se calcula: leer Kafka, decodificar Avro, enriquecer, agregar por ventana y orquestar |
+| `escritura.py` | 183 | COMO se persiste: el UPSERT idempotente con sus reintentos y la carga de las tablas de referencia. No sabe de Spark mas alla de recibir un DataFrame resuelto |
+| `supervision.py` | 220 | Lo que el job hace sobre SI MISMO: registrar el progreso de cada micro-lote y vigilar que sus consultas sigan vivas |
+
+La frontera es util al leer un fallo: los mensajes salen etiquetados con su
+modulo (`spark.escritura`, `spark.supervision`), asi que se ve de un vistazo si
+el problema esta en el calculo, en la base de datos o en la vigilancia.
+
 ## Por que dos consultas y no una
 
 Son dos consultas de streaming **independientes** sobre el mismo topico, cada
