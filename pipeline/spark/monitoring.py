@@ -120,7 +120,8 @@ class RegistroProgreso:
     informes se solapan entre sondeos consecutivos.
     """
 
-    def __init__(self, consultas, props: dict, run_id: str, umbral_atraso: int = 1000):
+    def __init__(self, consultas, props: dict, run_id: str, umbral_atraso: int = 1000,
+                 props_eventos: dict | None = None, cada_n_volcados: int = 30):
         self.consultas = list(consultas)
         self.props = props
         self.run_id = run_id
@@ -128,6 +129,13 @@ class RegistroProgreso:
         self.umbral_atraso = umbral_atraso
         self._descartados_avisados: dict[str, int] = {}
         self._volcados_atascada: dict[str, int] = {}
+        # La comprobacion de huerfanos vive aqui porque este hilo ya conecta a la
+        # base de datos cada pocos segundos: aprovecharlo no cuesta una consulta
+        # nueva al flujo, solo una consulta SQL de vez en cuando.
+        self.props_eventos = props_eventos
+        self.cada_n_volcados = cada_n_volcados
+        self._volcados = 0
+        self._huerfanos_avisados = 0
 
     def seguir(self, consultas) -> None:
         """Actualiza la lista de consultas vigiladas.
@@ -209,6 +217,10 @@ class RegistroProgreso:
         def bucle():
             while True:
                 _time.sleep(intervalo)
+                self._volcados += 1
+                if self.props_eventos and self._volcados % self.cada_n_volcados == 0:
+                    self._revisar_huerfanos()
+
                 escritos = self.volcar()
                 if escritos:
                     logger.info("Progreso registrado: %d lotes nuevos (run_id=%s)",
@@ -221,6 +233,52 @@ class RegistroProgreso:
     # Lo que sigue no mide, reacciona: convierte en aviso lo que de otro modo
     # seria una ausencia. Vive en esta clase porque trabaja sobre el mismo
     # informe que se acaba de leer, sin volver a pedirlo.
+
+    def _revisar_huerfanos(self) -> None:
+        """Avisa de los eventos cuyo edificio no esta en la tabla de dimension.
+
+        Esos eventos entran sin problema —cumplen el esquema, asi que el bridge
+        no los rechaza— y se persisten en telemetry_events, pero la agregacion
+        los aparta: sin site_id ni primary_use no hay por donde agruparlos.
+
+        `tools/kpi_report.py` los reporta al cerrar una medicion; esto es para
+        enterarse MIENTRAS ocurre, que es cuando aun se puede corregir la
+        dimension. Se consulta cada N volcados, no en cada uno, porque no
+        deberia haber ninguno: si aparecen, o la dimension esta incompleta o
+        alguien publica edificios que no existen.
+        """
+        if not self.props_eventos:
+            return
+        import psycopg2
+
+        conn = None
+        try:
+            conn = psycopg2.connect(**self.props_eventos)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT count(*), count(DISTINCT e.building_id)
+                    FROM telemetry_events e
+                    LEFT JOIN buildings b ON b.building_id = e.building_id
+                    WHERE b.building_id IS NULL
+                """)
+                eventos, edificios = cur.fetchone()
+        except Exception as exc:
+            logger.debug("No se pudo revisar los eventos sin dimension: %s", exc)
+            return
+        finally:
+            if conn is not None:
+                conn.close()
+
+        # Solo se avisa cuando la cifra CRECE: si no, cada revision repetiria el
+        # mismo aviso hasta que alguien corrija la dimension, y el log acabaria
+        # entrenando a que se ignore.
+        if eventos and eventos > self._huerfanos_avisados:
+            logger.warning(
+                "HAY %d EVENTOS DE %d EDIFICIOS QUE NO ESTAN EN LA DIMENSION: se persisten "
+                "en telemetry_events pero quedan FUERA de los agregados, porque sin site_id "
+                "no hay por donde agruparlos. Revisa buildings o quien esta publicando",
+                eventos, edificios)
+            self._huerfanos_avisados = eventos
 
     def _avisar_si_procede(self, nombre: str, progreso: dict,
                            descartados: int | None, atraso: int | None) -> None:

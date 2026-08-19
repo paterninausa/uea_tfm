@@ -261,10 +261,19 @@ de eventos lo persiste igual, porque no necesita la dimension. Lo unico que no s
 puede hacer con el es agregarlo, y eso es correcto: sin emplazamiento ni uso no
 hay por donde agruparlo.
 
-Quien avisa es `tools/kpi_report.py`, con un LEFT JOIN entre `telemetry_events` y
-`buildings`. Se hace ahi y no en el job porque contarlos en cada micro-lote
-exigiria una accion sobre el flujo, y esto no deberia ocurrir nunca: si ocurre, o
-la dimension esta incompleta o alguien publica edificios que no existen.
+Avisan dos sitios, con proposito distinto:
+
+- **`monitoring.py`, mientras ocurre.** Cada `--revision-huerfanos` volcados de
+  progreso —por defecto uno de cada 30, o sea unos cinco minutos— lanza un LEFT
+  JOIN contra `buildings` y avisa. No cuesta una consulta nueva al flujo: ese
+  hilo ya conecta a la base de datos cada pocos segundos para volcar el
+  progreso. Solo avisa cuando la cifra CRECE, para no repetir el mismo mensaje
+  hasta que alguien corrija la dimension.
+- **`tools/kpi_report.py`, al cerrar una medicion**, con el desglose por edificio.
+
+Se hace asi y no contando en cada micro-lote porque eso exigiria una accion de
+Spark sobre el flujo, y esto no deberia ocurrir nunca: si ocurre, o la dimension
+esta incompleta o alguien publica edificios que no existen.
 
 **Si un pipeline ya quedo bloqueado por esto**, el filtro no basta: el estado de
 la agregacion guardado en el checkpoint conserva el grupo con NULL y se vuelve a

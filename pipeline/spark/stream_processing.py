@@ -461,7 +461,11 @@ def run(args: argparse.Namespace) -> int:
     if args.progress_interval:
         props_progreso = props_bd(args, TIMESCALE)
         asegurar_tabla_progreso(props_progreso)
-        registro = RegistroProgreso([], props_progreso, run_id)
+        # Se le pasa tambien la conexion a PostgreSQL para que pueda revisar
+        # periodicamente si han entrado eventos de edificios desconocidos.
+        registro = RegistroProgreso([], props_progreso, run_id,
+                                    props_eventos=props_bd(args, POSTGRES),
+                                    cada_n_volcados=args.revision_huerfanos)
         registro.arrancar(args.progress_interval)
         logger.info("Progreso de micro-lote -> TimescaleDB.streaming_progress (run_id=%s)", run_id)
 
@@ -526,6 +530,10 @@ def parse_args() -> argparse.Namespace:
                    help="Segundos entre comprobaciones de que las consultas siguen vivas")
     p.add_argument("--max-reinicios", type=int, default=3,
                    help="Veces que se relanza una consulta caida antes de abandonarla")
+    p.add_argument("--revision-huerfanos", type=int, default=30,
+                   help="Cada cuantos volcados de progreso se comprueba si hay eventos de "
+                        "edificios ausentes de la dimension. Con el intervalo por defecto, "
+                        "una vez cada cinco minutos")
     p.add_argument("--progress-interval", type=float, default=10.0,
                    help="Segundos entre volcados del progreso de micro-lote a "
                         "streaming_progress (0 = no registrar). Es la fuente del KPI de "
