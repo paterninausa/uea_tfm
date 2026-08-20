@@ -53,16 +53,6 @@ from pyspark.sql import functions as F
 from pyspark.sql.avro.functions import from_avro
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from spark.database_writers import load_reference_tables, make_upsert_writer  # noqa: E402
-from spark.monitoring import RegistroProgreso, asegurar_tabla_progreso, supervisar  # noqa: E402
-
-from common.connection_args import (  # noqa: E402
-    POSTGRES,
-    TIMESCALE,
-    anadir_argumentos_bd,
-    props_bd,
-)
-from common.logging_setup import configurar_logging  # noqa: E402
 from common.apicurio import (  # noqa: E402
     DEFAULT_ARTIFACT,
     DEFAULT_GROUP,
@@ -70,6 +60,23 @@ from common.apicurio import (  # noqa: E402
     HEADER_SIZE,
     ApicurioClient,
     SchemaRegistryError,
+)
+from common.connection_args import (  # noqa: E402
+    POSTGRES,
+    TIMESCALE,
+    anadir_argumentos_bd,
+    props_bd,
+)
+from common.logging_setup import configurar_logging  # noqa: E402
+
+from spark.database_writers import (  # noqa: E402
+    load_reference_tables,
+    make_upsert_writer,
+)
+from spark.monitoring import (  # noqa: E402
+    RegistroProgreso,
+    asegurar_tabla_progreso,
+    supervisar,
 )
 
 logger = logging.getLogger("spark_job")

@@ -55,9 +55,52 @@ Ejemplos recientes de implementación práctica de Kappa en contextos IoT incluy
 
 \subsection{Ecosistema de herramientas de código abierto en el ámbito de los datos IoT}
 
-El ecosistema de herramientas de código abierto disponibles para cada etapa del pipeline IoT ha madurado considerablemente, como ilustran las implementaciones de S. Shinde \cite{shinde2025} y G. Zefkilis \cite{zefkilis2025} comentadas en la sección anterior.
+El ecosistema de herramientas de código abierto disponibles para cada etapa del pipeline ha madurado considerablemente, como ilustran las implementaciones de S. Shinde \cite{shinde2025} y G. Zefkilis \cite{zefkilis2025} comentadas en la sección anterior.
 
-En la etapa de ingesta, los protocolos ligeros de publicación-suscripción como MQTT conviven con brokers que ofrecen puentes nativos hacia sistemas de mensajería distribuida como Apache Kafka, permitiendo desacoplar la capa de dispositivos de la capa de procesamiento.
+En la etapa de ingesta tenemos varios estándares abiertos disponibles para los protocolos de comunicación con los dispositivos IoT; entre ellos \textbf{MQTT} (ISO/IEC 20922) ofrece un modelo de publicación-suscripción por tópicos con broker central y niveles de calidad de servicio configurables, adecuado para dispositivos numerosos y de conectividad intermitente; \textbf{CoAP} sigue un modelo de petición-respuesta sobre UDP, pensado para dispositivos de recursos muy limitados, y solo incorpora publicación-suscripción mediante extensiones; \textbf{AMQP 1.0} (ISO/IEC 19464) está orientado a mensajería empresarial con mayores garantías y coste de implementación; y \textbf{DDS} adopta un modelo descentralizado sin broker, propio de sistemas de control en tiempo real.
+
+Estableciendo MQTT como protocolo para este trabajo, los brokers disponibles para la recolección de telemetría se resumen en la Tabla~\ref{tab:brokers-mqtt}.
+
+\begin{table}[ht!]
+  \centering
+  \small
+  \begin{tabular}{|l|l|l|p{5.6cm}|}
+    \hline
+    \textbf{Broker} & \textbf{Licencia} & \textbf{Lenguaje} & \textbf{Observaciones} \\ \hline
+    Eclipse Mosquitto & EPL 2.0 / EDL 1.0 & C & Implementación de referencia de la Eclipse Foundation; exclusivamente MQTT, de huella mínima \\ \hline
+    HiveMQ Community Ed. & Apache 2.0 & Java & La extensión de integración con Kafka es producto comercial \\ \hline
+    VerneMQ & Apache 2.0 & Erlang & Orientado a despliegues distribuidos, con clustering nativo \\ \hline
+    NanoMQ & MIT & C & Diseñado para el borde de la red \\ \hline
+    Apache ActiveMQ Artemis & Apache 2.0 & Java & Multiprotocolo: AMQP 1.0, MQTT 3.1.1 y 5.0, y STOMP \\ \hline
+    RabbitMQ & MPL 2.0 & Erlang & Broker de colas con soporte de MQTT 3.1, 3.1.1 y 5.0 \\ \hline
+  \end{tabular}
+  \caption{Principales brokers MQTT con licencia aprobada por la Open Source Initiative}
+  \label{tab:brokers-mqtt}
+\end{table}
+
+De este inventario conviene excluir EMQX, habitualmente citado entre las opciones de licencia libre: desde su versión 5.9.0 el proyecto abandonó la licencia Apache 2.0 en favor de la Business Source License 1.1 \cite{emqx2026}, de carácter \textit{source-available} y no aprobada por la Open Source Initiative.
+
+Del lado del almacenamiento ordenado y reproducible del flujo en streaming que alimentará a la capa de procesamiento, la oferta de plataformas de mensajería persistente es igualmente amplia, como recoge la Tabla~\ref{tab:log-distribuido}.
+
+\begin{table}[ht!]
+  \centering
+  \small
+  \begin{tabular}{|l|l|l|p{5.6cm}|}
+    \hline
+    \textbf{Plataforma} & \textbf{Licencia} & \textbf{Lenguaje} & \textbf{Observaciones} \\ \hline
+    Apache Kafka & Apache 2.0 & Java/Scala & Registro particionado con retención configurable y desplazamiento por consumidor \\ \hline
+    Apache Pulsar & Apache 2.0 & Java & Separa cómputo y almacenamiento mediante BookKeeper; multi-tenencia y geo-replicación nativas \\ \hline
+    Apache RocketMQ & Apache 2.0 & Java & Reproducción de mensajes por tiempo o por desplazamiento; ecosistema concentrado en Asia \\ \hline
+    NATS (JetStream) & Apache 2.0 & Go & Binario único sin dependencia de JVM; ecosistema de conectores más reducido \\ \hline
+    RabbitMQ Streams & MPL 2.0 & Erlang & Registro persistente añadido sobre un broker de colas \\ \hline
+  \end{tabular}
+  \caption{Principales plataformas de mensajería persistente con licencia aprobada por la Open Source Initiative}
+  \label{tab:log-distribuido}
+\end{table}
+
+Todas las plataformas de la Tabla~\ref{tab:log-distribuido} son técnicamente viables para una arquitectura Kappa, puesto que ofrecen registro persistente, reproducción por desplazamiento y consumidores duraderos; requisitos fundamentales que exige todo diseño.
+
+Para el acoplamiento entre los brokers de recolección y las plataformas de mensajería persistente, no existe una solución de código abierto integrada en el propio broker: los que ofrecen un puente nativo lo hacen desde una edición comercial \cite{hivemq2026} o bajo licencias \textit{source-available} que no cumplen la definición de la Open Source Initiative \cite{emqx2026}. En consecuencia, toda arquitectura restringida a herramientas de código abierto debe incorporar un componente adicional de \textit{bridging}. Este puede ser un conector genérico, como el conector MQTT de Stream Reactor para Kafka Connect \cite{lensesio2026}, o un conector desarrollado a la medida si se quiere asignar funcionalidades adicionales a dicho componente.
 
 En la etapa de procesamiento de flujos, Apache Flink se ha consolidado como la mejor opción para el cómputo en tiempo real usando la semántica de eventos, mientras que Kafka Streams ocupa un nicho más acotado como librería embebida para aplicaciones Java/Scala nativas de Apache Kafka que no requieren un clúster de procesamiento independiente. Apache Spark Structured Streaming, por su parte, se ha consolidado como el estándar de la industria para el procesamiento por micro-lotes, apoyado en la amplitud de su ecosistema y la unificación del procesamiento por lotes y en streaming bajo una misma API; un rasgo que comparte Apache Flink pero que en Spark se beneficia de una integración más amplia con el ecosistema de almacenamiento \textit{lakehouse} y herramientas SQL (S. Lakshmipathy \cite{lakshmipathy2025}).
 
@@ -98,7 +141,7 @@ Específicamente, en el dominio del procesamiento de streaming de dispositivos I
 
 El estado del arte revisado en la sección anterior pone de manifiesto un patrón recurrente: la mayor parte de las referencias sobre arquitecturas Kappa para IoT disponibles hoy (tutoriales de ingeniería, publicaciones de blog técnico, documentación de proyectos open-source) tienen un carácter fundamentalmente demostrativo. Su objetivo es ilustrar un concepto (por ejemplo, monitoreo de temperatura con Kafka, Spark Streaming y Streamlit, o un pipeline equivalente con StarRocks y MinIO), más que ofrecer una implementación completa y reproducible. Esta brecha entre la abundancia de ejemplos ilustrativos y la escasez de implementaciones reproducibles constituye la primera motivación de este trabajo: construir, documentar y poner a disposición pública un pipeline IoT completo, containerizado y basado exclusivamente en herramientas de código abierto, que sirva tanto como trabajo académico evaluable, como referencia técnica reutilizable por terceros.
 
-El proceso de revisión de la literatura evidenció vacíos de información que este proyecto puede contribuir a complementar, al menos parcialmente, desde la práctica: no se encontró un trabajo independiente que documente el comportamiento de un broker MQTT de perfil ligero en el extremo de la red (\textit{edge tier}) acoplado a un microservicio de bridging dedicado hacia Kafka, elementos que la bibliografía consultada menciona de forma tangencial y sin evaluación. 
+El proceso de revisión de la literatura evidenció vacíos de información que este proyecto puede contribuir a complementar, al menos parcialmente, desde la práctica: no se encontró un trabajo independiente que documente el comportamiento de un broker MQTT de perfil ligero (como Eclipse Mosquitto) acoplado en la capa de ingesta a un microservicio de \textit{bridging} dedicado hacia Kafka; combinación de elementos que la bibliografía consultada menciona de forma tangencial y sin evaluación.
 
 La gobernanza de esquemas mediante Avro y un registro como Apicurio sí está documentada como buena práctica en arquitecturas de streaming de propósito general \cite{marzwarren2015} (especialmente en contextos de flotas de dispositivos que evolucionan con el tiempo), pero no aparece integrada como componente explícito en ninguna de las implementaciones Kappa-IoT de código abierto revisadas (\cite{shinde2025}; \cite{zefkilis2025}) ni en los trabajos académicos consultados sobre analítica y arquitectura IoT (\cite{liu2025}; \cite{dominguez2022}; \cite{caowachowicz2019}). Incorporar esta gobernanza aporta un elemento diferenciador respecto a las implementaciones revisadas, permitiendo la evolución controlada del esquema de telemetría a medida que cambian los tipos de sensor o los campos capturados, y acercando este pipeline a las prácticas ya consolidadas en arquitecturas de streaming de propósito general.
 
