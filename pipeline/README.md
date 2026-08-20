@@ -15,6 +15,11 @@ Simulador (host, venv) --MQTT--> Mosquitto --> bridge --Avro--> Kafka
                                             Grafana                            Power BI
 ```
 
+**[FAULT_HANDLING.md](FAULT_HANDLING.md) — que pasa cuando algo falla**: los
+datos que se rechazan y por que, los que se apartan sin romper nada, cuanto tarda
+en recuperarse cada servicio, las invariantes que vigilan los fallos silenciosos
+y lo que sigue sin cubrirse.
+
 Cada componente tiene su propio README con las decisiones de diseño y lo medido:
 [simulator](simulator/README.md), [bridge](bridge/README.md),
 [schemas](schemas/README.md), [spark](spark/README.md),

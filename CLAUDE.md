@@ -202,6 +202,10 @@ Medido con el generador asíncrono el 18 de agosto de 2026, con el bridge suscri
 - **Compose hace word-splitting** cuando `command` es un string multilínea y se come las continuaciones `\`.
 - **Apicurio devuelve las violaciones de regla como HTTP 400**, no 409; detectarlas por el campo `name` del cuerpo.
 
+## Informe de tolerancia a fallos
+
+**`pipeline/FAULT_HANDLING.md` reúne todo el comportamiento del sistema ante fallos**, medido y reproducible: qué se rechaza a la DLQ y con qué motivo, qué se aparta sin romper nada, cuánto tarda en recuperarse cada servicio al tumbarlo, las invariantes que vigilan los fallos silenciosos, el punto de saturación y **lo que sigue sin estar cubierto**. Es la referencia a consultar antes de tocar nada relacionado con validación, resiliencia o pérdida de datos, y el material de partida para esa parte de la memoria.
+
 ## Estado actual del pipeline
 
 **El pipeline corre de extremo a extremo sobre ASHRAE.** Simulador → Mosquitto → bridge → Kafka → Spark → doble sumidero → Grafana, todo verificado y medido.
