@@ -6,8 +6,8 @@
   "fields": [
     {
       "name": "building_id",
-      "type": "int",
-      "doc": "Identificador del edificio que aloja el contador. Junto con meter_type forma la identidad del sensor, y es tambien la clave del mensaje en Kafka: mantiene en la misma particion y en orden todas las lecturas de un contador, que es lo que necesitan las ventanas de agregacion de Spark."
+      "type": "string",
+      "doc": "Identificador del edificio que aloja el contador. ES TEXTO, NO UN NUMERO: nadie suma identificadores, y declararlo como int abria una via de corrupcion silenciosa. Avro no valida, convierte: un productor que enviara 156.9 —normal desde JavaScript o numpy, donde no hay enteros de verdad— veia su evento truncado a 156 y atribuido a OTRO edificio, sin error ni rastro; un booleano se volvia el edificio 1 y un valor fuera del rango de int32 se escribia igual. Como texto no hay conversion posible y un identificador mal formado no coincide con ningun edificio, asi que lo detecta el mecanismo de eventos sin dimension. Junto con meter_type forma la identidad del sensor, y es tambien la clave del mensaje en Kafka: mantiene en la misma particion y en orden todas las lecturas de un contador, que es lo que necesitan las ventanas de agregacion de Spark."
     },
     {
       "name": "meter_type",

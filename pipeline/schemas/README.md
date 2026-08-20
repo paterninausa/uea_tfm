@@ -1,3 +1,28 @@
+## Por que building_id es texto y no un entero
+
+Cambiarlo de `int` a `string` fue una **correccion de contrato**, no una
+evolucion, y se hizo antes de que existiera produccion. El motivo es que Avro no
+valida los tipos: los convierte. Comprobado:
+
+| Se envia | Se guardaba con `int` | Se guarda con `string` |
+|---|---|---|
+| `156.9` | **`156`** — atribuido a otro edificio | rechazado a la DLQ |
+| `true` | **`1`** — el edificio 1 | rechazado a la DLQ |
+| `2^40` | escrito, fuera del rango de int32 | rechazado a la DLQ |
+| `156` (entero) | `156` | rechazado: el contrato exige texto |
+
+`TypeError: must be string on field building_id` es hoy el motivo de rechazo, y
+sale agrupado en el desglose de la DLQ del bridge.
+
+**Este cambio es incompatible en Avro** —no hay promocion definida entre `int` y
+`string`— asi que con la regla `COMPATIBILITY=FULL_TRANSITIVE` activa, Apicurio
+lo habria rechazado. Aqui no hizo falta saltarsela: al no haber datos historicos
+que proteger, se recreo el registro y el contrato nuevo quedo como version 1.
+
+La leccion, que vale para la memoria: **una regla de compatibilidad no es
+gratis, y el tipo de un identificador es de las decisiones que hay que acertar
+antes de la primera version**, porque despues solo se puede cambiar rompiendo.
+
 # Esquemas Avro y gobernanza en Apicurio (Objetivo 2)
 
 Contrato de datos del pipeline. El esquema Avro convierte el topico de Kafka en

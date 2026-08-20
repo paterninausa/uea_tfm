@@ -114,11 +114,30 @@ def prepare(train_path: Path, meta_path: Path, sites: tuple) -> None:
         codigos = sorted(df.loc[df["meter_type"].isna(), "meter"].unique())
         raise ValueError(f"Codigos de contador desconocidos en los datos: {codigos}")
 
+    # EL IDENTIFICADOR DEL EDIFICIO ES TEXTO EN TODO EL PIPELINE, desde este
+    # fichero hasta las tablas finales. Nadie suma un building_id: es una
+    # etiqueta, no una magnitud.
+    #
+    # Tratarlo como entero abria una via de corrupcion silenciosa que se
+    # comprobo: Avro no valida, convierte. Un productor que enviara 156.9 —algo
+    # normal desde JavaScript o desde numpy, donde no hay enteros de verdad—
+    # veia su evento truncado a 156 y ATRIBUIDO A OTRO EDIFICIO, sin error ni
+    # rastro. Un booleano se convertia en el edificio 1, y un valor fuera del
+    # rango de int32 se escribia igualmente.
+    #
+    # Como texto no hay conversion posible: "156.9" no coincide con ningun
+    # edificio y cae en el mecanismo de eventos sin dimension, que lo aparta de
+    # los agregados y lo avisa. El fallo pasa de invisible a visible.
+    #
+    # site_id NO se convierte: no viaja en el evento —lo anade Spark con el
+    # broadcast join— asi que ningun productor puede equivocarse con el.
+
     # ---- TABLA DE HECHOS: solo lo que emitiria el contador -------------------
     # Sin event_id, sin sensor_id y sin caracteristicas del edificio. Un contador
     # real envia quien es y cuanto midio; cualquier otra cosa la
     # anadiriamos nosotros y dejaria de reproducir su comportamiento.
-    telemetria = df[["building_id", "meter_type", "timestamp", "meter_reading"]]
+    telemetria = df[["building_id", "meter_type", "timestamp", "meter_reading"]].copy()
+    telemetria["building_id"] = telemetria["building_id"].astype(str)
     # Orden cronologico: el simulador reproduce el historico en secuencia y el
     # watermark de Spark asume que el tiempo de evento avanza. Un fichero
     # desordenado haria que se descartaran lecturas como tardias.
@@ -133,6 +152,7 @@ def prepare(train_path: Path, meta_path: Path, sites: tuple) -> None:
                   "square_feet", "year_built", "floor_count"]]
         .sort_values("building_id").reset_index(drop=True)
     )
+    dimension["building_id"] = dimension["building_id"].astype(str)
 
     # ---- LINEA BASE POR SENSOR: referencia para la deteccion de picos --------
     # Mediana y cuartiles del historico de cada contador. El job de Spark la
@@ -155,7 +175,7 @@ def prepare(train_path: Path, meta_path: Path, sites: tuple) -> None:
 
     resumen(telemetria, dimension, linea_base)
 
-    logger.info()
+    logger.info("")
     for datos, ruta in ((telemetria, SALIDA_TELEMETRIA),
                         (dimension, SALIDA_EDIFICIOS),
                         (linea_base, SALIDA_LINEA_BASE)):

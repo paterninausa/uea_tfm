@@ -104,7 +104,7 @@ def build_payload(fila) -> dict:
     interpreta los datos: lo que hace no es leer una fila, es emitirla.
     """
     return {
-        "building_id": int(fila.building_id),
+        "building_id": str(fila.building_id),
         "meter_type": str(fila.meter_type),
         "timestamp": fila.timestamp.isoformat(),
         "meter_reading": float(fila.meter_reading),

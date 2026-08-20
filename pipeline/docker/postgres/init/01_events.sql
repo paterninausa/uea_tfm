@@ -18,7 +18,7 @@
 -- millones de filas es el antipatron. Ademas, corregir el ano de construccion de
 -- un edificio es actualizar una fila y no reprocesar el historico.
 CREATE TABLE IF NOT EXISTS buildings (
-    building_id   INTEGER  PRIMARY KEY,
+    building_id   TEXT     PRIMARY KEY,
     site_id       INTEGER  NOT NULL,
     primary_use   TEXT     NOT NULL,
     square_feet   INTEGER,
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS buildings (
 -- 850.354 pies cuadrados y cada medio tiene su unidad, asi que no existe un
 -- umbral global valido.
 CREATE TABLE IF NOT EXISTS sensor_baseline (
-    building_id    INTEGER          NOT NULL,
+    building_id    TEXT             NOT NULL,
     meter_type     TEXT             NOT NULL,
     baseline_p25   DOUBLE PRECISION,
     baseline_p50   DOUBLE PRECISION,
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS telemetry_events (
     -- meter_type es imprescindible en la clave: sin el, (building_id,
     -- event_time) colapsaria 1.345.428 eventos, porque un edificio tiene varios
     -- contadores midiendo a la misma hora.
-    building_id          INTEGER          NOT NULL,
+    building_id          TEXT             NOT NULL,
     meter_type           TEXT             NOT NULL,
     event_time           TIMESTAMPTZ      NOT NULL,
 
