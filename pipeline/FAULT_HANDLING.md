@@ -22,6 +22,7 @@ Cada evento atraviesa cuatro controles antes de contar como bueno:
 |---|---|---|---|
 | Forma | Bridge, `schemaless_writer` | Campos presentes, tipos y simbolos del enum | Se desvia a la DLQ con el motivo |
 | Dominio | Bridge, `validar_dominio` | Fecha no futura, lectura finita y no negativa | Se desvia a la DLQ con el motivo |
+| Dominio (2.a linea) | Spark, `aggregate_metrics` | Fecha no futura, sobre lo que ya esta en Kafka | Se aparta del agregado, sigue en `telemetry_events` |
 | Referencia | Spark, `aggregate_metrics` | Que el edificio exista en la dimension | Se aparta del agregado y se avisa |
 | Identidad | Spark, `database_writers` | Que dos lecturas distintas no compartan clave | Se conserva una y se avisa |
 
@@ -120,6 +121,55 @@ La comparacion excluye las columnas de instrumentacion. Un evento reenviado tras
 una reconexion lleva un `sim_publish_ts` nuevo siendo el mismo evento, de manera
 que comparar las filas completas marcaria como conflicto cada reentrega
 legitima.
+
+---
+
+### La fecha futura y el watermark global
+
+Una marca de tiempo adelantada es el evento mas danino que puede recibir el
+sistema, y el que menos se parece a un fallo: cumple el esquema, tiene todos sus
+campos y su lectura es perfectamente plausible.
+
+El dano viene de como funciona el watermark de Spark. Es **uno solo para toda la
+consulta** —no existe watermark por clave ni por particion— y vale el mayor
+`timestamp` visto en cualquier evento menos el retraso configurado. Un evento
+del ano 2036 lo deja ahi, y desde ese instante los eventos legitimos caen por
+debajo y Spark los descarta como tardios. **Un solo dispositivo mal configurado
+detiene la agregacion de los 652 sensores.**
+
+El efecto se reparte de forma desigual entre las dos rutas, y eso lo hace mas
+dificil de advertir: `telemetry_metrics` se detiene y Grafana se congela,
+mientras `telemetry_events` —que no tiene watermark— sigue escribiendo con
+normalidad.
+
+Por eso la comprobacion existe **en dos sitios**. El bridge rechaza el evento a
+la DLQ antes de que entre en Kafka; el job lo aparta antes del `withWatermark`,
+que es la unica posicion util, ya que el watermark se calcula al entrar el
+evento. La segunda linea cubre lo que la primera no alcanza: un evento que ya
+esta en el log de Kafka, publicado sin pasar por el bridge o presente desde
+antes, y que reaparece en cada reprocesamiento. Ninguna de las dos destruye el
+dato: en ambos casos queda constancia, y en el segundo el evento se persiste
+igual en `telemetry_events`.
+
+Ambos margenes son de 300 segundos, muy por encima del desajuste esperable entre
+relojes: solo disparan ante un problema estructural —zona horaria mal
+interpretada en el origen, reloj del servidor atrasado, epoch en milisegundos
+leido como segundos—.
+
+Medido con `tools/watermark_poison_test.py`, inyectando **un** evento diez anos
+adelantado directamente en Kafka mientras el simulador publica a ~357 ev/s:
+
+| | Sin la segunda linea | Con ella |
+|---|---|---|
+| `telemetry_metrics`, 45 s en regimen | **0 filas** | 1.149 filas |
+| `telemetry_events`, mismo intervalo | 16.126 filas | 16.488 filas |
+| Errores registrados | **ninguno** | ninguno |
+
+El envenenamiento se manifiesta primero como una **rafaga** y despues como
+silencio: al saltar el watermark, todas las ventanas abiertas quedan por debajo
+de el y se emiten de golpe —174 filas— antes de que no vuelva a escribirse
+ninguna. Un recuento acumulado a traves de ese pico lo confunde con actividad
+normal, de modo que la comprobacion util es la del tramo posterior.
 
 ---
 
@@ -287,6 +337,10 @@ python pipeline/tools/failover_test.py --target mosquitto
 
 ```bash
 python pipeline/tools/load_ladder.py --speedups 5000,10000,20000,40000
+```
+
+```bash
+python pipeline/tools/watermark_poison_test.py
 ```
 
 ```bash

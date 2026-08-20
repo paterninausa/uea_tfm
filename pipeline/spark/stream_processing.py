@@ -293,7 +293,8 @@ def enrich(df: DataFrame, dimension: DataFrame, linea_base: DataFrame) -> DataFr
 # --------------------------------------------------------------------------
 # Agregacion por ventana
 # --------------------------------------------------------------------------
-def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str) -> DataFrame:
+def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str,
+                      margen_futuro: float) -> DataFrame:
     """Agrega por ventana temporal sobre EVENT TIME (columna `timestamp`).
 
     El watermark le dice a Spark cuanto puede tardar un evento en llegar antes
@@ -329,6 +330,39 @@ def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str) -> Da
     # accion sobre el flujo en cada micro-lote—, sino en `tools/kpi_report.py`,
     # que los detecta con un LEFT JOIN entre telemetry_events y buildings.
     df = df.filter(F.col("site_id").isNotNull())
+
+    # SE APARTAN LOS EVENTOS CON FECHA FUTURA, y tiene que ser AQUI: antes del
+    # withWatermark, porque el watermark se calcula al entrar el evento. Un
+    # filtro colocado despues no serviria de nada, el dano ya estaria hecho.
+    #
+    # El watermark de Spark es UNO SOLO para toda la consulta —"a single global
+    # watermark for stateful operations", no hay watermark por clave ni por
+    # particion— y vale (mayor timestamp visto en CUALQUIER evento) - retraso.
+    # Un unico evento con marca del ano 2099 lo deja ahi para siempre, y a
+    # partir de ese momento TODOS los eventos de TODOS los sensores llegan por
+    # debajo y Spark los descarta como tardios. El sintoma no es un error: es
+    # que telemetry_metrics deja de crecer mientras telemetry_events —que no
+    # tiene watermark— sigue llenandose con normalidad. Medio pipeline parado y
+    # ningun indicador en rojo.
+    #
+    # El bridge ya rechaza estos eventos a la DLQ, pero eso protege la ENTRADA,
+    # no lo que ya esta en Kafka: un evento que entro antes de existir la guarda
+    # y sigue dentro de los 7 dias de retencion, uno publicado directamente al
+    # topico sin pasar por el bridge, o el reprocesamiento del log desde el
+    # principio. Es el mismo patron del building_id huerfano, que se quedaba en
+    # Kafka envenenando cualquier arranque posterior.
+    #
+    # NO SE PIERDE EL DATO: la ruta de eventos lo persiste igual en
+    # telemetry_events. Lo que no se puede es dejarlo participar en el calculo
+    # del watermark. Mismo criterio que con los huerfanos de arriba.
+    #
+    # El margen tolera el desajuste normal entre relojes; solo dispara ante un
+    # problema estructural (zona horaria mal interpretada en el origen, reloj
+    # del servidor atrasado, epoch en milisegundos leido como segundos). Un
+    # valor muy alto equivale a desactivar el filtro, que es como se reproduce
+    # el modo de fallo en tools/watermark_poison_test.py.
+    limite_futuro = F.current_timestamp().cast("double") + F.lit(float(margen_futuro))
+    df = df.filter(F.col("timestamp").cast("double") <= limite_futuro)
 
     return (
         df.withWatermark("timestamp", watermark)
@@ -388,8 +422,8 @@ def run(args: argparse.Namespace) -> int:
 
     spark = build_spark(args)
     spark.sparkContext.setLogLevel(args.spark_log_level)
-    logger.info("Spark %s | esquema globalId=%d | ventana=%s watermark=%s",
-                spark.version, global_id, args.window, args.watermark)
+    logger.info("Spark %s | esquema globalId=%d | ventana=%s watermark=%s margen_futuro=%.0fs",
+                spark.version, global_id, args.window, args.watermark, args.margen_futuro)
 
     eventos = guard_schema_version(
         decode_events(read_kafka(spark, args), schema_json), global_id
@@ -408,7 +442,8 @@ def run(args: argparse.Namespace) -> int:
     checkpoint_raiz = Path(args.checkpoint_dir).resolve()
 
     if args.sink in ("metrics", "both"):
-        metricas = aggregate_metrics(enriquecidos, args.window, args.watermark)
+        metricas = aggregate_metrics(enriquecidos, args.window, args.watermark,
+                                     args.margen_futuro)
         arrancadores["metricas-timescaledb"] = lambda: (
             metricas.writeStream
             # outputMode append: emite cada ventana UNA vez, cuando el
@@ -502,6 +537,10 @@ def parse_args() -> argparse.Namespace:
                    help="Duracion de la ventana tumbling sobre event time")
     p.add_argument("--watermark", default="2 minutes",
                    help="Retraso maximo admitido antes de dar una ventana por cerrada")
+    p.add_argument("--margen-futuro", type=float, default=300.0,
+                   help="Segundos de adelanto tolerados antes de apartar un evento de la "
+                        "agregacion. Mismo criterio que el bridge; un valor muy alto "
+                        "desactiva el filtro y reproduce el envenenamiento del watermark")
     p.add_argument("--trigger", default="1 second",
                    help="Intervalo de micro-lote (KPI del Objetivo 3: < 3 s)")
     p.add_argument("--buildings", default=str(Path(__file__).parent / "../data/ashrae_buildings.parquet"),

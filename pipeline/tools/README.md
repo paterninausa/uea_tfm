@@ -11,6 +11,7 @@ opciones que unicamente se usan al preparar una prueba.
 | `load_ladder.py` | Escalera de sensores concurrentes | 5 |
 | `kpi_report.py` | Emitir el cuadro de KPIs en Markdown | 1, 2, 3, 4 y 5 |
 | `failover_test.py` | Tumbar un servicio y cronometrar la recuperacion | 5 |
+| `watermark_poison_test.py` | Demostrar que un evento con fecha futura detiene la agregacion de todos los sensores | 1 y 5 |
 
 ## El ciclo de medicion completo
 
@@ -246,3 +247,66 @@ vigilar el disco.
 
 No se versionan. Los artefactos de datos —`informe_kpi.md`,
 `ultima_escalera.json`, `ultimo_failover.json`— viven en el mismo directorio.
+
+## watermark_poison_test.py
+
+Demuestra, con el sistema en marcha, que **un unico evento con fecha futura
+detiene la agregacion por ventana de los 652 sensores**, no solo la del que lo
+emitio, y que lo hace sin producir un error en ninguna parte.
+
+El motivo es que el watermark de Spark es *uno solo para toda la consulta* —no
+hay watermark por clave ni por particion— y vale (mayor `timestamp` visto en
+cualquier evento) menos el retraso configurado. Un evento del ano 2036 lo deja
+ahi, y desde ese instante los eventos legitimos de 2016 caen por debajo y se
+descartan como tardios.
+
+El evento se publica **directamente a Kafka**, saltandose el bridge a proposito:
+la guarda del bridge ya rechaza estos eventos a la DLQ, asi que lo que se
+reproduce aqui es el caso que esa guarda no cubre —un evento que ya esta en el
+log, porque entro antes de existir la guarda, porque alguien publico al topico
+sin pasar por el bridge, o porque se reprocesa el log desde el principio—.
+
+Se ejecuta en dos pasadas, con `reset_state.py --yes` entre ellas porque **el
+watermark envenenado sobrevive en el checkpoint**:
+
+```bash
+python pipeline/spark/stream_processing.py --trigger "1 second" --margen-futuro 999999999
+python pipeline/tools/watermark_poison_test.py
+```
+
+```bash
+python pipeline/spark/stream_processing.py --trigger "1 second"
+python pipeline/tools/watermark_poison_test.py
+```
+
+### Resultados medidos (20 de agosto de 2026)
+
+Un evento, 10 anos en el futuro, con el simulador publicando a ~357 ev/s:
+
+| | Filtro desactivado | Filtro activo (300 s) |
+|---|---|---|
+| Tramo de asentamiento (15 s) | +174 filas | +366 filas |
+| **`telemetry_metrics` en regimen (45 s)** | **+0 filas** | **+1.149 filas** |
+| `telemetry_events` en regimen | +16.126 filas | +16.488 filas |
+| Errores en los logs | **ninguno** | ninguno |
+| Veredicto | `ENVENENADO` | `PROTEGIDO` |
+
+La fila que importa es la tercera junto a la segunda: con el filtro desactivado
+la ruta operativa se para en seco mientras la analitica sigue recibiendo mas de
+dieciseis mil filas. **Medio pipeline detenido y ningun indicador en rojo.**
+
+### La trampa: el envenenamiento empieza por una rafaga, no por un silencio
+
+La primera version de esta prueba dio `PROTEGIDO` sobre un sistema que estaba
+envenenado. Contaba filas entre el principio y el final, y vio crecimiento.
+
+Mirando las escrituras segundo a segundo se ve por que: 46 filas, **117 de golpe
+dos segundos despues de la inyeccion**, y ninguna en los 44 siguientes. Al saltar
+el watermark, todas las ventanas abiertas quedan por debajo de el y Spark las
+cierra y las emite a la vez. Ese pico terminal es lo que un contador acumulado
+interpreta como buena salud.
+
+De ahi los dos tramos: uno de **asentamiento**, que absorbe la rafaga, y otro de
+**regimen**, del que sale el veredicto. Es la misma leccion que el resto del
+proyecto: un fallo silencioso es una **ausencia**, y para verla hay que mirar
+donde deberia haber actividad en lugar de sumar totales.
