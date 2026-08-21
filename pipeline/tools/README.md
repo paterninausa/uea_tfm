@@ -12,6 +12,7 @@ opciones que unicamente se usan al preparar una prueba.
 | `kpi_report.py` | Emitir el cuadro de KPIs en Markdown | 1, 2, 3, 4 y 5 |
 | `failover_test.py` | Tumbar un servicio y cronometrar la recuperacion | 5 |
 | `watermark_poison_test.py` | Demostrar que un evento con fecha futura detiene la agregacion de todos los sensores | 1 y 5 |
+| `cluster.sh` | Levantar un cluster Spark standalone para probar el fallo de un executor | 5 |
 
 ## El ciclo de medicion completo
 
@@ -321,13 +322,13 @@ con propositos distintos, y la eleccion no es de gusto sino de medicion.
 dentro de la JVM del driver: no hay executors ni serializacion entre procesos, y
 el job dispone de los 12 nucleos de la maquina.
 
-**Standalone es el modo de DEMOSTRAR.** `pipeline/spark/cluster.sh` levanta un
+**Standalone es el modo de DEMOSTRAR.** `pipeline/tools/cluster.sh` levanta un
 master y N workers en la misma maquina; el job se lanza con
 `--master spark://127.0.0.1:7077` y se ejecuta con executors en procesos
 independientes.
 
 ```bash
-bash pipeline/spark/cluster.sh start
+bash pipeline/tools/cluster.sh start
 ```
 
 ```bash
@@ -335,7 +336,7 @@ python pipeline/spark/stream_processing.py --master spark://127.0.0.1:7077 --tri
 ```
 
 ```bash
-bash pipeline/spark/cluster.sh status
+bash pipeline/tools/cluster.sh status
 ```
 
 ### Por que las mediciones NO se toman en standalone

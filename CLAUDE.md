@@ -221,7 +221,7 @@ Funcionando: stack completo en Docker; preparación de datos (tres Parquet: hech
 
 **`load_generator.py` se retiró y no debe volver.** Alcanzaba tasas altas con una ventana de mensajes en vuelo: N publicaciones sin confirmar desde un único cliente. Era un artificio para que un cliente hiciera el trabajo de 652, y `--clients` consigue lo mismo sin inventar nada. Se comprobó además que con ventana 1 se comportaba exactamente igual que el simulador: eran el mismo programa con dos nombres.
 
-**Spark corre en `local[*]` por defecto, y es una limitación de recursos, no de diseño.** El job acepta `--master`, así que el mismo código corre distribuido sin tocar una línea: verificado el 21 de agosto de 2026 con `pipeline/spark/cluster.sh`, que levanta un master y N workers con `spark-class` (la distribución de PySpark por pip **no trae** `start-master.sh` en `sbin/`). Con la misma carga —40.000 eventos a 358 ev/s— y el mismo estado limpio:
+**Spark corre en `local[*]` por defecto, y es una limitación de recursos, no de diseño.** El job acepta `--master`, así que el mismo código corre distribuido sin tocar una línea: verificado el 21 de agosto de 2026 con `pipeline/tools/cluster.sh`, que levanta un master y N workers con `spark-class` (la distribución de PySpark por pip **no trae** `start-master.sh` en `sbin/`). Con la misma carga —40.000 eventos a 358 ev/s— y el mismo estado limpio:
 
 | Modo | Latencia ingesta p95 | Lote `metricas` p95 | ¿El simulador sostuvo el ritmo? |
 |---|---|---|---|

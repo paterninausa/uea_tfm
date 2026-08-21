@@ -43,9 +43,9 @@
 # supervisor y sin perdida).
 #
 # Uso:
-#     bash pipeline/spark/cluster.sh start     # master + $WORKERS workers
-#     bash pipeline/spark/cluster.sh status
-#     bash pipeline/spark/cluster.sh stop
+#     bash pipeline/tools/cluster.sh start     # master + $WORKERS workers
+#     bash pipeline/tools/cluster.sh status
+#     bash pipeline/tools/cluster.sh stop
 #
 # Variables de entorno para ajustar el tamaño:
 #     WORKERS=2  WORKER_CORES=2  WORKER_MEMORY=1g
@@ -64,7 +64,7 @@ MASTER_PORT="${MASTER_PORT:-7077}"
 # La UI del master NO usa el 8080 por defecto de Spark: ahí escucha Apicurio.
 MASTER_WEBUI="${MASTER_WEBUI:-8090}"
 
-DIR_TRABAJO="$RAIZ/pipeline/spark/cluster-work"
+DIR_TRABAJO="$RAIZ/pipeline/tools/cluster-work"
 DIR_LOGS="$RAIZ/pipeline/logs"
 
 MASTER_URL="spark://${MASTER_HOST}:${MASTER_PORT}"
@@ -130,8 +130,12 @@ start() {
         sleep 2
     done
 
+    # La orden lleva --master a proposito: sin el, el job arranca en local[*] y
+    # el cluster recien levantado se queda mirando, sin ningun aviso.
     echo "Clúster listo: $(vivos) workers registrados."
-    echo "Lanza el job con:  python pipeline/spark/stream_processing.py"
+    echo
+    echo "Lanza el job contra el clúster con:"
+    echo "  python pipeline/spark/stream_processing.py --master $MASTER_URL --trigger \"1 second\""
 }
 
 vivos() {
