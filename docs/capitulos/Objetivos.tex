@@ -2,20 +2,20 @@
 
 \section{Alcance del proyecto}
 
-Este trabajo abarca el diseño, desarrollo y validación de un sistema desacoplado basado en microservicios para la ingesta, procesamiento, análisis y visualización de datos de dispositivos IoT, utilizando como caso de uso el análisis de la telemetría de contadores de consumo energético en edificios con mediciones de electricidad, agua fría y agua caliente.
+Este trabajo abarca el diseño, desarrollo y validación de un sistema desacoplado de microservicios para la ingesta, procesamiento, análisis y visualización de datos de dispositivos IoT, utilizando como caso de uso el análisis de la telemetría de contadores de consumo energético en edificios con mediciones de electricidad, agua fría y agua caliente.
 
 \section{Tareas a desarrollar}
 
 Para cubrir el alcance descrito, se plantean las siguientes tareas:
 
 \begin{itemize}
-    \item Analizar el estado del arte en las herramientas, estrategias y retos actuales en el procesamiento y análisis de datos en streaming.
-    \item Analizar las tecnologías open-source disponibles para el procesamiento y análisis de datos de dispositivos IoT.
-    \item Diseñar e implementar un simulador de comunicación IoT para la transmisión de datos de telemetría.
+    \item Analizar el estado del arte en las tecnologías, estrategias y retos actuales en el procesamiento y análisis de datos en streaming.
+    \item Analizar las herramientas open-source disponibles para el procesamiento y análisis de datos de dispositivos IoT.
+    \item Diseñar e implementar un simulador de dispositivos IoT para la transmisión de datos de telemetría.
     \item Diseñar e implementar una arquitectura basada en contenedores para la orquestación y ejecución de los siguientes microservicios:
     \begin{itemize}
-        \item Servicio de alta disponibilidad para la ingesta de datos, mediante un gestor de mensajería que acepte protocolos de telemetría estándar.
-        \item Servicio de filtrado y transformación de datos que alimente dos sumideros: una base de datos optimizada para series temporales con métricas ya agregadas por ventana, y una base relacional para eventos individuales con tablas de referencia.
+        \item Servicio para la ingesta de datos, mediante un gestor de mensajería que acepte protocolos de telemetría estándar.
+        \item Servicio de filtrado y transformación que alimente dos sumideros: una base de datos optimizada para series temporales con métricas ya agregadas por ventana, y una base relacional para eventos individuales con tablas de referencia.
         \item Servicio de análisis que calcule índices de eficiencia energética, efectúe análisis operativo y detección de anomalías en datos de consumo.
     \end{itemize}
     \item Diseñar un servicio de visualización mediante dashboards, para la visualización interactiva de los datos procesados.
@@ -24,7 +24,7 @@ Para cubrir el alcance descrito, se plantean las siguientes tareas:
 
 \section{Objetivos}
 
-Los objetivos concretos de este trabajo se definen a continuación, acompañados cada uno de un indicador clave de rendimiento (KPI) que permite verificar su cumplimiento y de las acciones necesarias para alcanzarlo. Los valores numéricos de cada KPI se han fijado a partir de rangos razonables de la práctica de ingeniería y de la literatura revisada en el estado del arte; se validarán y, si procede, se recalibrarán a partir de las pruebas piloto realizadas sobre la implementación.
+Los objetivos concretos de este trabajo se definen a continuación, acompañados de un indicador clave de rendimiento (KPI) que permite verificar su cumplimiento, y de las acciones necesarias para alcanzarlo. Los valores numéricos de cada KPI se han fijado a partir de rangos razonables de la práctica de ingeniería y de la literatura revisada en el estado del arte; se validarán y, si procede, se recalibrarán a partir de las pruebas piloto realizadas sobre la implementación.
 
 \subsection{Objetivo 1: Garantizar la ingesta fiable de telemetría en tiempo real}
 
@@ -34,25 +34,25 @@ Los objetivos concretos de este trabajo se definen a continuación, acompañados
 
 \subsection{Objetivo 2: Garantizar la gobernanza y evolución controlada del esquema de datos}
 
-\textbf{KPI}: el 100\,\% de los eventos ingeridos se validan correctamente contra el esquema Avro registrado; 0\,\% de fallos de deserialización ante cambios de esquema compatibles hacia adelante o hacia atrás.
+\textbf{KPI}: el 100\,\% de los eventos ingeridos se validan correctamente contra el esquema Avro registrado; 0\,\% de fallos de deserialización ante cambios de esquema.
 
-\textbf{Acciones}: definir el esquema Avro inicial de telemetría; configurar las reglas de compatibilidad de esquema en Apicurio; diseñar y ejecutar al menos una prueba de evolución de esquema verificando que no se interrumpe el flujo ni se pierden mensajes; documentar los límites de la protección que ofrece el registro y las reglas adicionales que deban implementarse fuera de él.
+\textbf{Acciones}: definir el esquema Avro inicial de telemetría; configurar las reglas de compatibilidad de esquema en Apicurio; diseñar y ejecutar al menos una prueba de evolución de esquema verificando que no se interrumpe el flujo ni se pierden mensajes; documentar los límites de la protección que ofrece el registro.
 
 \subsection{Objetivo 3: Procesar y enriquecer los datos en streaming con baja latencia}
 
-\textbf{KPI}: latencia de procesamiento por micro-lote en Spark Structured Streaming inferior a 3 segundos tras el cierre de cada ventana; throughput sostenido de al menos 50 eventos por segundo sin acumulación de retraso entre lotes sucesivos (este umbral procede de la literatura de referencia y no del caso de uso en este trabajo).
+\textbf{KPI}: latencia de procesamiento por micro-lote en Spark Structured Streaming inferior a 3 segundos tras el cierre de cada ventana; throughput sostenido de al menos 50 eventos por segundo sin acumulación de retraso entre lotes sucesivos.
 
 \textbf{Acciones}: implementar el job de Spark Structured Streaming (DataFrame API) con ventanas de agregación temporal y \textit{watermarking} para el tratamiento de datos tardíos; instrumentar métricas de throughput y de duración de cada micro-lote (\textit{batch duration}) del job; ejecutar pruebas de carga incremental hasta identificar el punto de saturación y verificar el cumplimiento del KPI dentro del rango definido.
 
 \subsection{Objetivo 4: Ofrecer visualización diferenciada operacional y analítica}
 
-\textbf{KPI}: los dashboards de Grafana muestran datos con una latencia de refresco inferior a 5 segundos; se dispone de al menos 3 reportes en Power BI que cubran, respectivamente, consumo energético, eficiencia operativa y detección de anomalías.
+\textbf{KPI}: dashboard de Grafana que muestren datos con una latencia inferior a 5 segundos; se dispone de al menos 1 dashboard en PowerBI que cubra consumo energético, eficiencia operativa y detección de anomalías.
 
-\textbf{Acciones}: diseñar los dashboards operacionales de Grafana sobre TimescaleDB; conectar Power BI a los eventos enriquecidos de PostgreSQL; definir y calcular los índices de eficiencia energética requeridos por las tareas de análisis; validar la latencia de refresco de los dashboards.
+\textbf{Acciones}: diseñar el dashboard operacional de Grafana sobre TimescaleDB; conectar PowerBI a los eventos enriquecidos de PostgreSQL; definir y calcular los índices de eficiencia energética requeridos por las tareas de análisis; validar la latencia de refresco de los dashboards.
 
 \subsection{Objetivo 5: Validar la escalabilidad y resiliencia del sistema}
 
-\textbf{KPI}: el sistema soporta al menos 500 sensores concurrentes con un throughput no menor del 80\,\% calculado en base a 100 sensores concurrentes; ante el fallo de un servicio individual, el sistema se recupera en menos de 60 segundos sin pérdida de datos.
+\textbf{KPI}: el sistema soporta al menos 500 sensores simultáneos con un throughput no menor del 80\,\% respecto a 100 sensores iniciales; ante el fallo de un servicio individual, el sistema se recupera en menos de 60 segundos sin pérdida de datos.
 
 \textbf{Acciones}: diseñar un plan de pruebas con volumen creciente de sensores simulados (100, 250, 500 y +600 sensores concurrentes); medir el throughput y la latencia bajo cada nivel de carga; simular la caída de un servicio (por ejemplo, un executor de Spark) y medir el tiempo de recuperación y la integridad de los datos gracias a la retención en Kafka; documentar los resultados obtenidos.
 
