@@ -310,3 +310,70 @@ De ahi los dos tramos: uno de **asentamiento**, que absorbe la rafaga, y otro de
 **regimen**, del que sale el veredicto. Es la misma leccion que el resto del
 proyecto: un fallo silencioso es una **ausencia**, y para verla hay que mirar
 donde deberia haber actividad en lugar de sumar totales.
+
+## Dos modos de ejecucion de Spark, y para que sirve cada uno
+
+El job acepta `--master`, de modo que el **mismo codigo, sin una sola linea de
+cambio**, corre en modo local o contra un gestor de cluster. Se usan dos modos
+con propositos distintos, y la eleccion no es de gusto sino de medicion.
+
+**`local[*]` es el modo de MEDIR**, y es el valor por defecto. El `*` son hilos
+dentro de la JVM del driver: no hay executors ni serializacion entre procesos, y
+el job dispone de los 12 nucleos de la maquina.
+
+**Standalone es el modo de DEMOSTRAR.** `pipeline/spark/cluster.sh` levanta un
+master y N workers en la misma maquina; el job se lanza con
+`--master spark://127.0.0.1:7077` y se ejecuta con executors en procesos
+independientes.
+
+```bash
+bash pipeline/spark/cluster.sh start
+```
+
+```bash
+python pipeline/spark/stream_processing.py --master spark://127.0.0.1:7077 --trigger "1 second"
+```
+
+```bash
+bash pipeline/spark/cluster.sh status
+```
+
+### Por que las mediciones NO se toman en standalone
+
+Con la misma carga (40.000 eventos a 358 ev/s), el mismo estado limpio y el
+mismo orden de arranque, el 21 de agosto de 2026:
+
+| Modo | Latencia ingesta p95 | Lote `eventos` p95 | Lote `metricas` p95 | ¿El simulador sostuvo el ritmo? |
+|---|---|---|---|---|
+| `local[*]`, 12 nucleos | **1,190 s** ✓ | 475 ms | 891 ms | Si |
+| standalone, 4 nucleos | 14,302 s ✗ | 992 ms | 1.554 ms | Si |
+| standalone, 10 nucleos | 34,274 s ✗ | 2.266 ms | **3.194 ms** ✗ | **No: 9,5 s de retraso** |
+
+Cuanta mas CPU se asigna al cluster, PEOR va todo. No es un defecto del modo
+distribuido: es que el generador de carga con sus 648 conexiones MQTT, el
+bridge, el driver, los executors y siete contenedores comparten **una sola
+maquina de 12 nucleos**. Con 10 nucleos para el cluster la carga del sistema
+llego a 19,76 y el simulador se retraso respecto a su agenda, con lo que la
+ejecucion dejo de medir el pipeline para medir la maquina.
+
+**Es una limitacion de los recursos disponibles, no del diseño.** En un
+despliegue real el productor y el cluster estarian en maquinas distintas, y el
+job soporta ese escenario sin cambios: basta apuntar `--master` a un gestor de
+cluster (Spark standalone, YARN o `k8s://`).
+
+### Lo que si demuestra el modo standalone
+
+Ejecutando el pipeline completo con 2 workers de 2 nucleos y matando uno con
+`kill -9`:
+
+| | Resultado |
+|---|---|
+| Estado del worker | `DEAD` |
+| Estado de la aplicacion | `RUNNING`, de 4 a 2 nucleos |
+| Intervenciones del supervisor del job | **0** — ninguna consulta se detuvo |
+| Interrupcion de la escritura | **~9 s** |
+| Al reponer el worker | La aplicacion recupera sus 4 nucleos sola |
+
+Es la unica prueba de fallo que alcanza al motor de procesamiento:
+`failover_test.py` tumba contenedores —broker, Kafka y los dos sumideros—, y en
+`local[*]` no hay executors que matar.

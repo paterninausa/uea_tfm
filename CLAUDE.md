@@ -6,7 +6,7 @@ Este proyecto se desarrolla íntegramente en español, no obstante, las búsqued
 
 ## Qué es este proyecto
 
-TFM (Trabajo Fin de Máster) del Máster Universitario en Análisis de Grandes Volúmenes de Datos (Big Data), Universidad Europea de Andalucía (UEA). Título: "Desarrollo de un sistema escalable de microservicios para el análisis de datos IoT". Entrega: septiembre de 2026.
+TFM (Trabajo Fin de Máster) del Máster Universitario en Análisis de Grandes Volúmenes de Datos (Big Data), Universidad Europea de Andalucía (UEA). Título: "Desarrollo de un sistema escalable de microservicios para el procesamiento y análisis de datos IoT" (Boris añadió "procesamiento" el 21 de agosto de 2026, para equilibrar el peso real del trabajo). Entrega: septiembre de 2026.
 
 El objetivo es implementar un pipeline IoT completo, containerizado y basado exclusivamente en herramientas open-source, siguiendo una **arquitectura Kappa** (flujo único reproducible, sin capa de lotes separada), aplicado a telemetría de consumo energético de edificios.
 
@@ -85,7 +85,7 @@ Reproduce **solo lo que emitiría el contador**. Sin `event_id` ni `sensor_id` (
 1. **Ingesta**: latencia extremo a extremo < 2s (p95); pérdida de mensajes < 0.1%.
 2. **Gobernanza de esquema**: 100% de eventos validados contra el esquema Avro registrado; cero fallos de deserialización ante evolución compatible.
 3. **Procesamiento**: latencia de micro-lote < 3s tras cierre de ventana; throughput sostenido ≥ 50 eventos/segundo.
-4. **Visualización**: refresco de dashboards Grafana < 5s; ≥ 3 reportes en Power BI (consumo energético, eficiencia operativa, detección de anomalías).
+4. **Visualización**: refresco de Grafana < 5s; **≥ 1 dashboard en Power BI** que cubra consumo energético, eficiencia operativa y detección de anomalías. Rebajado desde "≥ 3 reportes" el 21 de agosto de 2026: el criterio de Boris es no prometer de más y entregar lo adicional como extra.
 5. **Escalabilidad y resiliencia**: ≥ 500 sensores concurrentes con degradación de throughput < 20% respecto a una carga base de 100; recuperación ante fallo de un servicio < 60s sin pérdida de datos.
 
 ### Cifras medidas sobre ASHRAE (estado limpio, 50.000 eventos a 400 ev/s)
@@ -220,6 +220,18 @@ Funcionando: stack completo en Docker; preparación de datos (tres Parquet: hech
 **Medición de KPIs, en `pipeline/tools/`** (agosto de 2026). Cinco scripts que NO forman parte del pipeline: `reset_state.py` (estado limpio reproducible), `load_ladder.py` (escalera del Objetivo 5, midiendo en el consumo), `kpi_report.py` (cuadro completo en Markdown), `failover_test.py` (recuperación ante fallo) y `watermark_poison_test.py` (demuestra que un evento con fecha futura detiene la agregación de todos los sensores). El ciclo de medición está en `pipeline/tools/README.md`.
 
 **`load_generator.py` se retiró y no debe volver.** Alcanzaba tasas altas con una ventana de mensajes en vuelo: N publicaciones sin confirmar desde un único cliente. Era un artificio para que un cliente hiciera el trabajo de 652, y `--clients` consigue lo mismo sin inventar nada. Se comprobó además que con ventana 1 se comportaba exactamente igual que el simulador: eran el mismo programa con dos nombres.
+
+**Spark corre en `local[*]` por defecto, y es una limitación de recursos, no de diseño.** El job acepta `--master`, así que el mismo código corre distribuido sin tocar una línea: verificado el 21 de agosto de 2026 con `pipeline/spark/cluster.sh`, que levanta un master y N workers con `spark-class` (la distribución de PySpark por pip **no trae** `start-master.sh` en `sbin/`). Con la misma carga —40.000 eventos a 358 ev/s— y el mismo estado limpio:
+
+| Modo | Latencia ingesta p95 | Lote `metricas` p95 | ¿El simulador sostuvo el ritmo? |
+|---|---|---|---|
+| `local[*]`, 12 núcleos | **1,190 s** ✓ | 891 ms | Sí |
+| standalone, 4 núcleos | 14,302 s ✗ | 1.554 ms | Sí |
+| standalone, 10 núcleos | 34,274 s ✗ | **3.194 ms** ✗ | **No: 9,5 s de retraso** |
+
+**Cuanta más CPU se da al clúster, peor va todo**, porque el simulador con sus 648 conexiones, el bridge, el driver, los executors y siete contenedores comparten **una sola máquina de 12 núcleos**: con 10 para el clúster la carga llegó a 19,76 y la medición pasó a medir la máquina en vez del pipeline. En la nube esto no ocurriría —productor y clúster en máquinas distintas—, y la vía natural sería `--master k8s://` sobre Kubernetes, o EMR Serverless / EMR on EKS en AWS (Fargate encaja mal con el modelo driver/executor). Las mediciones de KPI se toman en `local[*]`; standalone se reserva para demostrar.
+
+**El fallo de un executor sí está medido**: matando un worker con `kill -9`, la aplicación siguió `RUNNING` bajando de 4 a 2 núcleos, con **0 intervenciones del supervisor**, **~9 s** de interrupción y recuperación automática de los 4 núcleos al reponerlo. Es la única prueba de fallo que alcanza al motor de procesamiento, porque `failover_test.py` solo tumba contenedores.
 
 **El job de Spark son tres módulos**, cada uno con una responsabilidad: `stream_processing.py` (qué se calcula), `database_writers.py` (cómo se persiste, con el UPSERT y sus reintentos) y `monitoring.py` (progreso de micro-lote y vigilancia de las consultas). Antes era un fichero de 871 líneas donde más de la mitad no era lógica de streaming.
 
