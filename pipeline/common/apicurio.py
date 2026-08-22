@@ -41,23 +41,6 @@ def encode_header(global_id: int) -> bytes:
     return struct.pack(HEADER_FORMAT, MAGIC_BYTE, global_id)
 
 
-def decode_header(data: bytes) -> tuple[int, bytes]:
-    """Separa la cabecera del payload. Devuelve (global_id, payload_avro).
-
-    Lanza SchemaRegistryError si el mensaje no lleva el byte magico esperado:
-    es la senal de que algo ha escrito en el topico con otro formato, y es
-    preferible detectarlo aqui que producir campos con valores absurdos al
-    deserializar bytes desalineados.
-    """
-    if len(data) < HEADER_SIZE:
-        raise SchemaRegistryError(f"Mensaje demasiado corto ({len(data)} bytes) para llevar cabecera")
-
-    magic, global_id = struct.unpack(HEADER_FORMAT, data[:HEADER_SIZE])
-    if magic != MAGIC_BYTE:
-        raise SchemaRegistryError(f"Byte magico inesperado: 0x{magic:02x} (se esperaba 0x00)")
-
-    return global_id, data[HEADER_SIZE:]
-
 
 class ApicurioClient:
     """Acceso de solo lectura a los esquemas del registro, con cache.
