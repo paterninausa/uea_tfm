@@ -2,10 +2,19 @@
 Cliente del registro de esquemas Apicurio y formato de cable de los eventos.
 
 Dos cosas que van juntas porque una depende de la otra: resolver el esquema Avro
-vigente contra Apicurio, y la cabecera de 5 bytes —byte magico 0x00 mas el
-`globalId` en big-endian— que precede al payload Avro schemaless. Sin esa
-cabecera, el consumidor tendria que asumir con que version se escribio cada
-mensaje; con ella, cada evento declara la suya.
+vigente contra Apicurio, y la cabecera de 4 bytes —el `globalId` en big-endian—
+que precede al payload Avro schemaless. Sin esa cabecera, el consumidor tendria
+que asumir con que version se escribio cada mensaje; con ella, cada evento
+declara la suya.
+
+NO SE INCLUYE EL BYTE MAGICO del formato de Confluent. Ese byte identifica la
+convencion de transporte y permitiria distinguir versiones del propio formato de
+cabecera, pero en este sistema no discrimina nada: en el topico existe un unico
+formato, lo escribe un unico productor y el consumidor lo asume sin comprobarlo.
+Se omite en consecuencia con el criterio del proyecto de no mantener elementos
+que no cumplen funcion. La contrapartida es que la cabecera deja de coincidir
+con la del ecosistema Kafka, de modo que un consumidor generico que espere el
+byte magico leeria el mensaje desalineado.
 
 NO CONFUNDIR CON `pipeline/schemas/register_schema.py`. Aquel es el script que
 REGISTRA el contrato y sus reglas, y se ejecuta a mano cuando el esquema cambia.
@@ -23,9 +32,8 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-MAGIC_BYTE = 0x00
-HEADER_FORMAT = ">BI"  # 1 byte magico + 4 bytes globalId big-endian
-HEADER_SIZE = struct.calcsize(HEADER_FORMAT)  # 5
+HEADER_FORMAT = ">I"  # 4 bytes: globalId big-endian
+HEADER_SIZE = struct.calcsize(HEADER_FORMAT)  # 4
 
 DEFAULT_REGISTRY_URL = "http://localhost:8080"
 DEFAULT_GROUP = "iot"
@@ -37,8 +45,8 @@ class SchemaRegistryError(RuntimeError):
 
 
 def encode_header(global_id: int) -> bytes:
-    """Construye la cabecera de 5 bytes que precede al payload Avro."""
-    return struct.pack(HEADER_FORMAT, MAGIC_BYTE, global_id)
+    """Construye la cabecera de 4 bytes que precede al payload Avro."""
+    return struct.pack(HEADER_FORMAT, global_id)
 
 
 

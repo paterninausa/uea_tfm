@@ -133,11 +133,12 @@ def read_kafka(spark: SparkSession, args: argparse.Namespace) -> DataFrame:
 
 
 def decode_events(raw: DataFrame, schema_json: str) -> DataFrame:
-    """Quita la cabecera de 5 bytes y deserializa el payload Avro.
+    """Quita la cabecera de 4 bytes y deserializa el payload Avro.
 
-    La cabecera es [0x00][globalId de 4 bytes big-endian]; el globalId se
-    extrae a una columna para poder comprobar que todos los mensajes se
-    escribieron con el esquema que este job espera.
+    La cabecera es [globalId de 4 bytes big-endian]; el globalId se extrae a una
+    columna para poder comprobar que todos los mensajes se escribieron con el
+    esquema que este job espera. No lleva el byte magico del formato de
+    Confluent: el motivo esta en `common/apicurio.py`.
 
     LIMITACION CONOCIDA: se deserializa todo el flujo con un unico esquema, el
     vigente al arrancar. Avro es un formato posicional, de modo que leer bytes
@@ -154,7 +155,7 @@ def decode_events(raw: DataFrame, schema_json: str) -> DataFrame:
         F.col("offset").alias("kafka_offset"),
         F.col("value").alias("raw_value"),
         # conv(hex(...), 16, 10) interpreta los 4 bytes como entero big-endian.
-        F.conv(F.hex(F.substring(F.col("value"), 2, 4)), 16, 10)
+        F.conv(F.hex(F.substring(F.col("value"), 1, HEADER_SIZE)), 16, 10)
             .cast("long").alias("schema_global_id"),
         F.expr(f"substring(value, {HEADER_SIZE + 1}, length(value) - {HEADER_SIZE})")
             .alias("avro_payload"),

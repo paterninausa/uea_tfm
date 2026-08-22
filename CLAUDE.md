@@ -78,7 +78,7 @@ Reproduce **solo lo que emitiría el contador**. Sin `event_id` ni `sensor_id` (
 
 **Clave del mensaje en Kafka**: solo `(building_id, meter_type)` — el sensor, 652 valores, serializado como `156:electricity`. Mantiene en orden y en la misma partición las lecturas de cada contador, que es lo que necesitan las ventanas de Spark. No confundirla con la anterior. Verificado sobre el sistema en agosto de 2026: el bridge conservaba `machine_id` del dataset anterior y la clave era **None en todos los mensajes**, con reparto round-robin y sin ningún error en el log.
 
-**Formato de cable**: byte mágico `0x00` + `globalId` de 4 bytes big-endian + payload Avro schemaless. Definido en `pipeline/common/apicurio.py` y compartido por productor y consumidor.
+**Formato de cable**: `globalId` de 4 bytes big-endian + payload Avro schemaless. Definido en `pipeline/common/apicurio.py` y compartido por productor y consumidor. **Sin el byte mágico `0x00` del formato de Confluent**, retirado el 23 de agosto de 2026: identifica la convención de transporte, pero en este sistema no discrimina nada —un solo formato en el tópico, un solo productor, y el consumidor no lo comprobaba—. La contrapartida es que la cabecera deja de coincidir con la del ecosistema Kafka.
 
 ## KPIs objetivo (de `docs/capitulos/Objetivos.tex`)
 

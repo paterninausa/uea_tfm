@@ -21,14 +21,18 @@ compartido con el job de Spark, para que productor y consumidor no puedan
 divergir:
 
 ```
-[ 1 byte  ] byte magico 0x00
 [ 4 bytes ] globalId del esquema en Apicurio (big-endian)
 [ resto   ] payload Avro binario schemaless
 ```
 
-Es el formato de cable de Confluent. La alternativa —Avro "pelado", sin
-cabecera— obligaria al consumidor a asumir con que esquema se escribio cada
-mensaje. Con la cabecera, **cada evento declara su version de esquema**, que es
+La alternativa —Avro "pelado", sin cabecera— obligaria al consumidor a asumir
+con que esquema se escribio cada mensaje.
+
+NO se incluye el byte magico 0x00 del formato de Confluent. Ese byte identifica
+la convencion de transporte, pero aqui no discrimina nada: en el topico hay un
+unico formato, lo escribe un unico productor y el consumidor lo asume sin
+comprobarlo. La contrapartida es que un consumidor generico que espere el byte
+magico leeria la cabecera desplazada un byte. Con la cabecera, **cada evento declara su version de esquema**, que es
 lo que permite que convivan dos versiones en el mismo topico durante una
 evolucion (Objetivo 2).
 
