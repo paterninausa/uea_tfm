@@ -2,7 +2,7 @@
   "type": "record",
   "name": "TelemetryEvent",
   "namespace": "es.uea.tfm.iot",
-  "doc": "Lectura de un contador de energia de edificio. Reproduce lo que emitiria el propio contador: quien es, cuando midio y cuanto midio. Los atributos del edificio (emplazamiento, uso, superficie, ano de construccion, plantas) NO viajan en el evento: son estaticos y viven en la tabla de dimension, que Spark incorpora con un broadcast join. La clave natural del evento es la terna (building_id, meter_type, timestamp), verificada unica sobre las 5.682.185 lecturas del subconjunto; es lo que hace idempotente el reprocesamiento del log de Kafka.",
+  "doc": "Lectura de un contador de energia de edificio. Reproduce lo que emitiria el propio contador: quien es, cuando y cuanto midio. Los atributos del edificio (emplazamiento, uso, superficie, ano de construccion, plantas) NO viajan en el evento: son estaticos y viven en la tabla de dimension, que Spark incorpora con un broadcast join. La clave natural del evento es la terna (building_id, meter_type, timestamp), verificada unica sobre las 5.682.185 lecturas del subconjunto; es lo que hace idempotente el reprocesamiento del log de Kafka.",
   "fields": [
     {
       "name": "building_id",
