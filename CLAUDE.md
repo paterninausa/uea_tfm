@@ -78,7 +78,9 @@ Reproduce **solo lo que emitiría el contador**. Sin `event_id` ni `sensor_id` (
 
 **Clave del mensaje en Kafka**: solo `(building_id, meter_type)` — el sensor, 652 valores, serializado como `156:electricity`. Mantiene en orden y en la misma partición las lecturas de cada contador, que es lo que necesitan las ventanas de Spark. No confundirla con la anterior. Verificado sobre el sistema en agosto de 2026: el bridge conservaba `machine_id` del dataset anterior y la clave era **None en todos los mensajes**, con reparto round-robin y sin ningún error en el log.
 
-**Formato de cable**: `globalId` de 4 bytes big-endian + payload Avro schemaless. Definido en `pipeline/common/apicurio.py` y compartido por productor y consumidor. **Sin el byte mágico `0x00` del formato de Confluent**, retirado el 23 de agosto de 2026: identifica la convención de transporte, pero en este sistema no discrimina nada —un solo formato en el tópico, un solo productor, y el consumidor no lo comprobaba—. La contrapartida es que la cabecera deja de coincidir con la del ecosistema Kafka.
+**Formato de cable**: byte mágico `0x00` + id de esquema de 4 bytes big-endian + payload Avro schemaless — el formato de facto del ecosistema Kafka. Lo escribe el **`AvroSerializer` de `confluent-kafka` (Apache 2.0)** en el bridge; Spark lo desmonta a mano con `substring`/`conv` (sin librería JVM). El tamaño de la cabecera y la resolución del esquema se comparten en `pipeline/common/apicurio.py`. **El byte mágico se reintrodujo el 25 de agosto de 2026** al adoptar el SerDe de Confluent: se había retirado el 23 de agosto cuando el bridge serializaba a mano con `fastavro`, pero al pasar al SerDe estándar la cabecera vuelve a coincidir con la del ecosistema Kafka, y eso hace los eventos legibles por cualquier consumidor compatible con un registro de esquemas.
+
+**Gobernanza por la API compatible con Confluent (ccompat), no la nativa de Apicurio.** El `AvroSerializer` resuelve el esquema por el protocolo de Confluent: un **subject** plano `iot.telemetry.raw-value` (convención `{topic}-value`), sin el concepto de «grupo» propio de Apicurio. `register_schema.py` registra por ese endpoint (`POST /subjects`) y fija la regla de compatibilidad por `PUT /config`. **El id que viaja en el cable es el de ccompat, no el `globalId` nativo**: son espacios de identificadores distintos, y la única registración gobernada es la de ccompat. Se descartó la API nativa (grupo `iot`) porque el SerDe no la ve —auto-registraría un duplicado sin gobernar— y porque «grupo» no existe en el estándar de Confluent. La barrera para no usar el SerDe antes era falsa: `confluent-kafka` es Apache 2.0 y su cliente Python habla con el ccompat de Apicurio; lo que faltaba no era la librería sino registrar por ese endpoint. Verificado el 25 de agosto de 2026 de extremo a extremo: la validación de dominio (incluido el rechazo de `building_id=156.9`), la DLQ, `check_enum_order` y el rechazo de cambios incompatibles se conservan.
 
 ## KPIs objetivo (de `docs/capitulos/Objetivos.tex`)
 
@@ -159,7 +161,7 @@ Medido con el generador asíncrono el 18 de agosto de 2026, con el bridge suscri
 
 ## Entorno de desarrollo
 
-- **venv + pip** (no conda). Dependencias en `pipeline/requirements.txt`. `aiomqtt` es la que permite al simulador mantener una conexión por sensor: con paho serían 652 hilos, con aiomqtt son 652 corrutinas en uno solo.
+- **venv + pip** (no conda). Dependencias en `pipeline/requirements.txt`. `aiomqtt` es la que permite al simulador mantener una conexión por sensor: con paho serían 652 hilos, con aiomqtt son 652 corrutinas en uno solo. `confluent-kafka[avro]` aporta el `AvroSerializer` del bridge; arrastra `cryptography`, `httpx`, `authlib` y `cffi` (dependencia notablemente más pesada que `fastavro` solo, que se conserva porque lo usan `register_schema.py` y la prueba del watermark, y porque el propio SerDe serializa con él por debajo).
 - **Java 21 LTS gestionado por SDKMAN** (ver `.sdkmanrc`) — única fuente de JDK. PySpark 4.x requiere Java 17+.
 - Setup: `bash pipeline/setup_env.sh`.
 - Los conectores JVM de Spark (Kafka, Avro, JDBC PostgreSQL) se resuelven de Maven Central en el primer arranque y quedan en **`~/.ivy2.5.2`** (Spark 4.x usa directorio versionado, no `~/.ivy2`). No borrar esa caché.
@@ -201,7 +203,7 @@ Medido con el generador asíncrono el 18 de agosto de 2026, con el bridge suscri
 - **`lastProgress` no sirve para un KPI.** Sondeando cada 10 s con un trigger de 1 s se pierden nueve de cada diez lotes, y la mediana de una muestra con huecos no es la mediana de los lotes. `recentProgress` conserva los últimos 100 informes y permite deduplicar por `batchId`.
 - **`with psycopg2.connect(...)` hace commit pero NO cierra la conexión.** En un hilo que escribe cada 10 segundos, eso es una fuga de sockets que tarda horas en manifestarse.
 - **Compose hace word-splitting** cuando `command` es un string multilínea y se come las continuaciones `\`.
-- **Apicurio devuelve las violaciones de regla como HTTP 400**, no 409; detectarlas por el campo `name` del cuerpo.
+- **La API ccompat de Apicurio devuelve las violaciones de regla como HTTP 409**, con el detalle en el campo `message` (`RuleViolationException`). No confundir con la API nativa v3, que las devolvía como HTTP 400 con el campo `name`; `register_schema.py` usa ccompat desde el 25 de agosto de 2026 y detecta por `message`.
 
 ## Informe de tolerancia a fallos
 
@@ -235,7 +237,7 @@ Funcionando: stack completo en Docker; preparación de datos (tres Parquet: hech
 
 **El job de Spark son tres módulos**, cada uno con una responsabilidad: `stream_processing.py` (qué se calcula), `database_writers.py` (cómo se persiste, con el UPSERT y sus reintentos) y `monitoring.py` (progreso de micro-lote y vigilancia de las consultas). Antes era un fichero de 871 líneas donde más de la mitad no era lógica de streaming.
 
-**Código compartido, en `pipeline/common/`**: `logging_setup.py`, `connection_args.py`, `apicurio.py` (cliente del registro y formato de cable) y `stop_event.py`. La interpretación del dataset vive en `simulator/telemetry_dataset.py`, junto a su único consumidor. El criterio es que nada que usen dos piezas viva duplicado en ambas.
+**Código compartido, en `pipeline/common/`**: `logging_setup.py`, `connection_args.py`, `apicurio.py` (resolución del esquema por ccompat con el cliente de `confluent-kafka` y formato de cable de Confluent) y `stop_event.py`. La interpretación del dataset vive en `simulator/telemetry_dataset.py`, junto a su único consumidor. El criterio es que nada que usen dos piezas viva duplicado en ambas.
 
 **Registro de actividad**: todos los procesos escriben en `pipeline/logs/<nombre>.log` además de por consola, con la orden completa en la cabecera de cada arranque. Rotan a 3 MB × 3. No se versionan.
 

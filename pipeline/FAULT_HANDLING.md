@@ -20,7 +20,7 @@ Cada evento atraviesa cuatro controles antes de contar como bueno:
 
 | Capa | Donde | Que comprueba | Que ocurre si no pasa |
 |---|---|---|---|
-| Forma | Bridge, `schemaless_writer` | Campos presentes, tipos y simbolos del enum | Se desvia a la DLQ con el motivo |
+| Forma | Bridge, `AvroSerializer` | Campos presentes, tipos y simbolos del enum | Se desvia a la DLQ con el motivo |
 | Dominio | Bridge, `validar_dominio` | Fecha no futura, lectura finita y no negativa | Se desvia a la DLQ con el motivo |
 | Dominio (2.a linea) | Spark, `aggregate_metrics` | Fecha no futura, sobre lo que ya esta en Kafka | Se aparta del agregado, sigue en `telemetry_events` |
 | Referencia | Spark, `aggregate_metrics` | Que el edificio exista en la dimension | Se aparta del agregado y se avisa |

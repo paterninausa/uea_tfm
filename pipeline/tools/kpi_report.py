@@ -46,10 +46,10 @@ from common.connection_args import (  # noqa: E402
 )
 from common.logging_setup import DIRECTORIO_LOGS, configurar_logging  # noqa: E402
 from common.apicurio import (  # noqa: E402
-    DEFAULT_ARTIFACT,
-    DEFAULT_GROUP,
     DEFAULT_REGISTRY_URL,
-    ApicurioClient,
+    DEFAULT_SUBJECT,
+    latest_schema,
+    schema_registry_client,
 )
 
 logger = logging.getLogger("kpi_report")
@@ -188,14 +188,15 @@ def descartes_mosquitto(timeout: int = 12) -> int | None:
 # Objetivo 2: gobernanza de esquema
 # --------------------------------------------------------------------------
 def kpi_esquema(args) -> dict:
-    registro = ApicurioClient(args.registry_url)
-    global_id, esquema = registro.latest(args.group, args.artifact)
+    sr_client = schema_registry_client(args.registry_url)
+    schema_id, schema_str = latest_schema(sr_client, args.subject)
+    esquema = json.loads(schema_str)
 
     validos = offsets_kafka(args.topic)
     invalidos = offsets_kafka(args.dlq_topic)
     total = validos + invalidos
     return {
-        "global_id": global_id,
+        "schema_id": schema_id,
         "nombre": f"{esquema.get('namespace', '')}.{esquema.get('name', '')}",
         "campos": len(esquema.get("fields", [])),
         "validos": validos,
@@ -333,7 +334,7 @@ def construir_informe(ingesta, esquema, run_id, procesamiento, grafana, carga) -
     if esquema:
         L += ["## Objetivo 2 — Gobernanza de esquema", "",
               "| Metrica | Resultado | Objetivo |", "|---|---|---|",
-              f"| Esquema vigente | `{esquema['nombre']}` globalId={esquema['global_id']}, "
+              f"| Esquema vigente | `{esquema['nombre']}` id={esquema['schema_id']}, "
               f"{esquema['campos']} campos | — |",
               f"| Eventos validados (topico raw) | {esquema['validos']:,} | — |",
               f"| Eventos rechazados (DLQ) | {esquema['dlq']:,} | — |",
@@ -446,8 +447,8 @@ def parse_args() -> argparse.Namespace:
     anadir_argumentos_bd(p)
     anadir_argumentos_kafka(p)
     p.add_argument("--registry-url", default=DEFAULT_REGISTRY_URL)
-    p.add_argument("--group", default=DEFAULT_GROUP)
-    p.add_argument("--artifact", default=DEFAULT_ARTIFACT)
+    p.add_argument("--subject", default=DEFAULT_SUBJECT,
+                   help="Subject del esquema en el registro (convencion {topic}-value)")
     p.add_argument("--run-id", default=None,
                    help="Ejecucion del job a analizar (por defecto, la ultima)")
     p.add_argument("--grafana-url", default="http://localhost:3000")

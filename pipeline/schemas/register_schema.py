@@ -1,13 +1,24 @@
 """
-Registro del contrato de datos en Apicurio Schema Registry (Objetivo 2).
+Registro del contrato de datos en Apicurio via la API compatible con Confluent
+(ccompat) (Objetivo 2).
 
-Publica un esquema `.avsc` como artefacto del registro y aplica sobre el las
-reglas de gobernanza. NO forma parte del pipeline en ejecucion: se ejecuta a
+Publica un esquema `.avsc` como un *subject* del registro y aplica sobre el la
+regla de compatibilidad. NO forma parte del pipeline en ejecucion: se ejecuta a
 mano cuando cambia el contrato. El bridge y el job de Spark solo LEEN del
-registro, a traves de `pipeline/common/schema_registry.py`.
+registro.
 
-Es idempotente, de modo que ejecutarlo sirve tambien de comprobacion: si el
-`.avsc` coincide con lo registrado, lo dice y no toca nada.
+Se usa la API ccompat —y no la nativa v3 de Apicurio— porque el productor
+serializa con el `AvroSerializer` de confluent-kafka, que resuelve el esquema
+por el protocolo de Confluent: subjects en un namespace plano, sin el concepto
+de "grupo" propio de Apicurio. Es el estandar de facto del ecosistema Kafka.
+Registrar por aqui hace que exista UN solo esquema —el que el productor
+referencia y el que viaja identificado en cada mensaje—, en lugar de la
+registracion nativa (grupo iot) que el AvroSerializer no ve y que duplicaria el
+esquema sin gobernar.
+
+Es idempotente: si el `.avsc` coincide con lo registrado, el registro devuelve
+el id de la version existente y no crea un duplicado, de modo que ejecutarlo
+sirve tambien de comprobacion.
 
 Uso:
     python register_schema.py
@@ -28,13 +39,15 @@ from fastavro import parse_schema
 
 logger = logging.getLogger("register_schema")
 
-REGISTRY_URL = "http://localhost:8080"
+# API compatible con Confluent. El AvroSerializer de confluent-kafka habla este
+# protocolo, no la API nativa v3 de Apicurio.
+CCOMPAT_URL = "http://localhost:8080/apis/ccompat/v7"
 
-# Un unico artefacto en todo el proyecto. El sufijo "-value" sigue la convencion
-# TopicNameStrategy: el esquema describe el VALOR de los mensajes del topico
-# iot.telemetry.raw.
-GROUP = "iot"
-ARTIFACT = "iot.telemetry.raw-value"
+# El subject sigue la convencion TopicNameStrategy de Confluent: {topic}-value,
+# porque el esquema describe el VALOR de los mensajes del topico
+# iot.telemetry.raw. En el protocolo de Confluent no hay grupos: los subjects
+# viven en un namespace plano.
+SUBJECT = "iot.telemetry.raw-value"
 
 # FULL_TRANSITIVE: toda version nueva debe ser compatible hacia atras Y hacia
 # adelante, y no solo con la version anterior sino con todas las anteriores. Es
@@ -42,9 +55,10 @@ ARTIFACT = "iot.telemetry.raw-value"
 # antiguo podria romperse ante un evento nuevo.
 COMPATIBILITY = "FULL_TRANSITIVE"
 
-# VALIDITY=FULL hace que el registro rechace contenido que no sea un esquema
-# Avro valido, en lugar de almacenarlo y fallar mas tarde en los consumidores.
-VALIDITY = "FULL"
+# NO hay equivalente a la regla VALIDITY de la API nativa en el protocolo de
+# Confluent: el registro valida la sintaxis del esquema de forma implicita al
+# registrarlo, y ademas `load_and_validate` ya lo comprueba en local con
+# fastavro antes de enviar nada.
 
 TIMEOUT = 15
 
@@ -53,49 +67,43 @@ class RegistryError(RuntimeError):
     """Error devuelto por la API del registro, o incumplimiento de una regla."""
 
 
-def _api(*parts: str) -> str:
-    return "/".join([REGISTRY_URL, "apis/registry/v3", *parts])
-
-
-def _artifact_url() -> str:
-    return _api("groups", GROUP, "artifacts", ARTIFACT)
+def _ccompat(*parts: str) -> str:
+    return "/".join([CCOMPAT_URL, *parts])
 
 
 def _raise_if_rule_violation(resp) -> None:
     """Traduce una violacion de regla a un error legible.
 
-    Se comprobo contra Apicurio 3.3.1 que una incompatibilidad se devuelve como
-    HTTP 400 con name=RuleViolationException, no como 409. Por eso la deteccion
-    se hace por el campo `name` del cuerpo y no por el codigo de estado.
+    Se comprobo contra Apicurio 3.3.1 que la API ccompat devuelve una
+    incompatibilidad como HTTP 409 con el detalle en el campo `message`
+    (RuleViolationException). No usa la estructura name/causes de la API nativa.
     """
-    if resp.status_code not in (400, 409):
+    if resp.status_code not in (409, 422):
         return
     try:
         detalle = resp.json()
     except ValueError:
         return
-    if detalle.get("name") != "RuleViolationException":
+    mensaje = detalle.get("message", "")
+    if "RuleViolation" not in mensaje and "ncompatible" not in mensaje:
         return
 
-    logger.error("El registro RECHAZO el esquema: viola una regla de gobernanza activa.")
-    for causa in detalle.get("causes", []):
-        contexto = causa.get("context", "")
-        logger.error("  - %s%s", causa.get("description"), f"  (en {contexto})" if contexto else "")
-    raise RegistryError("esquema rechazado por las reglas del registro (ver causas arriba)")
+    logger.error("El registro RECHAZO el esquema: viola la regla de compatibilidad activa.")
+    logger.error("  %s", mensaje)
+    raise RegistryError("esquema rechazado por las reglas del registro (ver detalle arriba)")
 
 
 def check_registry() -> None:
     """Comprueba que el registro responde, con un mensaje accionable si no."""
     try:
-        resp = requests.get(_api("system/info"), timeout=TIMEOUT)
+        resp = requests.get(_ccompat("subjects"), timeout=TIMEOUT)
         resp.raise_for_status()
     except requests.RequestException as exc:
         raise RegistryError(
-            f"No se pudo contactar con el registro en {REGISTRY_URL}. "
+            f"No se pudo contactar con el registro ccompat en {CCOMPAT_URL}. "
             "Levanta el stack: docker compose -f pipeline/docker-compose.yml up -d"
         ) from exc
-    info = resp.json()
-    logger.info("Registro accesible: %s %s", info.get("name"), info.get("version"))
+    logger.info("Registro ccompat accesible (%d subjects)", len(resp.json()))
 
 
 def load_and_validate(schema_path: Path) -> str:
@@ -125,11 +133,14 @@ def load_and_validate(schema_path: Path) -> str:
     return raw
 
 
-def artifact_exists() -> bool:
-    resp = requests.get(_artifact_url(), timeout=TIMEOUT)
-    if resp.status_code in (200, 404):
-        return resp.status_code == 200
-    raise RegistryError(f"Respuesta inesperada al consultar el artefacto: {resp.status_code}")
+def subject_versions() -> list:
+    """Devuelve la lista de numeros de version del subject, o [] si no existe."""
+    resp = requests.get(_ccompat("subjects", SUBJECT, "versions"), timeout=TIMEOUT)
+    if resp.status_code == 404:
+        return []
+    if resp.status_code != 200:
+        raise RegistryError(f"Respuesta inesperada al consultar el subject: {resp.status_code}")
+    return resp.json()
 
 
 def _collect_enums(nodo, acc: dict | None = None) -> dict:
@@ -168,16 +179,18 @@ def check_enum_order(contenido_nuevo: str) -> None:
     Por eso solo se admite ANADIR simbolos al final, que conserva el indice de
     todos los existentes.
     """
-    if not artifact_exists():
+    if not subject_versions():
         return
 
-    resp = requests.get(_artifact_url() + "/versions/branch=latest/content", timeout=TIMEOUT)
+    resp = requests.get(_ccompat("subjects", SUBJECT, "versions", "latest"), timeout=TIMEOUT)
     if resp.status_code != 200:
         logger.warning("No se pudo leer la version registrada para comparar enums (HTTP %s)",
                        resp.status_code)
         return
 
-    viejos = _collect_enums(json.loads(resp.text))
+    # ccompat devuelve el esquema como una cadena JSON en el campo `schema`.
+    registrado = resp.json().get("schema")
+    viejos = _collect_enums(json.loads(registrado))
     nuevos = _collect_enums(json.loads(contenido_nuevo))
 
     for nombre, simbolos_viejos in viejos.items():
@@ -199,48 +212,28 @@ def check_enum_order(contenido_nuevo: str) -> None:
             )
 
 
-def set_rule(rule_type: str, config: str) -> None:
-    """Configura una regla sobre el artefacto (la crea o actualiza)."""
-    rules_url = _artifact_url() + "/rules"
-    resp = requests.post(rules_url, json={"ruleType": rule_type, "config": config}, timeout=TIMEOUT)
-    if resp.status_code == 409:
-        resp = requests.put(f"{rules_url}/{rule_type}",
-                            json={"ruleType": rule_type, "config": config}, timeout=TIMEOUT)
-    if resp.status_code not in (200, 204):
-        raise RegistryError(f"No se pudo configurar la regla {rule_type}: {resp.status_code}")
-    logger.info("Regla %s = %s", rule_type, config)
+def set_compatibility(nivel: str) -> None:
+    """Fija la regla de compatibilidad del subject (PUT /config/{subject})."""
+    resp = requests.put(_ccompat("config", SUBJECT),
+                        json={"compatibility": nivel}, timeout=TIMEOUT)
+    if resp.status_code != 200:
+        raise RegistryError(
+            f"No se pudo configurar la compatibilidad: {resp.status_code} {resp.text}")
+    logger.info("Regla COMPATIBILITY = %s", nivel)
 
 
-def upsert(contenido: str) -> tuple[str, bool]:
-    """Registra el contenido y devuelve (version, es_nueva).
+def register(contenido: str) -> int:
+    """Registra el esquema bajo el subject y devuelve su id.
 
-    Se usa el endpoint de creacion de artefacto con
-    ifExists=FIND_OR_CREATE_VERSION, y no el de anadir version, porque es el
-    unico con semantica idempotente: si el contenido coincide con una version
-    ya registrada, devuelve ESA version en lugar de crear un duplicado. El
-    endpoint /versions crea una version nueva en cada llamada aunque el
-    contenido sea identico.
+    POST /subjects/{s}/versions es idempotente: si el esquema ya esta registrado
+    bajo el subject, devuelve el id existente en lugar de crear un duplicado.
     """
-    versiones_antes = set()
-    if artifact_exists():
-        resp = requests.get(_artifact_url() + "/versions", timeout=TIMEOUT)
-        resp.raise_for_status()
-        versiones_antes = {v["version"] for v in resp.json().get("versions", [])}
-
-    body = {
-        "artifactId": ARTIFACT,
-        "artifactType": "AVRO",
-        "firstVersion": {"content": {"content": contenido, "contentType": "application/json"}},
-    }
-    resp = requests.post(_api("groups", GROUP, "artifacts"),
-                         params={"ifExists": "FIND_OR_CREATE_VERSION"},
-                         json=body, timeout=TIMEOUT)
+    resp = requests.post(_ccompat("subjects", SUBJECT, "versions"),
+                         json={"schemaType": "AVRO", "schema": contenido}, timeout=TIMEOUT)
     _raise_if_rule_violation(resp)
-    if resp.status_code not in (200, 201):
-        raise RegistryError(f"No se pudo registrar el artefacto: {resp.status_code} {resp.text}")
-
-    version = resp.json()["version"]["version"]
-    return version, version not in versiones_antes
+    if resp.status_code != 200:
+        raise RegistryError(f"No se pudo registrar el esquema: {resp.status_code} {resp.text}")
+    return resp.json()["id"]
 
 
 def run(args: argparse.Namespace) -> int:
@@ -248,27 +241,27 @@ def run(args: argparse.Namespace) -> int:
     contenido = load_and_validate(Path(args.schema))
     check_enum_order(contenido)
 
-    existia = artifact_exists()
-    if existia:
-        # Con el artefacto ya creado, las reglas se aplican ANTES de registrar
-        # para que gobiernen el contenido nuevo.
-        set_rule("VALIDITY", VALIDITY)
-        set_rule("COMPATIBILITY", COMPATIBILITY)
+    versiones_antes = subject_versions()
+    existia = bool(versiones_antes)
 
-    version, es_nueva = upsert(contenido)
+    if existia:
+        # Con el subject ya creado, la regla se fija ANTES de registrar para que
+        # gobierne el contenido nuevo.
+        set_compatibility(COMPATIBILITY)
+
+    schema_id = register(contenido)
+    versiones_despues = subject_versions()
 
     if not existia:
-        # Las reglas no pueden asociarse a un artefacto que aun no existe, asi
-        # que en el primer registro se crea antes y se configuran despues. La
-        # primera version no tiene con que compararse, de modo que no se pierde
-        # ninguna comprobacion por este orden.
-        set_rule("VALIDITY", VALIDITY)
-        set_rule("COMPATIBILITY", COMPATIBILITY)
-        logger.info("Artefacto creado: %s/%s version %s", GROUP, ARTIFACT, version)
-    elif es_nueva:
-        logger.info("Version nueva registrada: %s", version)
+        # En el primer registro no hay con que comparar, asi que la regla se fija
+        # despues de crear el subject sin perder ninguna comprobacion.
+        set_compatibility(COMPATIBILITY)
+        logger.info("Subject creado: %s (schema id=%s)", SUBJECT, schema_id)
+    elif len(versiones_despues) > len(versiones_antes):
+        logger.info("Version nueva registrada: %s (schema id=%s)",
+                    versiones_despues[-1], schema_id)
     else:
-        logger.info("Sin cambios: el contenido ya estaba registrado como version %s.", version)
+        logger.info("Sin cambios: el contenido ya estaba registrado (schema id=%s).", schema_id)
 
     return 0
 

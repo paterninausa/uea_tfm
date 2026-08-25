@@ -4,7 +4,7 @@ Microservicio que conecta el broker MQTT con el log de Kafka, validando cada
 evento contra el esquema Avro registrado en Apicurio.
 
 ```
-iot/{company}/{site}/{machine}/telemetry            iot.telemetry.raw
+iot/{building_id}/{meter_type}/telemetry            iot.telemetry.raw
     (JSON, QoS 1)   -->   [ bridge ]   -->   Avro + cabecera de esquema
                                 \
                                  -->   iot.telemetry.dlq  (JSON + motivo)
@@ -16,25 +16,30 @@ pago), asi que el puente es codigo propio.
 
 ## Formato del mensaje en Kafka
 
-Definido en [`../common/apicurio.py`](../common/apicurio.py) y
-compartido con el job de Spark, para que productor y consumidor no puedan
-divergir:
+El bridge serializa con el `AvroSerializer` de confluent-kafka, que escribe el
+formato de cable de facto del ecosistema Kafka. La resolucion del esquema y el
+tamano de la cabecera se comparten con el job de Spark en
+[`../common/apicurio.py`](../common/apicurio.py), para que productor y
+consumidor no puedan divergir:
 
 ```
-[ 4 bytes ] globalId del esquema en Apicurio (big-endian)
+[ 1 byte  ] byte magico 0x00
+[ 4 bytes ] id del esquema en el registro (big-endian)
 [ resto   ] payload Avro binario schemaless
 ```
 
-La alternativa —Avro "pelado", sin cabecera— obligaria al consumidor a asumir
-con que esquema se escribio cada mensaje.
+La cabecera hace que **cada evento declare su version de esquema**, lo que
+permite al consumidor resolverla sin acuerdos previos y que convivan dos
+versiones en el mismo topico durante una evolucion (Objetivo 2). La alternativa
+—Avro "pelado", sin cabecera— obligaria a asumir con que esquema se escribio
+cada mensaje.
 
-NO se incluye el byte magico 0x00 del formato de Confluent. Ese byte identifica
-la convencion de transporte, pero aqui no discrimina nada: en el topico hay un
-unico formato, lo escribe un unico productor y el consumidor lo asume sin
-comprobarlo. La contrapartida es que un consumidor generico que espere el byte
-magico leeria la cabecera desplazada un byte. Con la cabecera, **cada evento declara su version de esquema**, que es
-lo que permite que convivan dos versiones en el mismo topico durante una
-evolucion (Objetivo 2).
+El id lo asigna la API compatible con Confluent (ccompat) del registro, no la
+API nativa de Apicurio: son espacios de identificadores distintos, y la unica
+registracion gobernada es la de ccompat (ver
+[`../schemas/register_schema.py`](../schemas/register_schema.py)). Al respetar
+este formato estandar, cualquier consumidor compatible con un registro de
+esquemas puede leer los eventos sin adaptacion.
 
 ## Decisiones de diseño
 
@@ -157,7 +162,7 @@ Medido sobre el stack real (Mosquitto 2.0.22, Kafka 4.3.1 KRaft, Apicurio
 | Particiones utilizadas | 0, 1, 2 |
 
 Los 300 mensajes se releyeron desde Kafka resolviendo el esquema por el
-`globalId` de la cabecera. **Esta medicion es anterior al dataset de ASHRAE y a
+id de la cabecera. **Esta medicion es anterior al dataset de ASHRAE y a
 la correccion de la clave**: se tomo cuando la clave seguia siendo `machine_id`,
 de modo que el reparto por particiones que refleja no es el actual. Verificado
 despues sobre ASHRAE: las claves son del tipo `156:electricity` y el reparto

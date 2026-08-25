@@ -76,11 +76,15 @@ import time
 from io import BytesIO
 from pathlib import Path
 
-from fastavro import schemaless_writer
+from fastavro import parse_schema, schemaless_writer
 from kafka import KafkaProducer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.apicurio import ApicurioClient, encode_header  # noqa: E402
+from common.apicurio import (  # noqa: E402
+    encode_header,
+    latest_schema,
+    schema_registry_client,
+)
 from common.connection_args import (  # noqa: E402
     POSTGRES,
     TIMESCALE,
@@ -184,9 +188,9 @@ def inyectar_evento_futuro(args: argparse.Namespace, building_id: str) -> dict:
     validacion de esquema sin objecion: Avro comprueba la forma, no el
     significado.
     """
-    registro = ApicurioClient(args.registry_url)
-    registro.check()
-    global_id, esquema = registro.latest()
+    sr_client = schema_registry_client(args.registry_url)
+    schema_id, schema_str = latest_schema(sr_client)
+    esquema = parse_schema(json.loads(schema_str))
 
     ahora_ms = int(time.time() * 1000)
     futuro_ms = ahora_ms + int(args.anos_futuro * SEGUNDOS_POR_ANO * 1000)
@@ -200,7 +204,7 @@ def inyectar_evento_futuro(args: argparse.Namespace, building_id: str) -> dict:
     }
 
     buf = BytesIO()
-    buf.write(encode_header(global_id))
+    buf.write(encode_header(schema_id))
     schemaless_writer(buf, esquema, evento)
 
     productor = KafkaProducer(bootstrap_servers=args.bootstrap_servers)

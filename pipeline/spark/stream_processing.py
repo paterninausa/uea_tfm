@@ -54,12 +54,12 @@ from pyspark.sql.avro.functions import from_avro
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.apicurio import (  # noqa: E402
-    DEFAULT_ARTIFACT,
-    DEFAULT_GROUP,
     DEFAULT_REGISTRY_URL,
+    DEFAULT_SUBJECT,
     HEADER_SIZE,
-    ApicurioClient,
     SchemaRegistryError,
+    latest_schema,
+    schema_registry_client,
 )
 from common.connection_args import (  # noqa: E402
     POSTGRES,
@@ -133,12 +133,12 @@ def read_kafka(spark: SparkSession, args: argparse.Namespace) -> DataFrame:
 
 
 def decode_events(raw: DataFrame, schema_json: str) -> DataFrame:
-    """Quita la cabecera de 4 bytes y deserializa el payload Avro.
+    """Quita la cabecera de cable de Confluent y deserializa el payload Avro.
 
-    La cabecera es [globalId de 4 bytes big-endian]; el globalId se extrae a una
-    columna para poder comprobar que todos los mensajes se escribieron con el
-    esquema que este job espera. No lleva el byte magico del formato de
-    Confluent: el motivo esta en `common/apicurio.py`.
+    La cabecera son 5 bytes: [byte magico 0x00][id de esquema de 4 bytes
+    big-endian]. El id se extrae a una columna para poder comprobar que todos
+    los mensajes se escribieron con el esquema que este job espera. Es el
+    formato que escribe el AvroSerializer del bridge (ver `common/apicurio.py`).
 
     LIMITACION CONOCIDA: se deserializa todo el flujo con un unico esquema, el
     vigente al arrancar. Avro es un formato posicional, de modo que leer bytes
@@ -154,9 +154,11 @@ def decode_events(raw: DataFrame, schema_json: str) -> DataFrame:
         F.col("partition").alias("kafka_partition"),
         F.col("offset").alias("kafka_offset"),
         F.col("value").alias("raw_value"),
-        # conv(hex(...), 16, 10) interpreta los 4 bytes como entero big-endian.
-        F.conv(F.hex(F.substring(F.col("value"), 1, HEADER_SIZE)), 16, 10)
-            .cast("long").alias("schema_global_id"),
+        # El id son los 4 bytes que siguen al byte magico (offset 2, longitud
+        # HEADER_SIZE-1). conv(hex(...), 16, 10) los interpreta como entero
+        # big-endian.
+        F.conv(F.hex(F.substring(F.col("value"), 2, HEADER_SIZE - 1)), 16, 10)
+            .cast("long").alias("schema_id"),
         F.expr(f"substring(value, {HEADER_SIZE + 1}, length(value) - {HEADER_SIZE})")
             .alias("avro_payload"),
     )
@@ -170,7 +172,7 @@ def decode_events(raw: DataFrame, schema_json: str) -> DataFrame:
     )
 
 
-def guard_schema_version(df: DataFrame, expected_global_id: int) -> DataFrame:
+def guard_schema_version(df: DataFrame, expected_schema_id: int) -> DataFrame:
     """Detiene el job si aparece un evento escrito con otro esquema.
 
     La version anterior FILTRABA esos eventos, y era la ultima via de perdida
@@ -193,15 +195,15 @@ def guard_schema_version(df: DataFrame, expected_global_id: int) -> DataFrame:
     esquema convivan en el topico.
     """
     lectura_validada = F.when(
-        F.col("schema_global_id") == F.lit(expected_global_id),
+        F.col("schema_id") == F.lit(expected_schema_id),
         F.col("evento.meter_reading"),
     ).otherwise(
         F.raise_error(
             F.concat(
-                F.lit("Evento con globalId de esquema inesperado: se esperaba "),
-                F.lit(str(expected_global_id)),
+                F.lit("Evento con id de esquema inesperado: se esperaba "),
+                F.lit(str(expected_schema_id)),
                 F.lit(" y llego "),
-                F.col("schema_global_id").cast("string"),
+                F.col("schema_id").cast("string"),
                 F.lit(". El job se detiene en lugar de descartarlo; el evento sigue en Kafka. "),
                 F.lit("Revisa el procedimiento de drenar y conmutar del README."),
             )
@@ -209,7 +211,7 @@ def guard_schema_version(df: DataFrame, expected_global_id: int) -> DataFrame:
     )
 
     return df.select(
-        "kafka_key", "kafka_partition", "kafka_offset", "schema_global_id",
+        "kafka_key", "kafka_partition", "kafka_offset", "schema_id",
         F.col("evento.building_id").alias("building_id"),
         F.col("evento.meter_type").alias("meter_type"),
         F.col("evento.timestamp").alias("timestamp"),
@@ -422,19 +424,17 @@ def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str,
 # Escritura
 # --------------------------------------------------------------------------
 def run(args: argparse.Namespace) -> int:
-    registry = ApicurioClient(args.registry_url)
-    registry.check()
-    global_id, schema = registry.latest(args.group, args.artifact)
-    import json
-    schema_json = json.dumps(schema)
+    # latest_schema devuelve el esquema ya como cadena JSON, lista para from_avro.
+    sr_client = schema_registry_client(args.registry_url)
+    schema_id, schema_json = latest_schema(sr_client, args.subject)
 
     spark = build_spark(args)
     spark.sparkContext.setLogLevel(args.spark_log_level)
-    logger.info("Spark %s | esquema globalId=%d | ventana=%s watermark=%s margen_futuro=%.0fs",
-                spark.version, global_id, args.window, args.watermark, args.margen_futuro)
+    logger.info("Spark %s | esquema id=%d | ventana=%s watermark=%s margen_futuro=%.0fs",
+                spark.version, schema_id, args.window, args.watermark, args.margen_futuro)
 
     eventos = guard_schema_version(
-        decode_events(read_kafka(spark, args), schema_json), global_id
+        decode_events(read_kafka(spark, args), schema_json), schema_id
     )
 
     # El enriquecimiento se aplica UNA vez y lo comparten los dos sumideros: el
@@ -565,8 +565,8 @@ def parse_args() -> argparse.Namespace:
     anadir_argumentos_bd(p)
 
     p.add_argument("--registry-url", default=DEFAULT_REGISTRY_URL)
-    p.add_argument("--group", default=DEFAULT_GROUP)
-    p.add_argument("--artifact", default=DEFAULT_ARTIFACT)
+    p.add_argument("--subject", default=DEFAULT_SUBJECT,
+                   help="Subject del esquema en el registro (convencion {topic}-value)")
     p.add_argument("--spark-log-level", default="WARN")
     p.add_argument("--db-retries", type=int, default=5,
                    help="Intentos de escritura antes de dar por perdida la base de datos. "

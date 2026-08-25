@@ -175,14 +175,13 @@ dias, el job reanuda desde su checkpoint y el bridge desde su sesion MQTT
 persistente. Ambas recuperaciones estan verificadas por separado.
 
 Es la opcion mas sencilla de explicar y de defender, y no requiere codigo
-adicional. La alternativa —resolver el esquema de cada mensaje por su
-`globalId` contra el registro— se descarto a proposito: `ApicurioClient` ya
-tiene el metodo y la cache necesarios, pero anade complejidad que este trabajo
-no necesita.
+adicional. La alternativa —resolver el esquema de cada mensaje por su id
+contra el registro— se descarto a proposito: el cliente del registro ya
+tiene la cache necesaria, pero anade complejidad que este trabajo no necesita.
 
 ### Si el procedimiento se ejecuta mal, el job se detiene
 
-`guard_schema_version` comprueba el `globalId` de cada evento y **detiene el
+`guard_schema_version` comprueba el id de esquema de cada evento y **detiene el
 job** si no es el esperado. Antes lo *filtraba*, y esa era la ultima via de
 perdida silenciosa del pipeline: los eventos de una version inesperada
 desaparecian sin contador ni traza, justo en el momento en que mas importa.
@@ -193,7 +192,7 @@ sin perder un evento— mientras que descartar es irreversible.
 
 La comprobacion se aplica sobre la columna `meter_reading` y no como columna
 aparte, para que el optimizador no pueda eliminarla. Verificado: inyectando un
-evento con `globalId=99` en un flujo donde `meter_reading` solo se usa dentro
+evento con id de esquema 99 en un flujo donde `meter_reading` solo se usa dentro
 de una agregacion, el job aborta con el mensaje completo, y la traza muestra
 que la comprobacion se evaluo dentro del propio `hashAgg`.
 

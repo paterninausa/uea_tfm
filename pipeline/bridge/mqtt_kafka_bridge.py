@@ -31,22 +31,21 @@ import threading
 import time
 from collections import Counter, deque
 from datetime import datetime, timezone
-from io import BytesIO
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
-from fastavro import parse_schema, schemaless_writer
+from confluent_kafka.schema_registry.avro import AvroSerializer
+from confluent_kafka.serialization import MessageField, SerializationContext
 from kafka import KafkaProducer
 from kafka.errors import KafkaError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.apicurio import (  # noqa: E402
-    DEFAULT_ARTIFACT,
-    DEFAULT_GROUP,
     DEFAULT_REGISTRY_URL,
-    ApicurioClient,
+    DEFAULT_SUBJECT,
     SchemaRegistryError,
-    encode_header,
+    latest_schema,
+    schema_registry_client,
 )
 from common.logging_setup import configurar_logging  # noqa: E402
 
@@ -198,13 +197,24 @@ class Bridge:
         self.stats = Stats()
         self._parada = threading.Event()
 
-        registry = ApicurioClient(args.registry_url)
-        registry.check()
         # El esquema se resuelve UNA vez al arrancar: el bridge produce siempre
         # con la version vigente en ese momento. Si se registra una version
         # nueva, se adopta reiniciando el servicio, no en caliente.
-        self.global_id, schema = registry.latest(args.group, args.artifact)
-        self.schema = parse_schema(schema)
+        sr_client = schema_registry_client(args.registry_url)
+        self.schema_id, schema_str = latest_schema(sr_client, args.subject)
+        logger.info("Esquema resuelto: subject %s (schema id=%d)", args.subject, self.schema_id)
+
+        # AvroSerializer de confluent-kafka: serializa el evento contra el
+        # esquema y le antepone la cabecera de cable de Confluent (byte magico +
+        # id). auto.register.schemas=False -> el productor NUNCA crea esquemas;
+        # la gobernanza vive en register_schema.py. Resuelve el id una sola vez
+        # (lo cachea), asi que serializa en proceso sin red por evento.
+        # Si el evento no encaja en el esquema (campo ausente, tipo incorrecto,
+        # simbolo de enum fuera del dominio), LANZA: esa excepcion es el
+        # mecanismo de validacion que alimenta la DLQ.
+        self.serializer = AvroSerializer(
+            sr_client, schema_str, conf={"auto.register.schemas": False})
+        self.ser_ctx = SerializationContext(args.topic, MessageField.VALUE)
 
         self.producer = KafkaProducer(
             bootstrap_servers=args.bootstrap_servers,
@@ -285,16 +295,13 @@ class Bridge:
         return evento
 
     def _serializar(self, evento: dict) -> bytes:
-        """Cabecera de 5 bytes con el globalId + payload Avro schemaless.
+        """Cabecera de cable de Confluent (byte magico + id) + payload Avro.
 
-        schemaless_writer lanza si el evento no encaja en el esquema (campo
+        El AvroSerializer lanza si el evento no encaja en el esquema (campo
         ausente, tipo incorrecto, simbolo de enum fuera del dominio): esa
-        excepcion es el mecanismo de validacion.
+        excepcion es el mecanismo de validacion que desvia a la DLQ.
         """
-        buf = BytesIO()
-        buf.write(encode_header(self.global_id))
-        schemaless_writer(buf, self.schema, evento)
-        return buf.getvalue()
+        return self.serializer(evento, self.ser_ctx)
 
     # ------------------------------------------------------------- Salidas --
     def _publicar(self, evento: dict, topico_mqtt: str) -> None:
@@ -440,8 +447,8 @@ def parse_args() -> argparse.Namespace:
                    help="Espera del productor para agrupar mensajes. Sube el throughput a "
                         "costa de latencia; 5ms es despreciable frente al KPI de 2s")
     p.add_argument("--registry-url", default=DEFAULT_REGISTRY_URL)
-    p.add_argument("--group", default=DEFAULT_GROUP)
-    p.add_argument("--artifact", default=DEFAULT_ARTIFACT)
+    p.add_argument("--subject", default=DEFAULT_SUBJECT,
+                   help="Subject del esquema en el registro (convencion {topic}-value)")
     p.add_argument("--margen-futuro", type=float, default=300.0,
                    help="Segundos de adelanto tolerados en el timestamp de un evento. Por "
                         "encima se rechaza a la DLQ: una fecha futura envenena el watermark "
