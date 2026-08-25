@@ -121,6 +121,22 @@ Obtenidas con `tools/kpi_report.py` sobre 20.000 eventos a 400 ev/s, y reproduci
 | Confirmaciones de Mosquitto, ventana 100 y bridge suscrito | **7.324 – 8.539 ev/s** | — |
 | Lo mismo con ventana 1 (equivale al simulador) | 1.971 ev/s | — |
 
+### Re-medición del 25 de agosto de 2026, ya con el formato de cable de Confluent
+
+Tras migrar la serialización al `AvroSerializer` de `confluent-kafka` (ccompat) y reintroducir el byte mágico, se repitió el ciclo de `tools/kpi_report.py` sobre **50.000 eventos a 358 ev/s** (`--speedup 2000`), estado limpio y `swap` nulo verificado. **La migración no degrada ningún KPI**: las cifras son comparables o algo mejores que las del formato anterior, y el byte extra de la cabecera (30 vs 29 B) es irrelevante.
+
+| Métrica | Resultado | Objetivo |
+|---|---|---|
+| Pérdida de mensajes | **0,0000%** (50.000/50.000) | < 0,1% ✓ |
+| Latencia de ingesta p50 / p95 | **0,729 / 1,182** s | < 2 s ✓ |
+| Disponibilidad del agregado p50 / p95 | 2,959 / 3,983 s | acotada por la cadencia |
+| Eventos validados contra el esquema | **100,0000%** (0 en DLQ) | 100% ✓ |
+| Micro-lote `eventos-postgresql` p50 / p95 | 263 / **562** ms | < 3 s ✓ |
+| Micro-lote `metricas-timescaledb` p50 / p95 | 528 / **821** ms | < 3 s ✓ |
+| Panel de Grafana más lento (de 20, vía API) | **104,9** ms | < 5 s ✓ |
+
+Comparación directa con el formato anterior (18 de agosto): ingesta p95 1,373 → **1,182 s**; micro-lote `eventos` p95 709 → **562 ms**; micro-lote `metricas` p95 961 → **821 ms**. Las pruebas de resiliencia (recuperación ante fallo, escalera de saturación y envenenamiento del watermark) **no se re-corrieron** con el formato nuevo: su comportamiento no depende del formato de cable, pero sus cifras siguen siendo las de agosto.
+
 ### Punto de saturacion y resiliencia (19 de agosto de 2026)
 
 Rampa de ritmo creciente con los 652 sensores, medida en el consumo:

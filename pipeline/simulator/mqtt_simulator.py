@@ -54,12 +54,12 @@ Uso:
 
 import argparse
 import asyncio
-from contextlib import suppress
 import heapq
 import json
 import logging
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 
 import aiomqtt
