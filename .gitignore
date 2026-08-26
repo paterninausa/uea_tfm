@@ -55,3 +55,10 @@ references/
 
 # Checkpoints de Spark Structured Streaming (estado local, no versionable)
 pipeline/spark/checkpoints/
+
+# Power BI: cache local de sesion del Developer Mode (.pbip), no versionable.
+# El modelo (TMDL) y el reporte (PBIR) si se versionan: son texto y son lo
+# que hace el dashboard reproducible por terceros.
+powerbi/**/.pbi/
+powerbi/**/*.abf
+powerbi/**/cache.abf
