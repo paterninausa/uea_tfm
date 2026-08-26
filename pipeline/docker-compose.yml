@@ -264,6 +264,13 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      # Acceso anonimo de solo lectura: para una demo o defensa, cada reinicio
+      # del contenedor (docker compose down/up, p.ej. entre dos ejecuciones de
+      # demo.py) invalida la sesion de quien tenga el navegador abierto y
+      # obliga a reintroducir admin/admin. Sin sesion que perder, esto no
+      # ocurre. El rol Viewer no permite editar ni administrar: solo ver.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
       - grafana-data:/var/lib/grafana
       # Aprovisionamiento declarativo: la fuente de datos se define en un
