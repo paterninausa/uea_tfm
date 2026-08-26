@@ -46,7 +46,7 @@ Linux nativo o macOS; en Windows nativo (fuera de WSL) no esta probado.
 | Herramienta | Para que se usa | Notas |
 |---|---|---|
 | Docker + Docker Compose v2 | Levantar Mosquitto, Kafka, Apicurio, TimescaleDB, PostgreSQL y Grafana | `docker compose version` >= 2.20 recomendado |
-| Python 3.11 + venv | Entorno del simulador y de los jobs de Spark | Se crea con `bash pipeline/setup_env.sh`; dependencias en `pipeline/requirements.txt` |
+| Python 3.11 + venv | Entorno del simulador y de los jobs de Spark | Se crea con `bash setup.sh`; dependencias en `pipeline/requirements.txt` |
 | JDK 21 LTS (Temurin) | Requerido por PySpark 4.x (Java 17 o superior) | Gestionado por SDKMAN, ver `.sdkmanrc`; es la unica fuente de JDK de este entorno de desarrollo |
 | Git | Clonar el repo | -- |
 | `mosquitto-clients` (`mosquitto_sub` / `mosquitto_pub`) | Inspeccionar manualmente los mensajes MQTT durante desarrollo/depuracion | Opcional: el contenedor `tfm-mosquitto` ya los trae (`docker exec tfm-mosquitto mosquitto_sub ...`). Para tenerlos en el host: `sudo apt install mosquitto-clients` |
@@ -58,7 +58,7 @@ de `PATH` que provocaba el JDK que instalaba conda.
 
 ### Si no quieres instalar SDKMAN
 
-SDKMAN no es un requisito tecnico del pipeline: `pipeline/setup_env.sh` solo
+SDKMAN no es un requisito tecnico del pipeline: `setup.sh` solo
 comprueba que el comando `java` resuelva en el `PATH` a una version 17 o
 superior, sin importar como haya llegado ahi. `.sdkmanrc` simplemente deja de
 tener efecto si no usas SDKMAN. Alternativas equivalentes, verificadas para
@@ -87,33 +87,29 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
        git clone https://github.com/paterninausa/uea_tfm.git
        cd uea_tfm
 
-2. Preparar Java 21 (si usas SDKMAN; alternativas sin SDKMAN mas arriba) y
-   crear el entorno virtual. El script no instala Java: solo verifica que
-   este disponible antes de continuar.
+2. Ejecutar el script de preparacion del entorno:
 
-       sdk env install     # instala Java 21.0.9-tem si no la tienes
-       sdk env             # la activa para este repo
-       bash pipeline/setup_env.sh
+       bash setup.sh
+
+   Es idempotente y portable (Linux/WSL y macOS, Apple Silicon e Intel):
+   comprueba Docker y Java -- **no los instala**, son herramientas de sistema
+   y se guia en vez de automatizar, con las alternativas sin SDKMAN descritas
+   mas arriba --, crea el entorno virtual e instala las dependencias Python
+   (reutiliza lo que ya exista en vez de rehacerlo), y si encuentra
+   credenciales de Kaggle en `~/.kaggle/kaggle.json` descarga y prepara el
+   dataset ASHRAE automaticamente. Si no las encuentra, imprime como
+   obtenerlas y deja el resto listo para repetir el script despues.
+
        source .venv/bin/activate
 
-3. Obtener el dataset (una sola vez, requiere una cuenta gratuita de Kaggle --
-   detalle completo, incluidas las credenciales, en `pipeline/data/README.md`):
-
-       cd pipeline/data
-       pip install -r requirements.txt
-       kaggle competitions download -c ashrae-energy-prediction -f train.csv -p ./raw
-       kaggle competitions download -c ashrae-energy-prediction -f building_metadata.csv -p ./raw
-       python prepare_ashrae.py
-       cd ../..
-
-4. Levantar el stack completo -- Mosquitto, Kafka, Apicurio, TimescaleDB,
+3. Levantar el stack completo -- Mosquitto, Kafka, Apicurio, TimescaleDB,
    PostgreSQL, Grafana (detalle de servicios, puertos y comprobaciones en
    `pipeline/README.md`):
 
        docker compose -f pipeline/docker-compose.yml up -d
        docker compose -f pipeline/docker-compose.yml ps -a
 
-5. **Camino rapido -- ver los dashboards funcionando:**
+4. **Camino rapido -- ver los dashboards funcionando:**
 
        python pipeline/tools/demo.py --semanas 6
 
@@ -127,7 +123,7 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
 
    Detalle completo en [`pipeline/tools/README.md`](pipeline/tools/README.md).
 
-6. **Camino manual -- para desarrollo o para medir los KPIs**, con el stack
+5. **Camino manual -- para desarrollo o para medir los KPIs**, con el stack
    arriba y el esquema registrado, cada pieza en su propia terminal:
 
        python pipeline/schemas/register_schema.py
@@ -140,6 +136,8 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
 
 ## Estructura del repo
 
+    setup.sh                 Prepara el entorno: Docker/Java (comprueba y guia),
+                              venv + dependencias, dataset ASHRAE
     docs/                    Memoria del TFM (LaTeX)
     references/              TFM de ejemplo usados como referencia de estilo
     pipeline/
@@ -148,7 +146,6 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
       docker-compose.yml     Mosquitto, Kafka (KRaft), Apicurio, TimescaleDB, PostgreSQL, Grafana
       docker/                Configuracion montada en los contenedores (mosquitto.conf, provisioning de Grafana)
       requirements.txt       Dependencias Python del pipeline (venv + pip)
-      setup_env.sh           Crea el .venv e instala dependencias (verifica Java)
       data/                  Preparacion del dataset (Kaggle -> Parquet)
       schemas/               Esquema Avro y su registro gobernado en Apicurio
       simulator/             Simulador MQTT de telemetria

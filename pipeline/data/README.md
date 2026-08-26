@@ -15,6 +15,11 @@ ejecucion, y no depende de ninguna cuenta ni recurso privado: partiendo de los
 ficheros publicos de Kaggle, cualquiera que clone el repositorio obtiene
 exactamente el mismo Parquet.
 
+**Atajo:** `bash setup.sh` en la raiz del repo automatiza los cuatro pasos de
+abajo (si ya tienes las credenciales de Kaggle en su sitio) ademas de crear el
+entorno virtual. Lo que sigue es la version manual, util para entender cada
+paso o repetir uno solo.
+
 ## 1. Credenciales de Kaggle
 
 Necesitas una cuenta de Kaggle (gratuita) y aceptar las condiciones de la
@@ -58,8 +63,12 @@ que instalarlo encima del venv principal no reinstale nada.
 ## 4. Generar el subconjunto de datos
 
 ```bash
-python prepare_ashrae.py
+python prepare_ashrae.py --train ./raw/train.csv --metadata ./raw/building_metadata.csv
 ```
+
+Los valores por defecto de `--train`/`--metadata` apuntan a Parquet
+(`./raw/train.parquet`), no a los CSV que se acaban de descargar, asi que hay
+que pasarlos explicitos aqui.
 
 Produce tres ficheros, que no se versionan por estar en `.gitignore`:
 
