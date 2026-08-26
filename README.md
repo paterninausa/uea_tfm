@@ -39,7 +39,7 @@ Linux nativo o macOS; en Windows nativo (fuera de WSL) no esta probado.
 |---|---|---|
 | Docker + Docker Compose v2 | Levantar Mosquitto, Kafka, Apicurio y (mas adelante) TimescaleDB, PostgreSQL, Grafana | `docker compose version` >= 2.20 recomendado |
 | Python 3.11 + venv | Entorno del simulador y de los jobs de Spark | Se crea con `bash pipeline/setup_env.sh`; dependencias en `pipeline/requirements.txt` |
-| JDK 21 LTS (Temurin) | Requerido por PySpark 4.x (Java 17 o superior) | Gestionado por SDKMAN, ver `.sdkmanrc`; es la unica fuente de JDK del proyecto |
+| JDK 21 LTS (Temurin) | Requerido por PySpark 4.x (Java 17 o superior) | Gestionado por SDKMAN, ver `.sdkmanrc`; es la unica fuente de JDK de este entorno de desarrollo |
 | Git | Clonar el repo | -- |
 | `mosquitto-clients` (`mosquitto_sub` / `mosquitto_pub`) | Inspeccionar manualmente los mensajes MQTT durante desarrollo/depuracion | Opcional: el contenedor `tfm-mosquitto` ya los trae (`docker exec tfm-mosquitto mosquitto_sub ...`). Para tenerlos en el host: `sudo apt install mosquitto-clients` |
 | Cuenta de Kaggle (gratuita) | Solo una vez, para descargar el dataset | Ver `pipeline/data/README.md` |
@@ -47,6 +47,24 @@ Linux nativo o macOS; en Windows nativo (fuera de WSL) no esta probado.
 El proyecto usa **venv + pip**, no conda. La migracion se hizo al pivotar a
 Spark: con venv, SDKMAN es la unica fuente de Java y desaparece el conflicto
 de `PATH` que provocaba el JDK que instalaba conda.
+
+### Si no quieres instalar SDKMAN
+
+SDKMAN no es un requisito tecnico del pipeline: `pipeline/setup_env.sh` solo
+comprueba que el comando `java` resuelva en el `PATH` a una version 17 o
+superior, sin importar como haya llegado ahi. `.sdkmanrc` simplemente deja de
+tener efecto si no usas SDKMAN. Alternativas equivalentes, verificadas para
+macOS (Apple Silicon e Intel) y Linux:
+
+- **Homebrew** (macOS): `brew install openjdk@21` — hay *bottle* precompilado
+  para ambas arquitecturas, no compila nada. Tras instalar, enlaza el JDK para
+  que el sistema lo encuentre: `sudo ln -sfn $HOMEBREW_PREFIX/opt/openjdk@21/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-21.jdk`
+- **Instalador `.pkg` de [Adoptium](https://adoptium.net)**: el mismo binario
+  Temurin 21 que instala SDKMAN, pero con instalador grafico, sin terminal.
+- **conda**: `conda install -c conda-forge openjdk=21`
+
+Cualquier distribucion de JDK 17+ (Temurin, Corretto, Zulu, la de Homebrew...)
+funciona igual: PySpark no exige una distribucion concreta.
 
 **No hace falta cuenta ni acceso a Databricks para ejecutar el pipeline.**
 Databricks se uso unicamente durante el desarrollo como almacen de
@@ -61,8 +79,9 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
        git clone https://github.com/paterninausa/uea_tfm.git
        cd uea_tfm
 
-2. Preparar Java 21 (si usas SDKMAN) y crear el entorno virtual. El script
-   no instala Java: solo verifica que este disponible antes de continuar.
+2. Preparar Java 21 (si usas SDKMAN; alternativas sin SDKMAN mas arriba) y
+   crear el entorno virtual. El script no instala Java: solo verifica que
+   este disponible antes de continuar.
 
        sdk env install     # instala Java 21.0.9-tem si no la tienes
        sdk env             # la activa para este repo
