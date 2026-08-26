@@ -1,9 +1,9 @@
 # Herramientas de medicion
 
-Scripts que **no forman parte del pipeline**: no procesan telemetria, la miden.
-Viven aparte a proposito, para que el simulador, el bridge y el job de Spark
-contengan solo lo que hace falta para mover datos de un extremo al otro y no
-opciones que unicamente se usan al preparar una prueba.
+Scripts que **no forman parte del pipeline**: no procesan telemetria, la miden
+o preparan una demostracion. Viven aparte a proposito, para que el simulador, el
+bridge y el job de Spark contengan solo lo que hace falta para mover datos de un
+extremo al otro y no opciones que unicamente se usan al preparar una prueba.
 
 | Script | Para que | Objetivo del TFM |
 |---|---|---|
@@ -13,6 +13,31 @@ opciones que unicamente se usan al preparar una prueba.
 | `failover_test.py` | Tumbar un servicio y cronometrar la recuperacion | 5 |
 | `watermark_poison_test.py` | Demostrar que un evento con fecha futura detiene la agregacion de todos los sensores | 1 y 5 |
 | `cluster.sh` | Levantar un cluster Spark standalone para probar el fallo de un executor | 5 |
+| `demo.py` | Preparar el terreno para ver los dashboards de Grafana en vivo | demostracion |
+
+## demo.py — la demostracion en un comando
+
+Orquesta todo el arranque para ver los dashboards, sin ejecutar los pasos a
+mano: levanta el stack, deja las bases limpias, registra el esquema, arranca
+bridge + Spark (esperando a que las consultas de streaming esten activas) y
+lanza el simulador con datos recientes.
+
+```bash
+python pipeline/tools/demo.py                 # 6 semanas hacia atras, --acelerar 8000
+python pipeline/tools/demo.py --semanas 10    # 10 semanas
+python pipeline/tools/demo.py --stop          # cierra procesos y baja el stack
+```
+
+`--semanas N` publica **las ultimas N semanas terminando en "ahora"**: calcula
+`--limite = 652 x 168 x N` y le pasa `--traer-a now` al simulador, de modo que
+el bloque de datos reales de ASHRAE queda anclado al presente. El replay tarda
+en llenarse `N x 604.800 / acelerar` segundos (a `--acelerar 8000`: ~7,5 min para
+6 semanas), rellenando el dashboard de izquierda a derecha. Al terminar, Grafana
+en `http://localhost:3000` (admin/admin); en los dashboards 2 y 3 hay que poner
+el rango a `now-Nw` para ver el bloque completo.
+
+Es para **demostrar**, no para medir: las cifras de KPI se toman con el ciclo de
+abajo, no con este script.
 
 ## El ciclo de medicion completo
 
