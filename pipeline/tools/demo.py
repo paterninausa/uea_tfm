@@ -221,15 +221,31 @@ def run_start(args: argparse.Namespace) -> int:
     return 0
 
 
+# Presets REALES del selector de tiempo de Grafana que cubren rangos de dias,
+# en (umbral de dias, etiqueta). No existe "Last N weeks": por eso el rango
+# preciso hay que teclearlo (now-Nw) y el preset solo es la alternativa
+# aproximada de un clic. Se elige el primero que no se queda corto.
+PRESETS_GRAFANA = [(7, "Last 7 days"), (30, "Last 30 days"), (90, "Last 90 days"),
+                   (180, "Last 6 months"), (365, "Last 1 year"), (730, "Last 2 years")]
+
+
+def _preset_grafana(dias: float) -> str:
+    for umbral, etiqueta in PRESETS_GRAFANA:
+        if dias <= umbral:
+            return etiqueta
+    return "Last 5 years"
+
+
 def _resumen(args: argparse.Namespace, eta_min: float) -> None:
     rango = f"now-{args.semanas + 1}w"
+    preset = _preset_grafana((args.semanas + 1) * 7)
     print("\n" + "=" * 68)
     print("  DEMO LISTA — los datos ya estan fluyendo")
     print("=" * 68)
     print(f"  Grafana:   {GRAFANA_URL}")
     print("  Dashboards (menu ☰ -> Dashboards):")
     print("    1. Estado del pipeline   -> rango 'now-15m' (ingesta en vivo)")
-    print(f"    2. Consumo energetico    -> rango '{rango}' o 'Last 3 months'")
+    print(f"    2. Consumo energetico    -> rango '{rango}' o '{preset}'")
     print("    3. Calidad y anomalias   -> rango igual al Dashboard 2")
     print()
     print(f"  El replay de {args.semanas} semanas termina de llenarse en ~{eta_min:.0f} min")
