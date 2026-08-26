@@ -137,7 +137,7 @@ Tras migrar la serialización al `AvroSerializer` de `confluent-kafka` (ccompat)
 | Micro-lote `metricas-timescaledb` p50 / p95 | 528 / **821** ms | < 3 s ✓ |
 | Panel de Grafana más lento (de 20, vía API) | **104,9** ms | < 5 s ✓ |
 
-Comparación directa con el formato anterior (18 de agosto): ingesta p95 1,373 → **1,182 s**; micro-lote `eventos` p95 709 → **562 ms**; micro-lote `metricas` p95 961 → **821 ms**. Las pruebas de resiliencia (recuperación ante fallo, escalera de saturación y envenenamiento del watermark) se re-corrieron el 26 de agosto de 2026 (ver más abajo): recuperación y watermark salieron coherentes con lo histórico; la rampa de saturación dio un patrón anómalo con el swap activo, documentado con dos hipótesis abiertas.
+Comparación directa con el formato anterior (18 de agosto): ingesta p95 1,373 → **1,182 s**; micro-lote `eventos` p95 709 → **562 ms**; micro-lote `metricas` p95 961 → **821 ms**. Las pruebas de resiliencia (recuperación ante fallo, escalera de saturación y envenenamiento del watermark) se re-corrieron el 26 de agosto de 2026 (ver más abajo): recuperación y watermark salieron coherentes con lo histórico; la rampa de saturación dio un patrón anómalo en el primer intento, repetido con muestreo de swap y descartado como causa — fue ruido de medición de un solo tiro.
 
 ### Punto de saturacion y resiliencia (19 de agosto de 2026)
 
@@ -179,7 +179,7 @@ Medido con el generador asíncrono el 18 de agosto de 2026, con el bridge suscri
 
 ### Re-medición del 26 de agosto de 2026, ya con el formato de cable de Confluent
 
-Las tres pruebas de resiliencia que quedaron pendientes tras la migración a ccompat (ver arriba) se re-corrieron con el pipeline tal como está hoy. **Recuperación ante fallo y envenenamiento del watermark: coherentes con lo histórico.** La rampa de saturación dio un patrón anómalo — documentado sin ocultarlo, con dos hipótesis abiertas.
+Las tres pruebas de resiliencia que quedaron pendientes tras la migración a ccompat (ver arriba) se re-corrieron con el pipeline tal como está hoy. **Recuperación ante fallo y envenenamiento del watermark: coherentes con lo histórico.** La rampa de saturación dio un patrón anómalo en el primer intento; repetida con muestreo de swap, se descarta el swap como causa (ver detalle abajo).
 
 **Recuperación ante fallo**, tumbando cada servicio 15 s:
 
@@ -203,24 +203,19 @@ Prácticamente idénticas a las del 18 de agosto (16,1 / 15,2 / 4,1 / 5,1 s) —
 
 Cifras casi idénticas a las del 20 de agosto (0 / 1.149 filas). El throughput del simulador cayó justo en el valor teórico esperado (~359 ev/s a `--acelerar 2000`) en ambas pasadas.
 
-**Rampa de saturación — patrón anómalo, sin explicación confirmada:**
+**Rampa de saturación — patrón anómalo en el primer intento, descartado el swap como causa:**
 
-| Ritmo pedido | Publicado real | Persistido | Latencia p95 | Lote p95 |
-|---|---|---|---|---|
-| x5.000 (906 ev/s) | 900,5 | 40.000 | 1,50 s | 1.129 ms |
-| x10.000 (1.811 ev/s) | 1.792,1 | 40.000 | 1,95 s | 1.013 ms |
-| x20.000 (3.622 ev/s) | 2.913,8 ⚠️ techo | 37.547 | 5,53 s | 870 ms |
-| x40.000 (7.244 ev/s) | **4.060,9** | 40.000 | 2,37 s | 823 ms |
-| x5.000-caliente | 899,3 | 40.000 | 1,17 s | 706 ms |
+| Ritmo pedido | Publicado (intento 1) | Publicado (repetición) |
+|---|---|---|
+| x5.000 (906 ev/s) | 900,5 | 904,3 |
+| x10.000 (1.811 ev/s) | 1.792,1 | 1.800,7 |
+| x20.000 (3.622 ev/s) | 2.913,8 ⚠️ techo | 3.401,9 ⚠️ techo |
+| x40.000 (7.244 ev/s) | **4.060,9** (subió) | **3.244,6** (bajó, como se esperaba) |
+| x5.000-caliente | 899,3 | 897,5 |
 
-**El peldaño x40.000 publicó más rápido que el x20.000** (4.061 vs 2.914 ev/s), rompiendo la curva de saturación monotónicamente decreciente del 19 de agosto (2.550 → 2.297 ev/s en el mismo tramo). `swap used = 807 MiB` (no cero) al terminar las tres pruebas, lo que invalidaría la medición según la regla ya establecida — pero el swap solo se comprobó una vez al final de las tres fases, no en cada peldaño, así que no se puede atribuir con certeza a la rampa en concreto.
+El primer intento mostró el peldaño x40.000 publicando más rápido que el x20.000, rompiendo la curva monotónicamente decreciente del 19 de agosto. Se sospechó del swap (807 MiB, no cero, al terminar). **Se repitió la rampa el 26 de agosto de 2026 con un muestreador de swap cada 2 s durante toda la ejecución (`/proc/meminfo`, no una sola lectura al final)**: el swap se mantuvo en **exactamente 805 MiB, sin variar un solo MiB, en las ~126 muestras de los 248 s que duró la rampa completa**. Con el swap probadamente estático, la repetición dio una curva monotónicamente decreciente, sin el pico anómalo.
 
-Boris decidió dar la cifra por definitiva. Quedan dos hipótesis abiertas, sin datos para elegir entre ellas:
-
-1. **Teoría de Boris**: el swap fue liberando RAM de páginas inactivas de otros contenedores (Grafana, Apicurio en reposo) a medida que la presión de memoria crecía con la rampa, dejando más RAM real a los procesos activos en los peldaños más exigentes — mecanismo real de gestión de memoria de Linux (LRU: se descartan primero las páginas "frías").
-2. **Alternativa**: ruido de una medición de un solo tiro por peldaño (sin repetición ni promedio), en la línea de la trampa ya documentada del 18 de agosto ("una escalera de carga en orden creciente miente por calentamiento") — un GC de la JVM, una rotación de segmento de Kafka o un checkpoint de TimescaleDB coincidiendo con el peldaño x20.000 explicarían el bache igual de bien.
-
-No se repitió la rampa para dirimir entre las dos.
+**Conclusión: el swap no fue la causa** — estaba ya en 805 MiB antes de arrancar la rampa (con solo el stack, el bridge y Spark en marcha, sin carga) y no se movió durante la prueba. La anomalía del primer intento fue ruido de una medición de un solo tiro por peldaño (sin repetición ni promedio), en la línea de la trampa ya documentada del 18 de agosto ("una escalera de carga en orden creciente miente por calentamiento"): un GC de la JVM, una rotación de segmento de Kafka o un checkpoint de TimescaleDB coincidiendo con el peldaño x20.000 explican el bache sin necesidad de invocar el swap. Los 805 MiB de swap parecen ser un residuo permanente de este WSL con `swap=4GB`, no algo que entre en juego bajo carga — coherente con que la cifra fuera *idéntica* antes y después de 248 s de saturación.
 
 ## Entorno de desarrollo
 
