@@ -1,12 +1,14 @@
-# TFM -- Sistema escalable de microservicios para el procesamiento de datos IoT
+# TFM -- Sistema escalable de microservicios para el procesamiento y analisis de datos IoT
 
 Trabajo de Fin de Master, Universidad Europea de Andalucia (UEA), Master
 Universitario en Analisis de Grandes Volumenes de Datos (Big Data). Autor:
 Boris Renee Paternina Perez. Director: Victor Gomez Guirado. Curso 2025-2026.
 
 Implementa una arquitectura Kappa para IoT, integramente open-source y
-containerizada, usando como caso de uso telemetria de consumo electrico en
-equipos de oficina e industriales:
+containerizada, usando como caso de uso telemetria horaria **real** de
+consumo energetico en edificios (electricidad, agua fria, vapor y agua
+caliente), del dataset de la competicion Kaggle **ASHRAE Great Energy
+Predictor III**:
 
     Simulador MQTT -> Mosquitto -> microservicio bridge MQTT-Kafka -> Kafka (KRaft) -> Apicurio (Avro) -> Spark Structured Streaming -> TimescaleDB / PostgreSQL -> Grafana / Power BI
 
@@ -21,14 +23,20 @@ procesamiento streaming").
 
 ## Estado actual
 
-- [x] Simulador MQTT basico (sincrono), validado contra el broker Mosquitto del stack
-- [x] Docker Compose con Mosquitto + Kafka (KRaft) + Apicurio Schema Registry
-- [ ] Microservicio bridge MQTT-Kafka
-- [ ] Esquema Avro v1 registrado en Apicurio (el registro ya levanta; falta el esquema)
-- [ ] Job de Spark Structured Streaming minimo end-to-end
-- [ ] Sinks: TimescaleDB (metricas por ventana) y PostgreSQL (eventos enriquecidos)
-- [ ] Dashboards Grafana / Power BI
-- [ ] Pruebas de carga y de evolucion de esquema
+El pipeline corre de extremo a extremo sobre el dataset real de ASHRAE:
+
+- [x] Simulador MQTT (asyncio, una conexion por sensor) con escalera de carga y rebase temporal
+- [x] Stack completo en Docker: Mosquitto, Kafka (KRaft), Apicurio, TimescaleDB, PostgreSQL, Grafana
+- [x] Microservicio bridge MQTT-Kafka, con validacion de dominio y cola de mensajes muertos (DLQ)
+- [x] Esquema Avro v1 registrado y gobernado (validez, y compatibilidad hacia atras y hacia adelante)
+- [x] Job de Spark Structured Streaming: broadcast join, agregacion por ventana, escritura idempotente
+- [x] Doble sumidero: TimescaleDB (metricas por ventana, casi en tiempo real) y PostgreSQL (eventos, para analitica)
+- [x] Tres dashboards de Grafana aprovisionados de forma declarativa
+- [x] Herramientas de medicion de KPIs y de resiliencia ante fallos (`pipeline/tools/`)
+- [ ] Informes de Power BI (Objetivo 4) -- pendiente, va despues de cerrar las pruebas del pipeline
+
+Que se rechaza y por que, tiempos de recuperacion medidos, y lo que sigue sin
+cubrir: [`pipeline/FAULT_HANDLING.md`](pipeline/FAULT_HANDLING.md).
 
 ## Requisitos del sistema
 
@@ -37,7 +45,7 @@ Linux nativo o macOS; en Windows nativo (fuera de WSL) no esta probado.
 
 | Herramienta | Para que se usa | Notas |
 |---|---|---|
-| Docker + Docker Compose v2 | Levantar Mosquitto, Kafka, Apicurio y (mas adelante) TimescaleDB, PostgreSQL, Grafana | `docker compose version` >= 2.20 recomendado |
+| Docker + Docker Compose v2 | Levantar Mosquitto, Kafka, Apicurio, TimescaleDB, PostgreSQL y Grafana | `docker compose version` >= 2.20 recomendado |
 | Python 3.11 + venv | Entorno del simulador y de los jobs de Spark | Se crea con `bash pipeline/setup_env.sh`; dependencias en `pipeline/requirements.txt` |
 | JDK 21 LTS (Temurin) | Requerido por PySpark 4.x (Java 17 o superior) | Gestionado por SDKMAN, ver `.sdkmanrc`; es la unica fuente de JDK de este entorno de desarrollo |
 | Git | Clonar el repo | -- |
@@ -88,30 +96,47 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
        bash pipeline/setup_env.sh
        source .venv/bin/activate
 
-3. Obtener el dataset (una sola vez -- detalle completo en
-   `pipeline/data/README.md`):
+3. Obtener el dataset (una sola vez, requiere una cuenta gratuita de Kaggle --
+   detalle completo, incluidas las credenciales, en `pipeline/data/README.md`):
 
        cd pipeline/data
        pip install -r requirements.txt
-       kaggle datasets download -d khalilaraoui/power-telemetry -f Power_measurements.xlsx -p ./raw
-       python convert_to_parquet.py --input ./raw/Power_measurements.xlsx --output ./power_measurements.parquet
+       kaggle competitions download -c ashrae-energy-prediction -f train.csv -p ./raw
+       kaggle competitions download -c ashrae-energy-prediction -f building_metadata.csv -p ./raw
+       python prepare_ashrae.py
        cd ../..
 
-4. Levantar el stack de ingesta (detalle de servicios, puertos y
-   comprobaciones en `pipeline/README.md`):
+4. Levantar el stack completo -- Mosquitto, Kafka, Apicurio, TimescaleDB,
+   PostgreSQL, Grafana (detalle de servicios, puertos y comprobaciones en
+   `pipeline/README.md`):
 
        docker compose -f pipeline/docker-compose.yml up -d
        docker compose -f pipeline/docker-compose.yml ps -a
 
-5. Probar el simulador contra el broker del stack (detalle de las 2
-   terminales en `pipeline/simulator/README.md`):
+5. **Camino rapido -- ver los dashboards funcionando:**
 
-       docker exec tfm-mosquitto mosquitto_sub -h localhost -t 'iot/#' -v   # terminal 1
-       cd pipeline/simulator                                                 # terminal 2
-       python mqtt_simulator.py \
-           --parquet-path ../data/power_measurements.parquet \
-           --broker-host localhost --broker-port 1883 \
-           --rate 20 --limit 5000
+       python pipeline/tools/demo.py --semanas 6
+
+   Deja las bases limpias, registra el esquema, arranca el bridge y el job de
+   Spark, y lanza el simulador con datos reales de ASHRAE traidos al presente
+   (las ultimas 6 semanas terminan en "ahora"). Al acabar imprime la URL de
+   Grafana -- sin necesidad de credenciales, acceso anonimo de solo lectura --
+   y el rango de tiempo que poner en cada dashboard. Para cerrarlo todo:
+
+       python pipeline/tools/demo.py --stop
+
+   Detalle completo en [`pipeline/tools/README.md`](pipeline/tools/README.md).
+
+6. **Camino manual -- para desarrollo o para medir los KPIs**, con el stack
+   arriba y el esquema registrado, cada pieza en su propia terminal:
+
+       python pipeline/schemas/register_schema.py
+       python pipeline/bridge/mqtt_kafka_bridge.py
+       python pipeline/spark/stream_processing.py --trigger "1 second"
+       python pipeline/simulator/mqtt_simulator.py --acelerar 2000 --limite 50000 --traer-a now
+
+   El ciclo completo de medicion de KPIs (estado limpio, carga, informe) esta
+   en [`pipeline/tools/README.md`](pipeline/tools/README.md).
 
 ## Estructura del repo
 
@@ -119,9 +144,15 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
     references/              TFM de ejemplo usados como referencia de estilo
     pipeline/
       README.md              Stack containerizado: servicios, puertos, comprobaciones
-      docker-compose.yml     Mosquitto + Kafka (KRaft) + Apicurio
-      docker/                Configuracion montada en los contenedores (mosquitto.conf)
+      FAULT_HANDLING.md      Comportamiento del sistema ante fallos, medido
+      docker-compose.yml     Mosquitto, Kafka (KRaft), Apicurio, TimescaleDB, PostgreSQL, Grafana
+      docker/                Configuracion montada en los contenedores (mosquitto.conf, provisioning de Grafana)
       requirements.txt       Dependencias Python del pipeline (venv + pip)
       setup_env.sh           Crea el .venv e instala dependencias (verifica Java)
       data/                  Preparacion del dataset (Kaggle -> Parquet)
+      schemas/               Esquema Avro y su registro gobernado en Apicurio
       simulator/             Simulador MQTT de telemetria
+      bridge/                Microservicio MQTT -> Kafka, con validacion de dominio y DLQ
+      common/                Codigo compartido entre el bridge, Spark y las herramientas
+      spark/                 Job de Spark Structured Streaming: procesamiento y doble sumidero
+      tools/                 Medicion de KPIs, pruebas de resiliencia y demo.py
