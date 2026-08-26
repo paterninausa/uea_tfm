@@ -249,8 +249,8 @@ def run(args: argparse.Namespace) -> int:
     # agregacion no escribe nada, con lo que la prueba no podria distinguir
     # "envenenado" de "nunca escribio".
     simulador = subprocess.Popen(
-        [sys.executable, str(SIMULADOR), "--speedup", str(args.speedup),
-         "--limit", str(args.limit)],
+        [sys.executable, str(SIMULADOR), "--acelerar", str(args.speedup),
+         "--limite", str(args.limit)],
     )
 
     try:
@@ -374,9 +374,9 @@ def parse_args() -> argparse.Namespace:
                    help="Cuanto adelanta la marca del evento envenenador")
     p.add_argument("--meter-type", default="electricity",
                    help="Debe ser un simbolo valido del enum del esquema")
-    p.add_argument("--speedup", type=float, default=2000.0,
+    p.add_argument("--acelerar", dest="speedup", metavar="FACTOR", type=float, default=2000.0,
                    help="Factor de aceleracion POR SENSOR del simulador")
-    p.add_argument("--limit", type=int, default=200000,
+    p.add_argument("--limite", dest="limit", metavar="N", type=int, default=200000,
                    help="Tope de eventos del simulador: solo tiene que durar mas que la prueba")
     p.add_argument("--warmup", type=float, default=180.0,
                    help="Espera maxima a ver flujo en cada ruta antes de inyectar")

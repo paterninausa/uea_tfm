@@ -11,26 +11,26 @@ dispersion— y hay 652 contadores con datos en el 99,2% de las horas de 2016. E
 es el caso de uso: **menos de una quinta parte de un evento por segundo**, sobre
 un historico de 8.784 horas.
 
-Por eso el simulador acelera el reloj. `--speedup` es el factor:
+Por eso el simulador acelera el reloj. `--acelerar` es el factor:
 
-    tasa agregada = n_sensores x speedup / 3600
+    tasa agregada = n_sensores x acelerar / 3600
 
-    speedup     cadencia por sensor    con 652 sensores    ano completo en
+    acelerar    cadencia por sensor    con 652 sensores    ano completo en
         1              1 h                 0,18 ev/s          8.784 h
     2.000              1,8 s                 362 ev/s            4,4 h
     7.145              0,5 s               1.294 ev/s             74 min
 
 Es un factor POR SENSOR, no una tasa global, y esa diferencia importa para el
 Objetivo 5: con una tasa global fija, pasar de 100 a 652 sensores reparte los
-mismos eventos entre mas identidades y no escala nada. Con `--speedup`, cada
+mismos eventos entre mas identidades y no escala nada. Con `--acelerar`, cada
 contador mantiene su cadencia y la carga crece con el numero de contadores, que
 es lo que significa "sensores concurrentes".
 
 POR QUE NO SE REPRODUCEN LAS RAFAGAS. Los contadores reales miden en la hora en
 punto, asi que un replay literal publicaria los 652 de golpe y luego callaria. No
-se hace, y no por comodidad: a speedup alto esa rafaga desborda el sistema. Con
-un drenaje del bridge de unos 4.000 ev/s, el replay fiel se sostiene hasta
-~x22.000 (652 / (3600/speedup) <= 4.000); por encima, la cola de Mosquitto
+se hace, y no por comodidad: con un factor alto esa rafaga desborda el sistema.
+Con un drenaje del bridge de unos 4.000 ev/s, el replay fiel se sostiene hasta
+~x22.000 (652 / (3600/acelerar) <= 4.000); por encima, la cola de Mosquitto
 —10.000 mensajes segun `mosquitto.conf`— se llena en menos de tres segundos y el
 broker empieza a descartar EN SILENCIO. En su lugar, los sensores se escalonan de
 forma determinista dentro de cada intervalo, lo que equivale a suponer que sus
@@ -46,10 +46,10 @@ nada, porque 652 conexiones con un mensaje en vuelo cada una dan 652 mensajes en
 vuelo por la via realista. Todo lo que mide y orquesta vive en `tools/`.
 
 Uso:
-    python mqtt_simulator.py --speedup 2000
-    python mqtt_simulator.py --speedup 2000 --max-sensors 100   # peldano del Objetivo 5
-    python mqtt_simulator.py --speedup 500 --rebase-end now     # demostracion en vivo
-    python mqtt_simulator.py --speedup 2000 --clients 1         # una sola conexion
+    python mqtt_simulator.py --acelerar 2000
+    python mqtt_simulator.py --acelerar 2000 --max-sensors 100   # peldano del Objetivo 5
+    python mqtt_simulator.py --acelerar 500 --traer-a now        # demostracion en vivo
+    python mqtt_simulator.py --acelerar 2000 --clients 1         # una sola conexion
 """
 
 import argparse
@@ -332,9 +332,9 @@ def parse_args() -> argparse.Namespace:
         description="Simulador del parque de contadores IoT (TFM)")
     anadir_argumentos_dataset(p)
     anadir_argumentos_mqtt(p, client_id="tfm-sim")
-    p.add_argument("--speedup", type=float, default=2000.0,
+    p.add_argument("--acelerar", dest="speedup", metavar="FACTOR", type=float, default=2000.0,
                    help="Cuantas veces mas rapido avanza el reloj simulado. Es un factor "
-                        "POR SENSOR: la tasa agregada es n_sensores x speedup / 3600")
+                        "POR SENSOR: la tasa agregada es n_sensores x acelerar / 3600")
     p.add_argument("--clients", type=int, default=0,
                    help="Conexiones MQTT simultaneas. 0 (por defecto) abre una por sensor, "
                         "que es el parque real; un valor menor agrupa varios sensores por "

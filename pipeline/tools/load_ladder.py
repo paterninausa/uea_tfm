@@ -3,16 +3,16 @@ Escalera de carga del Objetivo 5: degradacion al crecer el numero de sensores.
 
 El objetivo pide ">= 500 sensores concurrentes con degradacion de throughput
 < 20% respecto a una carga base de 100". Esta herramienta ejecuta esa escalera
-invocando al simulador una vez por peldano, con el MISMO `--speedup` y distinto
+invocando al simulador una vez por peldano, con el MISMO `--acelerar` y distinto
 `--max-sensors`.
 
-POR QUE EL SPEEDUP SE MANTIENE Y LA TASA NO. Con una tasa global fija, 100 y 652
-sensores publican los mismos eventos por segundo: se reparte la misma carga entre
-mas identidades y no se escala nada —de ahi salia la degradacion del 0,6% que no
-significaba gran cosa—. `--speedup` fija la cadencia POR SENSOR, asi que la carga
-total crece con el numero de contadores, que es lo que dice el objetivo:
+POR QUE LA ACELERACION SE MANTIENE Y LA TASA NO. Con una tasa global fija, 100 y
+652 sensores publican los mismos eventos por segundo: se reparte la misma carga
+entre mas identidades y no se escala nada —de ahi salia la degradacion del 0,6%
+que no significaba gran cosa—. `--acelerar` fija la cadencia POR SENSOR, asi que
+la carga total crece con el numero de contadores, que es lo que dice el objetivo:
 
-    tasa agregada = n_sensores x speedup / 3600
+    tasa agregada = n_sensores x acelerar / 3600
 
 POR QUE SE MIDE EN EL CONSUMO Y NO EN EL PRODUCTOR. El PUBACK de Mosquitto
 significa "aceptado", no "entregado al pipeline": se midio al broker confirmando
@@ -31,7 +31,7 @@ rato en marcha.
 Requiere el stack levantado y el bridge y el job de Spark en marcha.
 
 Uso:
-    python load_ladder.py --ladder 100,250,500,652 --speedup 2000
+    python load_ladder.py --ladder 100,250,500,652 --acelerar 2000
 """
 
 import argparse
@@ -226,10 +226,10 @@ def ejecutar_peldano(args, sensores: int, speedup: float, etiqueta: str, parada)
 
     t0 = time.monotonic()
     orden = [sys.executable, str(SIMULADOR),
-             "--speedup", str(speedup),
+             "--acelerar", str(speedup),
              "--max-sensors", str(sensores),
-             "--limit", str(args.events_per_step),
-             "--rebase-end", "now"]
+             "--limite", str(args.events_per_step),
+             "--traer-a", "now"]
     completado = subprocess.run(orden)
     duracion_productor = time.monotonic() - t0
 
@@ -289,8 +289,8 @@ def run(args: argparse.Namespace) -> int:
     # Dos experimentos distintos con la misma mecanica, y conviene no
     # confundirlos:
     #
-    #   --ladder    mismo ritmo, MAS SENSORES  -> degradacion del Objetivo 5
-    #   --speedups  mismos sensores, MAS RITMO -> punto de saturacion
+    #   --ladder        mismo ritmo, MAS SENSORES  -> degradacion del Objetivo 5
+    #   --aceleraciones mismos sensores, MAS RITMO -> punto de saturacion
     #
     # El primero responde a ">= 500 sensores concurrentes con degradacion < 20%".
     # El segundo a "hasta donde aguanta", que es otra pregunta: anadir sensores a
@@ -382,14 +382,14 @@ def parse_args() -> argparse.Namespace:
     anadir_argumentos_bd(p)
     anadir_argumentos_kafka(p)
     p.add_argument("--ladder", default="100,250,500,652", metavar="N,N,N",
-                   help="Sensores de cada peldano, con el ritmo fijo de --speedup. "
+                   help="Sensores de cada peldano, con el ritmo fijo de --acelerar. "
                         "Es la escalera de degradacion del Objetivo 5")
-    p.add_argument("--speedups", default=None, metavar="X,X,X",
+    p.add_argument("--aceleraciones", dest="speedups", default=None, metavar="X,X,X",
                    help="Ritmos de cada peldano, con los sensores fijos de --max-sensors. "
                         "Es la rampa que busca el punto de saturacion. Excluye a --ladder")
     p.add_argument("--max-sensors", type=int, default=None,
-                   help="Sensores a usar en la rampa de --speedups (por defecto, los 652)")
-    p.add_argument("--speedup", type=float, default=2000.0,
+                   help="Sensores a usar en la rampa de --aceleraciones (por defecto, los 652)")
+    p.add_argument("--acelerar", dest="speedup", metavar="FACTOR", type=float, default=2000.0,
                    help="Aceleracion del reloj, IDENTICA en todos los peldanos: es lo que "
                         "hace que la carga crezca con el numero de sensores")
     p.add_argument("--events-per-step", type=int, default=20000,

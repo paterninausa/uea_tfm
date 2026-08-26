@@ -148,12 +148,12 @@ def anadir_argumentos_dataset(p: argparse.ArgumentParser) -> None:
     """Opciones de seleccion del subconjunto, identicas en ambos productores."""
     p.add_argument("--telemetry", type=Path, default=RUTA_TELEMETRIA,
                    help="Tabla de hechos generada por prepare_ashrae.py")
-    p.add_argument("--limit", type=int, default=None,
+    p.add_argument("--limite", dest="limit", metavar="N", type=int, default=None,
                    help="Numero maximo de eventos a publicar")
     p.add_argument("--max-sensors", type=int, default=None,
                    help="Publica solo los primeros N sensores, en orden determinista. "
                         "Para la escalera de carga del Objetivo 5: 100, 250, 500, 652")
-    p.add_argument("--rebase-end", metavar="ISO|now", default=None,
-                   help="Desplaza las marcas de tiempo para que la ultima caiga en este "
-                        "instante. Para la demostracion en vivo: los datos son de 2016 y "
-                        "los paneles miran a fechas recientes")
+    p.add_argument("--traer-a", dest="rebase_end", metavar="ISO|now", default=None,
+                   help="Trae las marcas de tiempo al presente desplazandolas para que la "
+                        "ultima caiga en este instante. Para la demostracion en vivo: los "
+                        "datos son de 2016 y los paneles miran a fechas recientes")

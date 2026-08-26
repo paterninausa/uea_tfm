@@ -53,7 +53,7 @@ primer arranque resuelve los conectores de Maven y tarda bastante mas.
 el punto de saturacion, sin limite.
 
 ```bash
-python pipeline/simulator/mqtt_simulator.py --speedup 2000 --limit 50000 --rebase-end now
+python pipeline/simulator/mqtt_simulator.py --acelerar 2000 --limite 50000 --traer-a now
 ```
 
 **4. Emitir el cuadro.** Deja el informe en `pipeline/logs/informe_kpi.md`.
@@ -101,16 +101,16 @@ hace falta para aislar una medicion porque el job las recarga al arrancar.
 ## load_ladder.py
 
 Ejecuta la escalera del Objetivo 5 invocando al simulador una vez por peldano,
-con el MISMO `--speedup` y distinto `--max-sensors`.
+con el MISMO `--acelerar` y distinto `--max-sensors`.
 
 ```bash
-python pipeline/tools/load_ladder.py --ladder 100,250,500,652 --speedup 2000
+python pipeline/tools/load_ladder.py --ladder 100,250,500,652 --acelerar 2000
 ```
 
 **Por que el speedup se mantiene y la tasa no.** Con una tasa global fija, 100 y
 652 sensores publican los mismos eventos por segundo: se reparte la misma carga
 entre mas identidades y no se escala nada —de ahi salia aquella degradacion del
-0,6% que no significaba gran cosa—. `--speedup` fija la cadencia por sensor, asi
+0,6% que no significaba gran cosa—. `--acelerar` fija la cadencia por sensor, asi
 que la carga total crece con el numero de contadores, que es lo que dice el
 objetivo.
 
@@ -136,12 +136,12 @@ rato en marcha.
 
 ### La rampa de saturacion
 
-`--speedups` en lugar de `--ladder` mantiene los sensores fijos y sube el ritmo.
+`--aceleraciones` en lugar de `--ladder` mantiene los sensores fijos y sube el ritmo.
 Responde a otra pregunta: no "cuanto se degrada al crecer", sino "hasta donde
 aguanta".
 
 ```bash
-python pipeline/tools/load_ladder.py --speedups 5000,10000,20000,40000 --events-per-step 40000
+python pipeline/tools/load_ladder.py --aceleraciones 5000,10000,20000,40000 --events-per-step 40000
 ```
 
 Medido el 19 de agosto de 2026 con los 652 sensores:

@@ -168,8 +168,8 @@ def run(args: argparse.Namespace) -> int:
         # silencio. Con eso, la consulta de metricas no escribe nada y una
         # prueba de fallo sobre TimescaleDB no demuestra nada: la consulta
         # "sobrevive" porque no llego a tocar la base.
-        [sys.executable, str(SIMULADOR), "--speedup", str(args.speedup),
-         "--limit", str(args.limit)],
+        [sys.executable, str(SIMULADOR), "--acelerar", str(args.speedup),
+         "--limite", str(args.limit)],
     )
     try:
         filas_inicio = contar(props, tabla)
@@ -260,11 +260,11 @@ def parse_args() -> argparse.Namespace:
     anadir_argumentos_bd(p)
     p.add_argument("--target", default="mosquitto", choices=OBJETIVOS,
                    help="Servicio que se va a tumbar")
-    p.add_argument("--speedup", type=float, default=1000.0,
+    p.add_argument("--acelerar", dest="speedup", metavar="FACTOR", type=float, default=1000.0,
                    help="Aceleracion del reloj durante la prueba. Con los 652 sensores, "
                         "x1000 son unos 181 ev/s: suficiente para ver el flujo cortarse y "
                         "volver, sin cargar el sistema mientras se mide la recuperacion")
-    p.add_argument("--limit", type=int, default=500000,
+    p.add_argument("--limite", dest="limit", metavar="N", type=int, default=500000,
                    help="Techo de eventos del simulador; debe sobrar para toda la prueba")
     p.add_argument("--warmup", type=float, default=60.0,
                    help="Segundos maximos de espera hasta ver flujo antes del fallo")
