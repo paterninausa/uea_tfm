@@ -46,7 +46,7 @@ Linux nativo o macOS; en Windows nativo (fuera de WSL) no esta probado.
 | Herramienta | Para que se usa | Notas |
 |---|---|---|
 | Docker + Docker Compose v2 | Levantar Mosquitto, Kafka, Apicurio, TimescaleDB, PostgreSQL y Grafana | `docker compose version` >= 2.20 recomendado |
-| Python 3.11 + venv | Entorno del simulador y de los jobs de Spark | Se crea con `bash setup.sh`; dependencias en `pipeline/requirements.txt` |
+| Python 3.11 + venv | Entorno del simulador y de los jobs de Spark | Se crea con `bash setup.sh`; dependencias en `requirements.txt` |
 | JDK 21 LTS (Temurin) | Requerido por PySpark 4.x (Java 17 o superior) | Gestionado por SDKMAN, ver `.sdkmanrc`; es la unica fuente de JDK de este entorno de desarrollo |
 | Git | Clonar el repo | -- |
 | `mosquitto-clients` (`mosquitto_sub` / `mosquitto_pub`) | Inspeccionar manualmente los mensajes MQTT durante desarrollo/depuracion | Opcional: el contenedor `tfm-mosquitto` ya los trae (`docker exec tfm-mosquitto mosquitto_sub ...`). Para tenerlos en el host: `sudo apt install mosquitto-clients` |
@@ -138,6 +138,7 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
 
     setup.sh                 Prepara el entorno: Docker/Java (comprueba y guia),
                               venv + dependencias, dataset ASHRAE
+    requirements.txt         Dependencias Python del proyecto (venv + pip)
     docs/                    Memoria del TFM (LaTeX)
     references/              TFM de ejemplo usados como referencia de estilo
     pipeline/
@@ -145,7 +146,6 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
       FAULT_HANDLING.md      Comportamiento del sistema ante fallos, medido
       docker-compose.yml     Mosquitto, Kafka (KRaft), Apicurio, TimescaleDB, PostgreSQL, Grafana
       docker/                Configuracion montada en los contenedores (mosquitto.conf, provisioning de Grafana)
-      requirements.txt       Dependencias Python del pipeline (venv + pip)
       data/                  Preparacion del dataset (Kaggle -> Parquet)
       schemas/               Esquema Avro y su registro gobernado en Apicurio
       simulator/             Simulador MQTT de telemetria

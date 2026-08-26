@@ -87,12 +87,22 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3/5 Entorno virtual: se reutiliza si ya existe, no se recrea a ciegas.
+# 3/5 Entorno virtual: se reutiliza si ya existe, no se recrea a ciegas. Si no
+# existe, se comprueba ANTES de intentar crearlo que el modulo venv de Python
+# puede montar pip: en Debian/Ubuntu (y por tanto WSL) suele venir separado
+# del python3 base en el paquete python3-venv, y sin el, "python3 -m venv"
+# falla con un error críptico de ensurepip en lugar de decir qué falta.
 # ---------------------------------------------------------------------------
 echo ""
 echo "==> 3/5 Entorno virtual ($VENV_DIR)"
 if [ -x "$VENV_DIR/bin/python" ]; then
   echo "  Ya existe -- reutilizando."
+elif ! python3 -c "import ensurepip" &> /dev/null; then
+  echo "  FALTA: el modulo 'venv' de Python no puede crear entornos con pip."
+  echo "  En Debian/Ubuntu (y WSL) suele faltar el paquete python3-venv:"
+  echo "    sudo apt install python3-venv"
+  echo "  Vuelve a ejecutar 'bash setup.sh' despues de instalarlo."
+  exit 1
 else
   echo "  Creando..."
   python3 -m venv "$VENV_DIR"
@@ -102,15 +112,14 @@ fi
 source "$VENV_DIR/bin/activate"
 
 # ---------------------------------------------------------------------------
-# 4/5 Dependencias Python: pipeline + preparacion de datos, en el mismo venv.
-# Sus versiones estan alineadas a proposito (ver pipeline/data/requirements.txt),
-# asi que instalar las dos encima no reinstala ni entra en conflicto.
+# 4/5 Dependencias Python: un unico requirements.txt en la raiz, para el
+# pipeline en ejecucion y la preparacion del dataset -- comparten venv, asi
+# que comparten tambien su lista de dependencias.
 # ---------------------------------------------------------------------------
 echo ""
 echo "==> 4/5 Dependencias Python"
 pip install --upgrade pip -q
-pip install -r "$PIPELINE_DIR/requirements.txt"
-pip install -r "$DATA_DIR/requirements.txt"
+pip install -r "$REPO_ROOT/requirements.txt"
 
 # ---------------------------------------------------------------------------
 # 5/5 Dataset ASHRAE: se salta si ya esta preparado. Si faltan credenciales de
@@ -155,12 +164,25 @@ else
   if [ ! -f "$KAGGLE_CREDS" ]; then
     DATASET_OK=0
     echo "  PENDIENTE: no se encontraron credenciales de Kaggle en $KAGGLE_CREDS"
+    echo "  Requiere pasar por el navegador (no se puede automatizar):"
+    echo ""
     echo "    1. Entra en https://www.kaggle.com/settings/api y pulsa 'Create New Token'"
-    echo "    2. Descarga kaggle.json y colocalo en $KAGGLE_CREDS"
-    echo "    3. chmod 600 $KAGGLE_CREDS"
-    echo "    4. Acepta las reglas de la competicion (necesario para la API):"
-    echo "       https://www.kaggle.com/competitions/ashrae-energy-prediction/rules"
-    echo "  Repite 'bash setup.sh' cuando las tengas."
+    echo "       -- descarga kaggle.json (suele ir a la carpeta de Descargas)"
+    echo ""
+    echo "    2. Muevelo a su sitio y protegelo (ejecuta esto en una terminal,"
+    echo "       ajustando la ruta de origen si tu navegador lo dejo en otro sitio):"
+    echo "         mkdir -p $HOME/.kaggle"
+    echo "         mv ~/Downloads/kaggle.json $KAGGLE_CREDS"
+    echo "         chmod 600 $KAGGLE_CREDS"
+    echo "       (el permiso 600 es obligatorio: la CLI de Kaggle rechaza el"
+    echo "       fichero si otros usuarios pueden leerlo)"
+    echo ""
+    echo "    3. Acepta las reglas de la competicion, tambien desde el navegador"
+    echo "       (sin esto la descarga falla con error 403 aunque las"
+    echo "       credenciales sean correctas):"
+    echo "         https://www.kaggle.com/competitions/ashrae-energy-prediction/rules"
+    echo ""
+    echo "  Repite 'bash setup.sh' cuando hayas hecho los tres pasos."
   else
     mkdir -p "$RAW_DIR"
     if descargar_si_falta "train.csv" && descargar_si_falta "building_metadata.csv"; then

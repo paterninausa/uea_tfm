@@ -52,13 +52,13 @@ El directorio `raw/` esta en `.gitignore` y no se versiona.
 ## 3. Instalar las dependencias de este paso
 
 ```bash
-pip install -r requirements.txt
+pip install -r ../../requirements.txt
 ```
 
-Este `requirements.txt` declara `pandas` y `pyarrow` ademas
-de la CLI de Kaggle, de modo que funciona tambien en un venv aparte del
-pipeline. Las versiones estan alineadas con `pipeline/requirements.txt` para
-que instalarlo encima del venv principal no reinstale nada.
+Ya instaladas si ejecutaste `setup.sh` desde la raiz del repo: `kaggle`,
+`pandas` y `pyarrow` viven en el mismo `requirements.txt` que el resto del
+pipeline, no en un fichero aparte -- un unico venv, una unica lista de
+dependencias.
 
 ## 4. Generar el subconjunto de datos
 

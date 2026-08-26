@@ -1,17 +1,19 @@
-# Dependencias Python del pipeline (entorno venv + pip)
+# Dependencias Python del proyecto (entorno venv + pip)
 #
-# Requiere Java 17 o superior (21 LTS recomendado) para PySpark 4.x —
-# gestionado vía SDKMAN, ver .sdkmanrc en la raiz del repo. venv no
-# gestiona JDK, asi que SDKMAN es la unica fuente de Java (sin conflicto
-# de PATH con ningun JDK instalado por un gestor de entornos Python).
+# Requiere Java 17 o superior (21 LTS recomendado) para PySpark 4.x. venv no
+# gestiona JDK; alternativas de instalacion en README.md.
 #
-# Instalacion:
+# Instalacion (normalmente via ./setup.sh, que hace exactamente esto):
 #   python3 -m venv .venv
 #   source .venv/bin/activate
-#   pip install -r pipeline/requirements.txt
+#   pip install -r requirements.txt
 #
-# Snapshot reproducible completo (con hashes) en pipeline/requirements.lock.txt
-# una vez generado con: pip freeze > pipeline/requirements.lock.txt
+# Snapshot reproducible completo (con hashes) en requirements.lock.txt una vez
+# generado con: pip freeze > requirements.lock.txt
+#
+# Un unico fichero para todo el proyecto: el pipeline en ejecucion y la
+# preparacion del dataset (pipeline/data/) comparten venv, asi que comparten
+# tambien su lista de dependencias.
 
 python-dotenv==1.0.1
 pytest==8.3.3
@@ -20,7 +22,8 @@ pyspark==4.2.0            # motor de procesamiento (Structured Streaming, DataFr
 
 # pandas y pyarrow SI se declaran explicitamente: se comprobo que `pip install
 # pyspark==4.2.0` NO los instala (solo llegan con extras como pyspark[sql] o
-# pyspark[connect]). El simulador los necesita para leer el Parquet historico.
+# pyspark[connect]). El simulador los necesita para leer el Parquet historico,
+# y prepare_ashrae.py para generarlo.
 pandas==2.3.3
 pyarrow==22.0.0
 
@@ -41,3 +44,5 @@ kafka-python==2.0.2       # cliente Kafka (testing/debug, no para el job de Spar
 # que expone Apicurio. El extra [avro] arrastra fastavro, con el que serializa
 # por debajo. Reemplaza la implementacion propia del formato de cable.
 confluent-kafka[avro]==2.15.0
+
+kaggle==2.2.3              # CLI de descarga del dataset ASHRAE (prepare_ashrae.py no la importa)
