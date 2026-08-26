@@ -1,0 +1,27 @@
+# Fuente de datos aprovisionada de forma declarativa, igual que timescaledb.yml.
+#
+# Se anade este segundo datasource porque la latencia de ingesta del Objetivo 1
+# (evento -> fila persistida, < 2 s) vive a grano de evento en telemetry_events
+# (PostgreSQL), no en el agregado por ventana de telemetry_metrics
+# (TimescaleDB). No compromete la independencia de los sumideros: es una
+# lectura de Grafana, no acopla las dos consultas de streaming, que siguen
+# siendo independientes con checkpoint propio.
+
+apiVersion: 1
+
+datasources:
+  - name: PostgreSQL
+    type: grafana-postgresql-datasource
+    uid: postgres
+    access: proxy
+    # Nombre del servicio y puerto INTERNO de la red de contenedores.
+    url: postgres:5432
+    user: tfm
+    secureJsonData:
+      password: tfm_dev_password
+    jsonData:
+      database: tfm_analytics
+      sslmode: disable
+      postgresVersion: 1700
+    isDefault: false
+    editable: true

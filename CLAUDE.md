@@ -104,6 +104,8 @@ Reproduce **solo lo que emitiría el contador**. Sin `event_id` ni `sensor_id` (
 
 **El KPI 1 mezcla dos magnitudes.** La latencia de ingesta a grano de evento cumple el objetivo; la disponibilidad del agregado no, y no puede cumplirlo por diseño: un agregado horario no existe antes de que cierre su ventana, y con contadores que miden en punto eso obliga a esperar la lectura de la hora siguiente. Verificado con una predicción: al bajar la tasa de 262 a 110 ev/s la latencia pasó de 5,66 a 10,89 s, ajustándose a `1,5 × (652/tasa) + 1,9 s`. **Está acotada por la cadencia del sensor, no por el pipeline.**
 
+**El panel «Latencia extremo a extremo (p95)» de Grafana mostraba la magnitud equivocada.** Consultaba `telemetry_metrics` (la disponibilidad del agregado, ~2,8 s, no cumple <2s) en vez de `telemetry_events` (la latencia de ingesta, ~1,3 s, sí cumple). Corregido el 26 de agosto de 2026: se añadió un segundo datasource de Grafana a PostgreSQL (`pipeline/docker/grafana/provisioning/datasources/postgres.yml`) y los dos paneles de latencia del dashboard 1 pasaron a consultar `telemetry_events`. Decisión deliberada: el dashboard **solo muestra la magnitud que está en los objetivos** (latencia de ingesta); la disponibilidad del agregado no se enseña ni se menciona en la demo, para no complicar la exposición con un número que no corresponde a ningún KPI prometido. Añadir el datasource no compromete la independencia de los sumideros: es una lectura de Grafana, no acopla las dos consultas de streaming.
+
 ### Cifras del 18 de agosto de 2026, ya con las herramientas de medición
 
 Obtenidas con `tools/kpi_report.py` sobre 20.000 eventos a 400 ev/s, y reproducibles repitiendo el ciclo de `tools/README.md`.
