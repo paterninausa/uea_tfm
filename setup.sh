@@ -160,20 +160,31 @@ descargar_si_falta() {
 if [ -f "$TELEMETRIA" ] && [ -f "$EDIFICIOS" ] && [ -f "$LINEA_BASE" ]; then
   echo "  Ya preparado -- los tres Parquet existen en $DATA_DIR"
 else
-  KAGGLE_CREDS="$HOME/.kaggle/kaggle.json"
-  if [ ! -f "$KAGGLE_CREDS" ]; then
+  # La CLI de Kaggle prueba, en este orden: token de acceso (variable
+  # KAGGLE_API_TOKEN o ~/.kaggle/access_token[.txt] -- el metodo vigente,
+  # verificado contra el propio paquete instalado en kagglesdk/kaggle_env.py)
+  # y despues kaggle.json (metodo antiguo, usuario+clave). La web de Kaggle ya
+  # no ofrece descargar kaggle.json al crear un token nuevo: solo el token de
+  # acceso, asi que se comprueban los dos para no marcar PENDIENTE a alguien
+  # que ya tiene credenciales validas por el metodo vigente.
+  KAGGLE_TOKEN="$HOME/.kaggle/access_token"
+  KAGGLE_TOKEN_TXT="$HOME/.kaggle/access_token.txt"
+  KAGGLE_JSON="$HOME/.kaggle/kaggle.json"
+  if [ ! -f "$KAGGLE_TOKEN" ] && [ ! -f "$KAGGLE_TOKEN_TXT" ] \
+     && [ ! -f "$KAGGLE_JSON" ] && [ -z "${KAGGLE_API_TOKEN:-}" ]; then
     DATASET_OK=0
-    echo "  PENDIENTE: no se encontraron credenciales de Kaggle en $KAGGLE_CREDS"
+    echo "  PENDIENTE: no se encontraron credenciales de Kaggle."
     echo "  Requiere pasar por el navegador (no se puede automatizar):"
     echo ""
     echo "    1. Entra en https://www.kaggle.com/settings/api y pulsa 'Create New Token'"
-    echo "       -- descarga kaggle.json (suele ir a la carpeta de Descargas)"
+    echo "       -- copia el token que te muestra (empieza por 'KGAT_')."
+    echo "       Solo se ve una vez: si lo pierdes, genera uno nuevo."
     echo ""
-    echo "    2. Muevelo a su sitio y protegelo (ejecuta esto en una terminal,"
-    echo "       ajustando la ruta de origen si tu navegador lo dejo en otro sitio):"
+    echo "    2. Guardalo y protegelo (ejecuta esto en una terminal, sustituyendo"
+    echo "       TU_TOKEN por el valor copiado):"
     echo "         mkdir -p $HOME/.kaggle"
-    echo "         mv ~/Downloads/kaggle.json $KAGGLE_CREDS"
-    echo "         chmod 600 $KAGGLE_CREDS"
+    echo "         echo TU_TOKEN > $KAGGLE_TOKEN"
+    echo "         chmod 600 $KAGGLE_TOKEN"
     echo "       (el permiso 600 es obligatorio: la CLI de Kaggle rechaza el"
     echo "       fichero si otros usuarios pueden leerlo)"
     echo ""

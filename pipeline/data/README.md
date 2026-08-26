@@ -26,8 +26,23 @@ Necesitas una cuenta de Kaggle (gratuita) y aceptar las condiciones de la
 competicion desde su pagina web:
 
 1. Entra en https://www.kaggle.com/settings/api y pulsa "Create New Token"
-2. Descarga `kaggle.json` y colocalo en `~/.kaggle/kaggle.json`
-3. Ajusta permisos: `chmod 600 ~/.kaggle/kaggle.json`
+2. Copia el token que muestra (empieza por `KGAT_`; solo se ve una vez).
+   Guardalo en `~/.kaggle/access_token`:
+
+   ```bash
+   mkdir -p ~/.kaggle
+   echo TU_TOKEN > ~/.kaggle/access_token
+   chmod 600 ~/.kaggle/access_token
+   ```
+
+3. Acepta las reglas de la competicion (pagina de la competicion, boton
+   "I Understand and Accept"); sin esto la descarga falla con error 403
+   aunque el token sea valido.
+
+Este es el metodo vigente en la web de Kaggle a fecha de esta nota (ya no
+ofrece descargar `kaggle.json` al crear un token). La CLI (`kaggle==2.2.3`,
+la version fijada en este proyecto) sigue aceptando tambien el `kaggle.json`
+antiguo si lo prefieres o ya lo tienes de antes.
 
 ## 2. Obtener los ficheros originales
 
