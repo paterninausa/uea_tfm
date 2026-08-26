@@ -211,9 +211,16 @@ reprocesar el historico entero.
 
 **Un sensor es el par edificio-contador.** Un mismo edificio con contador de
 electricidad y de agua fria son dos sensores con series independientes. De ahi
-la topologia de topicos, que el simulador construye cruzando con la dimension:
+la topologia de topicos, que solo identifica al sensor:
 
-    iot/{site_id}/{building_id}/{meter_type}/telemetry
+    iot/{building_id}/{meter_type}/telemetry
+
+**Sin nivel de emplazamiento.** `site_id` es derivable de `building_id` a
+traves de la tabla de dimension, y ponerlo tambien en el topico crearia una
+segunda fuente de verdad —topico y dimension podrian discrepar si un edificio
+se reasignara— sin que nada lo consumiera: el bridge se suscribe a `iot/#` y
+nunca parte el topico. El emplazamiento entra en el analisis donde importa, en
+el broadcast join de Spark.
 
 **Las lecturas a cero no se eliminan** (4,6% del subconjunto). Son parte del
 dato real y son material para el informe de deteccion de anomalias.
