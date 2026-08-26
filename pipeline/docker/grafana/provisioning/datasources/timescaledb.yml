@@ -6,7 +6,10 @@ apiVersion: 1
 
 datasources:
   - name: TimescaleDB
-    type: postgres
+    # Identificador del plugin de PostgreSQL en Grafana moderno (13.x). El
+    # antiguo `postgres` esta obsoleto y no coincide con lo que declaran los
+    # dashboards (`grafana-postgresql-datasource`).
+    type: grafana-postgresql-datasource
     uid: timescaledb
     access: proxy
     # Nombre del servicio y puerto INTERNO de la red de contenedores: Grafana
@@ -14,10 +17,13 @@ datasources:
     # publicado hacia fuera.
     url: timescaledb:5432
     user: tfm
-    database: tfm_metrics
     secureJsonData:
       password: tfm_dev_password
     jsonData:
+      # La base de datos va en jsonData desde Grafana 11: el campo `database`
+      # de nivel superior se ignora en las versiones modernas y Grafana da
+      # "no default database configured" al intentar conectar.
+      database: tfm_metrics
       sslmode: disable
       postgresVersion: 1700
       # Le indica a Grafana que el backend es TimescaleDB, lo que habilita las
