@@ -1,7 +1,7 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.1.0/schema.json",
   "name": "41a8bae5dbdfd2071480",
-  "displayName": "Page 1",
+  "displayName": "Consumo de Energía",
   "displayOption": "FitToPage",
   "height": 720,
   "width": 1280

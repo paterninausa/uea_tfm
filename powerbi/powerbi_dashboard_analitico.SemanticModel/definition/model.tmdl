@@ -10,5 +10,11 @@ annotation __PBI_TimeIntelligenceEnabled = 1
 
 annotation PBI_ProTooling = ["DevMode"]
 
+annotation PBI_QueryOrder = ["public buildings","public sensor_baseline","public telemetry_events"]
+
+ref table 'public buildings'
+ref table 'public sensor_baseline'
+ref table 'public telemetry_events'
+
 ref cultureInfo en-US
 
