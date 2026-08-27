@@ -49,14 +49,14 @@ Al difundirlas a los ejecutores, cada micro-lote las cruza en memoria sin
 shuffle. Es el patron estandar de union flujo-estatico de Structured Streaming.
 
 Que estos atributos vivan fuera del evento es deliberado: son del edificio, no
-del contador. Corregir el ano de construccion de un edificio es actualizar una
+del medidor. Corregir el ano de construccion de un edificio es actualizar una
 fila; desnormalizado en cada evento, obligaria a reprocesar el historico entero.
 
-## Por que se agrupa por site + uso + tipo de contador
+## Por que se agrupa por site + uso + tipo de medidor
 
 `meter_type` es **obligatorio** en la clave de agrupacion, y no por comodidad:
 la unidad de `meter_reading` depende del medio, asi que promediar a traves de
-tipos de contador da una cifra sin significado fisico. Se ve en las medianas del
+tipos de medidor da una cifra sin significado fisico. Se ve en las medianas del
 subconjunto: 43,6 en electricidad, 146,0 en agua fria y 8,8 en agua caliente.
 
 Junto a `site_id` y `primary_use` dan **46 combinaciones**. Como las lecturas
@@ -74,7 +74,7 @@ que lo derive el**. Si necesita datos que no le llegan, lo calcula el pipeline.
 
 | Quien | Que calcula | Por que ahi |
 |---|---|---|
-| `prepare_ashrae.py` | Linea base por contador | Una vez, sobre el historico completo |
+| `prepare_ashrae.py` | Linea base por medidor | Una vez, sobre el historico completo |
 | `enrich` en Spark | Solo lo que consume la agregacion | Las claves y banderas que Grafana necesita por ventana |
 | PostgreSQL | Nada: guarda lecturas crudas y las dos tablas de referencia | — |
 | Power BI | Intensidad, atipicos, ceros, umbrales | Un join le basta, y es potente |
@@ -113,21 +113,21 @@ no por intuicion:
 | **`p75 + 5 x IQR`** | **0,34%** (elegido) |
 | `p75 + 10 x IQR` | 0,04% |
 
-La comparacion es contra la linea base **del propio contador**, no contra un
+La comparacion es contra la linea base **del propio medidor**, no contra un
 umbral global: los edificios van de 801 a 850.354 pies cuadrados y cada medio
-tiene su unidad, asi que un contador solo es comparable consigo mismo. Los 17
+tiene su unidad, asi que un medidor solo es comparable consigo mismo. Los 17
 sensores con IQR = 0 quedan exentos: sin dispersion historica no hay forma de
 definir que es atipico para ellos.
 
 **Se descarto la regla de lectura negativa**: es fisicamente imposible en un
-contador y se comprobo que no ocurre ni una vez en el subconjunto. Una regla que
+medidor y se comprobo que no ocurre ni una vez en el subconjunto. Una regla que
 nunca dispara es indistinguible de una regla rota.
 
 **Las lecturas a cero NO se marcan como anomalia**, aunque sean el 4,64%. Una
-lectura a cero aislada puede ser legitima —un contador parado unas horas—, asi
+lectura a cero aislada puede ser legitima —un medidor parado unas horas—, asi
 que se registran como `is_zero_reading`, un indicador de calidad. El patron real
 emerge en la agregacion: se midio que las rachas de ceros llegan a durar **8.051
-horas seguidas, 335 dias**, y eso ya no es una medida sino un contador muerto.
+horas seguidas, 335 dias**, y eso ya no es una medida sino un medidor muerto.
 Detectar la racha evento a evento exigiria procesamiento con estado; a nivel de
 ventana, un `zero_count` alto y sostenido la delata igual.
 
@@ -184,7 +184,7 @@ tiene la cache necesaria, pero anade complejidad que este trabajo no necesita.
 `guard_schema_version` comprueba el id de esquema de cada evento y **detiene el
 job** si no es el esperado. Antes lo *filtraba*, y esa era la ultima via de
 perdida silenciosa del pipeline: los eventos de una version inesperada
-desaparecian sin contador ni traza, justo en el momento en que mas importa.
+desaparecian sin medidor ni traza, justo en el momento en que mas importa.
 
 Detenerse es preferible a descartar, y no por purismo: con 7 dias de retencion
 en Kafka, **parar es recuperable** —se corrige y se reanuda desde el checkpoint
@@ -452,7 +452,7 @@ termino constante de 1,9 s es el micro-lote mas el retraso del watermark.
 
 **La latencia del agregado esta acotada por abajo por el intervalo de muestreo
 de los sensores.** Un agregado horario no puede existir antes de que termine la
-hora que resume, y con contadores que miden una vez por hora eso significa
+hora que resume, y con medidores que miden una vez por hora eso significa
 esperar a la lectura siguiente. En un despliegue real esa espera es de una hora
 de reloj; aqui se comprime porque el replay va acelerado.
 

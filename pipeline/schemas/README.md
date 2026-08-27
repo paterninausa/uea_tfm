@@ -45,7 +45,7 @@ existe en la cabeza de quien escribio el productor.
 del edificio no viajan aqui: viven en la tabla de dimension y Spark los
 incorpora con un broadcast join.
 
-`sim_publish_ts` es el unico campo que no emite el contador: es instrumentacion
+`sim_publish_ts` es el unico campo que no emite el medidor: es instrumentacion
 para medir la latencia del Objetivo 1. Los otros cuatro reproducen lo que
 enviaria el dispositivo.
 
@@ -56,7 +56,7 @@ enviaria el dispositivo.
 
 El sufijo `-value` sigue la convencion **TopicNameStrategy**: un esquema por
 topico, describiendo el *valor* de los mensajes de `iot.telemetry.raw`. Es la
-convencion adecuada aqui porque los cuatro tipos de contador comparten forma
+convencion adecuada aqui porque los cuatro tipos de medidor comparten forma
 —identificador, instante y un numero—. Si el pipeline llegara a ingerir
 sensores estructuralmente distintos, habria que replantearlo hacia topicos
 separados por familia o hacia `RecordNameStrategy`.

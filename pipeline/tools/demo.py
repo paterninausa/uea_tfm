@@ -9,7 +9,7 @@ listo con datos recientes.
 Los datos son las medidas reales de ASHRAE (2016) TRAIDAS AL PRESENTE con
 `--traer-a now`: el bloque de `--semanas` semanas termina en "ahora" y se rellena
 de izquierda a derecha segun avanza el replay. En un despliegue real esto no
-haria falta —los contadores reportan en directo y el historico se acumula solo—;
+haria falta —los medidores reportan en directo y el historico se acumula solo—;
 aqui se comprime el tiempo porque no se dispone de meses de operacion.
 
 Uso:

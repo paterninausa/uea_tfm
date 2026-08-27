@@ -16,7 +16,7 @@ medidas, y merece un sitio donde este documentada y no mezclada con el codigo de
 publicacion. Estuvo en `common/replay.py` mientras habia dos productores; al
 quedar uno solo, se movio aqui.
 
-UN SENSOR ES EL PAR (edificio, tipo de contador). Un mismo edificio con contador
+UN SENSOR ES EL PAR (edificio, tipo de medidor). Un mismo edificio con medidor
 de electricidad y de agua fria son dos sensores con series independientes; el
 subconjunto en uso tiene 652.
 """
@@ -39,7 +39,7 @@ RUTA_TELEMETRIA = Path(__file__).resolve().parents[1] / "data" / "ashrae_telemet
 def cargar(telemetry_path: Path) -> pd.DataFrame:
     """Carga la tabla de hechos.
 
-    No necesita la dimension de edificios: todo lo que identifica a un contador
+    No necesita la dimension de edificios: todo lo que identifica a un medidor
     —`building_id` y `meter_type`— viaja ya en la propia lectura. El resto de
     atributos los incorpora Spark mas adelante con un broadcast join.
     """

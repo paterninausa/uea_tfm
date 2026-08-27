@@ -177,7 +177,7 @@ def guard_schema_version(df: DataFrame, expected_schema_id: int) -> DataFrame:
 
     La version anterior FILTRABA esos eventos, y era la ultima via de perdida
     silenciosa que quedaba en el pipeline: los mensajes de una version de
-    esquema inesperada desaparecian sin dejar rastro ni contador, lo que
+    esquema inesperada desaparecian sin dejar rastro ni medidor, lo que
     chocaria con el objetivo de perdida < 0,1% justo cuando mas importa.
 
     Detenerse es preferible a descartar, y no por purismo: en una arquitectura
@@ -231,7 +231,7 @@ def load_reference(spark: SparkSession, dim_path: Path, base_path: Path):
     Es el patron estandar de union flujo-estatico de Structured Streaming.
 
     Que estos atributos vivan aqui y no en el evento es deliberado: son del
-    edificio, no del contador. Si manana se corrige el ano de construccion de un
+    edificio, no del medidor. Si manana se corrige el ano de construccion de un
     edificio se actualiza una fila, mientras que desnormalizados en cada evento
     habria que reprocesar el historico entero.
     """
@@ -270,15 +270,15 @@ def enrich(df: DataFrame, dimension: DataFrame, linea_base: DataFrame) -> DataFr
     df = df.join(linea_base, on=["building_id", "meter_type"], how="left")
 
     # Lectura exactamente cero: no se juzga como anomalia porque una sola no lo
-    # es —un contador puede estar legitimamente parado unas horas—. Se marca
+    # es —un medidor puede estar legitimamente parado unas horas—. Se marca
     # como indicador de calidad y son las AGREGACIONES las que revelan el
     # patron: se midio que las rachas de ceros llegan a durar 8.051 horas
-    # seguidas, 335 dias, lo que ya no es una medida sino un contador muerto.
+    # seguidas, 335 dias, lo que ya no es una medida sino un medidor muerto.
     # Detectar la racha evento a evento exigiria procesamiento con estado.
     lectura_cero = F.col("meter_reading") == 0
 
     # Regla de pico atipico, contra la linea base del PROPIO sensor. Un umbral
-    # global no serviria: cada contador solo es comparable consigo mismo.
+    # global no serviria: cada medidor solo es comparable consigo mismo.
     #
     # El umbral se eligio midiendo la tasa de disparo sobre los 5,68 M de
     # eventos, no por intuicion: p75 + 3*IQR marca el 0,95%, 5*IQR el 0,34% y
@@ -292,7 +292,7 @@ def enrich(df: DataFrame, dimension: DataFrame, linea_base: DataFrame) -> DataFr
     )
 
     # Se descarto la regla de lectura negativa: es fisicamente imposible en un
-    # contador y se comprobo que no ocurre ni una vez en el subconjunto. Una
+    # medidor y se comprobo que no ocurre ni una vez en el subconjunto. Una
     # regla que nunca dispara es indistinguible de una regla rota.
     return (
         df.withColumn("is_zero_reading", lectura_cero)
@@ -313,7 +313,7 @@ def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str,
 
     SE AGRUPA POR meter_type OBLIGATORIAMENTE, y no por comodidad: la unidad de
     meter_reading depende del medio, asi que promediar a traves de tipos de
-    contador produce una cifra sin significado fisico. Se ve en las medianas del
+    medidor produce una cifra sin significado fisico. Se ve en las medianas del
     subconjunto: 43,6 en electricidad, 146,0 en agua fria y 8,8 en agua
     caliente.
 
@@ -392,7 +392,7 @@ def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str,
             # Intensidad agregada como cociente de sumas, no como media de
             # cocientes: asi los edificios grandes pesan lo que les corresponde.
             # Cada edificio aporta su superficie una vez por ventana, porque
-            # emite una lectura por hora y contador.
+            # emite una lectura por hora y medidor.
             F.sum("square_feet").alias("sum_square_feet"),
             F.sum(F.when(F.col("is_zero_reading"), 1).otherwise(0)).alias("zero_count"),
             F.sum(F.when(F.col("is_anomaly"), 1).otherwise(0)).alias("anomaly_count"),

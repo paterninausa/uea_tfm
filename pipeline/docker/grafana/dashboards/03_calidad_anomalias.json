@@ -1,7 +1,7 @@
 {
   "uid": "tfm-calidad",
   "title": "3. Calidad y anomalias",
-  "description": "Estado de salud de los contadores. Las lecturas a cero y los picos atipicos se calculan en el pipeline y se agregan por ventana; a este nivel emergen patrones que un evento aislado no revela, como los contadores muertos.",
+  "description": "Estado de salud de los medidores. Las lecturas a cero y los picos atipicos se calculan en el pipeline y se agregan por ventana; a este nivel emergen patrones que un evento aislado no revela, como los medidores muertos.",
   "tags": ["tfm", "calidad"],
   "timezone": "utc",
   "refresh": "30s",
@@ -33,7 +33,7 @@
       "id": 2,
       "type": "stat",
       "title": "Anomalias detectadas",
-      "description": "Lecturas que superan p75 + 5 x IQR de la linea base del PROPIO contador. El umbral se eligio midiendo la tasa de disparo sobre el dataset completo: 3xIQR marca el 0,95%, 5xIQR el 0,34% y 10xIQR el 0,04%.",
+      "description": "Lecturas que superan p75 + 5 x IQR de la linea base del PROPIO medidor. El umbral se eligio midiendo la tasa de disparo sobre el dataset completo: 3xIQR marca el 0,95%, 5xIQR el 0,34% y 10xIQR el 0,04%.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 5, "w": 8, "x": 8, "y": 0},
       "fieldConfig": {
@@ -67,7 +67,7 @@
       "id": 4,
       "type": "timeseries",
       "title": "Ceros y anomalias en el tiempo",
-      "description": "Una banda continua de ceros hora tras hora delata un contador muerto. Se midio que en el dataset las rachas de ceros llegan a durar 8.051 horas seguidas, 335 dias, lo que ya no es una medida.",
+      "description": "Una banda continua de ceros hora tras hora delata un medidor muerto. Se midio que en el dataset las rachas de ceros llegan a durar 8.051 horas seguidas, 335 dias, lo que ya no es una medida.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 9, "w": 14, "x": 0, "y": 5},
       "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 70, "stacking": {"mode": "normal"}}}},
@@ -81,13 +81,13 @@
       "id": 5,
       "type": "table",
       "title": "Grupos con mas lecturas a cero",
-      "description": "Candidatos a contador muerto o fuera de servicio. Al no estar building_id en la agregacion, el grupo acota donde mirar; el edificio concreto se identifica en Power BI, que conserva el grano de evento.",
+      "description": "Candidatos a medidor muerto o fuera de servicio. Al no estar building_id en la agregacion, el grupo acota donde mirar; el edificio concreto se identifica consultando telemetry_events, que conserva el grano de evento.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 9, "w": 10, "x": 14, "y": 5},
       "options": {"showHeader": true},
       "targets": [{
         "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
-        "rawSql": "SELECT\n  site_id AS \"sitio\",\n  primary_use AS \"uso\",\n  meter_type AS \"medio\",\n  sum(zero_count) AS \"ceros\",\n  round(100.0 * sum(zero_count) / NULLIF(sum(event_count), 0), 1) AS \"pct\"\nFROM telemetry_metrics\nWHERE $__timeFilter(window_start)\nGROUP BY 1, 2, 3\nHAVING sum(zero_count) > 0\nORDER BY 4 DESC\nLIMIT 15"
+        "rawSql": "SELECT\n  site_id AS \"Emplazamiento\",\n  primary_use AS \"Uso de edificacion\",\n  meter_type AS \"Tipo de medidor\",\n  sum(zero_count) AS \"ceros\",\n  round(100.0 * sum(zero_count) / NULLIF(sum(event_count), 0), 1) AS \"pct\"\nFROM telemetry_metrics\nWHERE $__timeFilter(window_start)\nGROUP BY 1, 2, 3\nHAVING sum(zero_count) > 0\nORDER BY 4 DESC\nLIMIT 15"
       }]
     },
     {
@@ -99,7 +99,7 @@
       "options": {"showHeader": true},
       "targets": [{
         "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
-        "rawSql": "SELECT\n  window_start AS \"ventana\",\n  site_id AS \"sitio\",\n  primary_use AS \"uso\",\n  meter_type AS \"medio\",\n  anomaly_count AS \"anomalias\",\n  event_count AS \"lecturas\",\n  round(max_reading::numeric, 1) AS \"lectura maxima\"\nFROM telemetry_metrics\nWHERE $__timeFilter(window_start) AND anomaly_count > 0\nORDER BY window_start DESC, anomaly_count DESC\nLIMIT 50"
+        "rawSql": "SELECT\n  window_start AS \"ventana\",\n  site_id AS \"Emplazamiento\",\n  primary_use AS \"Uso de edificacion\",\n  meter_type AS \"Tipo de medidor\",\n  anomaly_count AS \"anomalias\",\n  event_count AS \"lecturas\",\n  round(max_reading::numeric, 1) AS \"lectura maxima\"\nFROM telemetry_metrics\nWHERE $__timeFilter(window_start) AND anomaly_count > 0\nORDER BY window_start DESC, anomaly_count DESC\nLIMIT 50"
       }]
     }
   ]

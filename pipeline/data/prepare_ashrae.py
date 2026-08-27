@@ -1,7 +1,7 @@
 """
 Preparacion del dataset ASHRAE GEPIII para el pipeline del TFM.
 
-Une las lecturas de contador con los metadatos de edificio, se queda con el
+Une las lecturas de medidor con los metadatos de edificio, se queda con el
 subconjunto de emplazamientos elegido y produce las tres tablas planas que
 alimentan el pipeline.
 
@@ -17,13 +17,13 @@ SUBCONJUNTO ELEGIDO: emplazamientos 2, 3 y 5.
 
 Se eligieron midiendo el dataset completo, no por conveniencia:
 
-  - Cubren 652 sensores (pares edificio-contador), holgadamente por encima de
+  - Cubren 652 sensores (pares edificio-medidor), holgadamente por encima de
     los 500 concurrentes que exige el Objetivo 5, y permiten muestrear la carga
     base de 100 para medir la degradacion de throughput.
   - Reducen las combinaciones de agregacion de 193 a 46, y el volumen de 17,7 M
     a 5,7 M de eventos: unos 128 minutos de reproduccion frente a 6,6 horas.
   - El emplazamiento 3 aporta volumen con la mejor calidad del dataset (274
-    sensores, 0,1% de lecturas a cero); el 2 aporta la variedad de contadores y
+    sensores, 0,1% de lecturas a cero); el 2 aporta la variedad de medidores y
     el ciclo estacional de refrigeracion (el consumo de agua fria pasa de 152 en
     enero a 528 en agosto); el 5 tiene completitud del 100%.
 
@@ -35,9 +35,9 @@ mutuamente comparables sin conversion.
 
 Produce TRES ficheros, con nombres fijos, en este mismo directorio:
 
-  - `ashrae_telemetry.parquet`       la tabla de hechos, lo que emite el contador
+  - `ashrae_telemetry.parquet`       la tabla de hechos, lo que emite el medidor
   - `ashrae_buildings.parquet`       la dimension con los atributos del edificio
-  - `ashrae_sensor_baseline.parquet` los cuartiles del historico de cada contador,
+  - `ashrae_sensor_baseline.parquet` los cuartiles del historico de cada medidor,
                                      que usa Spark para detectar picos atipicos y
                                      Power BI para ajustar el umbral
 
@@ -64,7 +64,7 @@ from common.logging_setup import configurar_logging  # noqa: E402
 
 logger = logging.getLogger("prepare_ashrae")
 
-# Codigos de contador segun la documentacion de la competicion.
+# Codigos de medidor segun la documentacion de la competicion.
 METER_TYPES = {0: "electricity", 1: "chilledwater", 2: "steam", 3: "hotwater"}
 
 # Emplazamientos del subconjunto. Ver el razonamiento en el docstring.
@@ -92,7 +92,7 @@ def prepare(train_path: Path, meta_path: Path, sites: tuple) -> None:
     meta_sub = meta[meta["site_id"].isin(sites)]
     logger.info(f"  {len(meta)} edificios en total -> {len(meta_sub)} en los emplazamientos {list(sites)}")
 
-    logger.info(f"Leyendo lecturas de contador: {train_path}")
+    logger.info(f"Leyendo lecturas de medidor: {train_path}")
     train = read_any(train_path)
     logger.info(f"  {len(train):,} lecturas en total")
 
@@ -103,7 +103,7 @@ def prepare(train_path: Path, meta_path: Path, sites: tuple) -> None:
 
     df["timestamp"] = pd.to_datetime(df["timestamp"])
 
-    # meter_type es una DECODIFICACION del codigo de contador, no un campo
+    # meter_type es una DECODIFICACION del codigo de medidor, no un campo
     # derivado: la correspondencia 0->electricity ... 3->hotwater viene de la
     # documentacion de la competicion y es biyectiva, asi que no anade ni pierde
     # informacion. Se prefiere al codigo crudo porque permite declararlo como
@@ -112,7 +112,7 @@ def prepare(train_path: Path, meta_path: Path, sites: tuple) -> None:
     df["meter_type"] = df["meter"].map(METER_TYPES)
     if df["meter_type"].isna().any():
         codigos = sorted(df.loc[df["meter_type"].isna(), "meter"].unique())
-        raise ValueError(f"Codigos de contador desconocidos en los datos: {codigos}")
+        raise ValueError(f"Codigos de medidor desconocidos en los datos: {codigos}")
 
     # EL IDENTIFICADOR DEL EDIFICIO ES TEXTO EN TODO EL PIPELINE, desde este
     # fichero hasta las tablas finales. Nadie suma un building_id: es una
@@ -132,8 +132,8 @@ def prepare(train_path: Path, meta_path: Path, sites: tuple) -> None:
     # site_id NO se convierte: no viaja en el evento —lo anade Spark con el
     # broadcast join— asi que ningun productor puede equivocarse con el.
 
-    # ---- TABLA DE HECHOS: solo lo que emitiria el contador -------------------
-    # Sin event_id, sin sensor_id y sin caracteristicas del edificio. Un contador
+    # ---- TABLA DE HECHOS: solo lo que emitiria el medidor -------------------
+    # Sin event_id, sin sensor_id y sin caracteristicas del edificio. Un medidor
     # real envia quien es y cuanto midio; cualquier otra cosa la
     # anadiriamos nosotros y dejaria de reproducir su comportamiento.
     telemetria = df[["building_id", "meter_type", "timestamp", "meter_reading"]].copy()
@@ -155,11 +155,11 @@ def prepare(train_path: Path, meta_path: Path, sites: tuple) -> None:
     dimension["building_id"] = dimension["building_id"].astype(str)
 
     # ---- LINEA BASE POR SENSOR: referencia para la deteccion de picos --------
-    # Mediana y cuartiles del historico de cada contador. El job de Spark la
+    # Mediana y cuartiles del historico de cada medidor. El job de Spark la
     # incorpora por broadcast join y marca como atipica toda lectura que supere
     # p75 + 5*IQR de su PROPIO sensor. Un umbral global no serviria: el consumo
     # va de 801 a 850.354 pies cuadrados de edificio y de un medio a otro cambia
-    # la unidad, asi que cada contador solo es comparable consigo mismo.
+    # la unidad, asi que cada medidor solo es comparable consigo mismo.
     #
     # Que la referencia se calcule sobre el mismo historico que luego se
     # reproduce es lo habitual en cualquier linea base: describe el
@@ -189,7 +189,7 @@ def resumen(tel: pd.DataFrame, dim: pd.DataFrame, base: pd.DataFrame) -> None:
     logger.info("\n--- Tabla de hechos (lo que emite el sensor) ---")
     logger.info(f"  columnas               : {list(tel.columns)}")
     logger.info(f"  eventos                : {n:,}")
-    logger.info(f"  sensores (edificio + contador): {tel.groupby(['building_id','meter_type'], observed=True).ngroups}")
+    logger.info(f"  sensores (edificio + medidor): {tel.groupby(['building_id','meter_type'], observed=True).ngroups}")
     logger.info(f"  rango temporal         : {tel['timestamp'].min()} -> {tel['timestamp'].max()}")
     logger.info(f"  nulos                  : {int(tel.isna().sum().sum())}")
 
@@ -201,7 +201,7 @@ def resumen(tel: pd.DataFrame, dim: pd.DataFrame, base: pd.DataFrame) -> None:
     logger.info(f"\n  clave natural {tuple(clave)}:")
     logger.info(f"    grupos = {grupos:,} sobre {n:,} filas -> {'UNICA' if grupos == n else 'COLISIONA'}")
     # (building_id, timestamp) no basta: un edificio puede tener varios
-    # contadores midiendo a la misma hora.
+    # medidores midiendo a la misma hora.
     sin_contador = tel.groupby(["building_id", "timestamp"], observed=True).ngroups
     logger.info(f"    sin meter_type seria {sin_contador:,} grupos -> perderia {n - sin_contador:,} eventos")
 
@@ -209,7 +209,7 @@ def resumen(tel: pd.DataFrame, dim: pd.DataFrame, base: pd.DataFrame) -> None:
     logger.info(f"\n  lecturas a cero        : {ceros:,} ({100*ceros/n:.1f}%)")
     logger.info("  (no se eliminan: son dato real y material para el informe de anomalias)")
 
-    logger.info("\n  eventos por tipo de contador:")
+    logger.info("\n  eventos por tipo de medidor:")
     for tipo, c in tel["meter_type"].value_counts().items():
         logger.info(f"    {tipo:<14} {c:>10,}")
 
@@ -233,7 +233,7 @@ def resumen(tel: pd.DataFrame, dim: pd.DataFrame, base: pd.DataFrame) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Prepara el subconjunto ASHRAE para el pipeline (TFM)")
     p.add_argument("--train", type=Path, default=AQUI / "raw/train.parquet",
-                   help="Lecturas de contador (train.csv de Kaggle o su equivalente en Parquet)")
+                   help="Lecturas de medidor (train.csv de Kaggle o su equivalente en Parquet)")
     p.add_argument("--metadata", type=Path, default=AQUI / "raw/building_metadata.parquet",
                    help="Metadatos de edificio (building_metadata.csv o Parquet)")
     p.add_argument("--sites", type=int, nargs="+", default=list(DEFAULT_SITES),

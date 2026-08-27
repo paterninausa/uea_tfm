@@ -83,7 +83,7 @@ def kpi_ingesta(props_pg: dict, props_ts: dict) -> dict:
     Se informan las dos por separado porque miden cosas distintas y el objetivo
     escrito las confunde. La de evento (publicacion -> fila en PostgreSQL) mide
     el pipeline. La del agregado (-> fila en TimescaleDB) incluye la espera a que
-    cierre la ventana horaria, que depende de cada cuanto mide el contador y no
+    cierre la ventana horaria, que depende de cada cuanto mide el medidor y no
     de la velocidad del sistema.
     """
     (filas, con_marca, p50, p95, maximo, negativas), = consultar(props_pg, """
@@ -159,7 +159,7 @@ def offsets_kafka(topico: str) -> int:
 
 
 def descartes_mosquitto(timeout: int = 12) -> int | None:
-    """Mensajes que el broker ACEPTO y nunca entrego, segun su propio contador.
+    """Mensajes que el broker ACEPTO y nunca entrego, segun su propio medidor.
 
     ES LA UNICA PERDIDA QUE NO DEJA RASTRO EN NINGUN OTRO SITIO. Medido el 19 de
     agosto de 2026 empujando por encima del punto de saturacion: el productor
@@ -170,7 +170,7 @@ def descartes_mosquitto(timeout: int = 12) -> int | None:
     Nadie da error en ese escenario: el productor cree que entrego, el bridge no
     ve ningun hueco, la DLQ esta vacia y los logs del broker callan. Un 4,4% de
     perdida invisible con todos los indicadores del pipeline en verde. Este
-    contador es lo que la convierte en una medida.
+    medidor es lo que la convierte en una medida.
 
     Mosquitto publica las estadisticas $SYS cada 10 s por defecto, de ahi la
     espera.
@@ -370,7 +370,7 @@ def construir_informe(ingesta, esquema, run_id, procesamiento, grafana, carga) -
             "Rampa de ritmo creciente con los sensores fijos: busca hasta donde aguanta."
             if saturacion else
             "Escalera de sensores con el ritmo por sensor fijo, de modo que la carga crece "
-            "con el numero de contadores.")
+            "con el numero de medidores.")
         L += [titulo, "",
               f"{preambulo} Ejecutada el {carga['instante']}, "
               f"{carga['eventos_por_peldano']:,} eventos por peldano y **medida en el "
@@ -405,7 +405,7 @@ def run(args: argparse.Namespace) -> int:
 
     logger.info("Objetivo 1: consultando latencias de ingesta...")
     ingesta = kpi_ingesta(props_pg, props_ts)
-    logger.info("Objetivo 1: leyendo el contador de descartes del broker...")
+    logger.info("Objetivo 1: leyendo el medidor de descartes del broker...")
     ingesta["descartados"] = descartes_mosquitto()
     ingesta["huerfanos"] = eventos_sin_dimension(props_pg)
 

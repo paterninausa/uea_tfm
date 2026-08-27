@@ -98,15 +98,15 @@ def validar_dominio(evento: dict, margen_futuro_s: float) -> None:
 
     FECHA FUTURA. Es el peor de todos y no da ningun error: Spark adelanta su
     watermark a ese instante y **descarta como tardio todo el trafico legitimo
-    que llegue despues**. El pipeline sigue vivo, los contadores del bridge
+    que llegue despues**. El pipeline sigue vivo, los medidores del bridge
     dicen que todo va bien, y los agregados simplemente dejan de escribirse.
-    Ningun contador puede medir manana; se admite un margen pequeno por
+    Ningun medidor puede medir manana; se admite un margen pequeno por
     desajuste de relojes.
 
     No se pone limite por abajo a proposito: el simulador reproduce el historico
     de 2016 y sus marcas son legitimamente antiguas.
 
-    LECTURA IMPOSIBLE. Un valor negativo no existe en un contador, y un infinito
+    LECTURA IMPOSIBLE. Un valor negativo no existe en un medidor, y un infinito
     o un NaN arruinan la suma y la media de toda la ventana en la que caigan: un
     solo evento basta para dejar sin sentido un agregado horario completo.
     """
@@ -123,11 +123,11 @@ def validar_dominio(evento: dict, margen_futuro_s: float) -> None:
         if not math.isfinite(lectura):
             raise ValueError(f"meter_reading no finito ({lectura})")
         if lectura < 0:
-            raise ValueError(f"meter_reading negativo ({lectura}), imposible en un contador")
+            raise ValueError(f"meter_reading negativo ({lectura}), imposible en un medidor")
 
 
 class Stats:
-    """Contadores del bridge, base de la evidencia de los KPIs.
+    """Medidores del bridge, base de la evidencia de los KPIs.
 
     Las actualizaciones van bajo lock porque los callbacks de entrega de Kafka
     se ejecutan en el hilo de red del productor, no en el que recibe de MQTT.
@@ -308,13 +308,13 @@ class Bridge:
         datos = self._serializar(evento)
 
         # LA CLAVE DE KAFKA IDENTIFICA AL SENSOR, es decir el par (edificio,
-        # tipo de contador): garantiza que todas las lecturas de un mismo
-        # contador caen en la misma particion y por tanto se procesan en orden,
+        # tipo de medidor): garantiza que todas las lecturas de un mismo
+        # medidor caen en la misma particion y por tanto se procesan en orden,
         # que es lo que necesitan las agregaciones por ventana de Spark.
         #
         # No confundirla con la clave natural del evento, que ademas incluye
         # timestamp: esa identifica una lectura concreta y usarla aqui
-        # repartiria al azar las lecturas de un mismo contador, una por
+        # repartiria al azar las lecturas de un mismo medidor, una por
         # particion, perdiendo el orden.
         #
         # Un valor None NO es inocuo: el productor reparte esos mensajes en
@@ -377,7 +377,7 @@ class Bridge:
     def _desglosar_dlq(self, s: dict) -> None:
         """Por que se rechazaron los eventos, agrupado por motivo.
 
-        Un contador a secas —"dlq=37"— obliga a ir a leer el topico para saber
+        Un medidor a secas —"dlq=37"— obliga a ir a leer el topico para saber
         si son 37 sintomas del mismo problema o 37 problemas distintos. Con el
         desglose, el log del bridge responde solo: "37, todos porque meter_type
         trae un simbolo fuera del enum".

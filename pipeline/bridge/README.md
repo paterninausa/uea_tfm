@@ -45,12 +45,12 @@ esquemas puede leer los eventos sin adaptacion.
 
 **La clave de Kafka identifica al sensor**, es decir el par `(building_id,
 meter_type)`, y se escribe como `156:electricity`. Garantiza que todas las
-lecturas de un mismo contador caen en la misma particion y se procesan en orden,
+lecturas de un mismo medidor caen en la misma particion y se procesan en orden,
 que es lo que necesitan las agregaciones por ventana de Spark.
 
 No confundirla con la clave natural del evento, que ademas incluye `timestamp`:
 esa identifica una lectura concreta, y usarla aqui repartiria al azar entre
-particiones las lecturas de un mismo contador.
+particiones las lecturas de un mismo medidor.
 
 Se construye con acceso directo a los dos campos, no con `.get()`, y el motivo es
 un fallo real: el bridge conservaba `evento.get("machine_id")` del dataset
@@ -66,8 +66,8 @@ marca de tiempo del ano 2099:
 
 | Guarda | Por que |
 |---|---|
-| `timestamp` no futuro (margen de 5 min, `--margen-futuro`) | Es el caso que mas dano hace y no da ningun error: Spark adelanta su watermark a esa fecha y **descarta como tardio todo el trafico legitimo posterior**. El pipeline sigue vivo, los contadores dicen que todo va bien y los agregados dejan de escribirse |
-| `meter_reading` finito y no negativo | Un valor negativo no existe en un contador, y un infinito o un NaN arruinan la suma y la media de toda la ventana en la que caigan |
+| `timestamp` no futuro (margen de 5 min, `--margen-futuro`) | Es el caso que mas dano hace y no da ningun error: Spark adelanta su watermark a esa fecha y **descarta como tardio todo el trafico legitimo posterior**. El pipeline sigue vivo, los medidores dicen que todo va bien y los agregados dejan de escribirse |
+| `meter_reading` finito y no negativo | Un valor negativo no existe en un medidor, y un infinito o un NaN arruinan la suma y la media de toda la ventana en la que caigan |
 
 No hay limite por abajo en la fecha a proposito: el simulador reproduce el
 historico de 2016 y sus marcas son legitimamente antiguas.
@@ -137,7 +137,7 @@ Parametros utiles: `--bootstrap-servers`, `--broker-host`, `--qos`,
 
 ## Metricas
 
-Cada `--report-interval` segundos se registra una linea con los contadores y
+Cada `--report-interval` segundos se registra una linea con los medidores y
 los percentiles de latencia MQTT→Kafka, y al cerrar se imprime el resumen final.
 El codigo de salida es 0 si no hubo perdidas y 1 si las hubo.
 

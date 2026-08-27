@@ -1,7 +1,7 @@
 {
   "uid": "tfm-consumo",
   "title": "2. Consumo energetico",
-  "description": "Analisis situacional del consumo. El eje temporal es window_start (tiempo de evento). Sigue las metricas habituales de gestion energetica de edificios: perfil de carga, demanda pico, consumo base, factor de carga e intensidad energetica.",
+  "description": "Analisis situacional del consumo. El eje temporal es window_start (tiempo de evento). Sigue las metricas habituales de gestion energetica de edificios: perfil de carga, demanda pico, consumo base y factor de carga.",
   "tags": ["tfm", "energia"],
   "timezone": "utc",
   "refresh": "30s",
@@ -10,7 +10,7 @@
   "templating": {
     "list": [{
       "name": "medio",
-      "label": "Tipo de contador",
+      "label": "Tipo de medidor",
       "type": "query",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "query": "SELECT DISTINCT meter_type FROM telemetry_metrics ORDER BY 1",
@@ -23,11 +23,11 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "Demanda pico",
+      "title": "Demanda pico (kWh)",
       "description": "Maximo consumo agregado en una hora. Es la magnitud por la que las electricas facturan la potencia contratada a un cliente comercial, no solo por la energia consumida.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
-      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "red"}}},
+      "fieldConfig": {"defaults": {"unit": "kwatth", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "red"}}},
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
       "targets": [{
         "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
@@ -37,11 +37,11 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Consumo base",
+      "title": "Consumo base (kWh)",
       "description": "Minimo horario: lo que consume el conjunto cuando no hay actividad. Es el diagnostico clasico de consumo fantasma; cuanto mas cerca del pico, mas equipamiento permanentemente encendido.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
-      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "orange"}}},
+      "fieldConfig": {"defaults": {"unit": "kwatth", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "orange"}}},
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
       "targets": [{
         "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
@@ -78,11 +78,11 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Consumo por tipo de contador",
+      "title": "Consumo kWh por Tipo de medidor",
       "description": "Series separadas porque las unidades NO son comparables entre medios: sumarlas produciria una cifra sin significado fisico.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 9, "w": 14, "x": 0, "y": 5},
-      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "fieldConfig": {"defaults": {"unit": "kwatth", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
       "targets": [{
         "refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code",
@@ -92,11 +92,11 @@
     {
       "id": 6,
       "type": "barchart",
-      "title": "Perfil de carga por hora del dia",
+      "title": "Perfil de carga por hora del dia (kWh)",
       "description": "El grafico canonico de gestion energetica: como se distribuye el consumo a lo largo del dia. El valle nocturno y el pico de actividad son la firma del uso del edificio.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 9, "w": 10, "x": 14, "y": 5},
-      "fieldConfig": {"defaults": {"unit": "short", "custom": {"fillOpacity": 80}}},
+      "fieldConfig": {"defaults": {"unit": "kwatth", "custom": {"fillOpacity": 80}}},
       "options": {"xField": "hora", "legend": {"showLegend": false}},
       "targets": [{
         "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
@@ -104,26 +104,12 @@
       }]
     },
     {
-      "id": 7,
-      "type": "barchart",
-      "title": "Intensidad energetica por uso de edificio",
-      "description": "Consumo por pie cuadrado, calculado como cociente de sumas y no como media de cocientes: con superficies de 801 a 850.354 pies cuadrados, promediar cocientes daria mas peso a los edificios pequenos. Es la metrica normalizada estandar para comparar edificios de tamanos distintos.",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
-      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 14},
-      "fieldConfig": {"defaults": {"unit": "short", "decimals": 5, "custom": {"fillOpacity": 80}}},
-      "options": {"xField": "uso", "legend": {"showLegend": false}, "orientation": "horizontal"},
-      "targets": [{
-        "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
-        "rawSql": "SELECT\n  primary_use AS \"uso\",\n  sum(sum_reading) / NULLIF(sum(sum_square_feet), 0) AS \"intensidad\"\nFROM telemetry_metrics\nWHERE $__timeFilter(window_start) AND meter_type = '$medio'\nGROUP BY 1\nORDER BY 2 DESC"
-      }]
-    },
-    {
       "id": 8,
       "type": "timeseries",
-      "title": "Consumo por emplazamiento",
+      "title": "Consumo kWh por Emplazamiento",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
-      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 14},
-      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 20, "stacking": {"mode": "normal"}}}},
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 14},
+      "fieldConfig": {"defaults": {"unit": "kwatth", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 20, "stacking": {"mode": "normal"}}}},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
       "targets": [{
         "refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code",

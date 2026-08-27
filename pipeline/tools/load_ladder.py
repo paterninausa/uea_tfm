@@ -10,7 +10,7 @@ POR QUE LA ACELERACION SE MANTIENE Y LA TASA NO. Con una tasa global fija, 100 y
 652 sensores publican los mismos eventos por segundo: se reparte la misma carga
 entre mas identidades y no se escala nada —de ahi salia la degradacion del 0,6%
 que no significaba gran cosa—. `--acelerar` fija la cadencia POR SENSOR, asi que
-la carga total crece con el numero de contadores, que es lo que dice el objetivo:
+la carga total crece con el numero de medidores, que es lo que dice el objetivo:
 
     tasa agregada = n_sensores x acelerar / 3600
 
@@ -294,7 +294,7 @@ def run(args: argparse.Namespace) -> int:
     #
     # El primero responde a ">= 500 sensores concurrentes con degradacion < 20%".
     # El segundo a "hasta donde aguanta", que es otra pregunta: anadir sensores a
-    # ritmo fijo sube la carga solo hasta el numero de contadores que existen;
+    # ritmo fijo sube la carga solo hasta el numero de medidores que existen;
     # para pasar de ahi hay que acelerar el reloj.
     if args.speedups:
         fijos = args.max_sensors or 652

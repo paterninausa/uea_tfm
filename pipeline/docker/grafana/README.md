@@ -52,7 +52,7 @@ Analisis situacional siguiendo las metricas habituales del sector:
 | **Perfil de carga por hora** | El grafico canonico de gestion energetica |
 | **Intensidad energetica** | Consumo por pie cuadrado, la metrica normalizada para comparar edificios de tamanos distintos |
 
-El selector `medio` filtra por tipo de contador. **No es un adorno**: las
+El selector `medio` filtra por tipo de medidor. **No es un adorno**: las
 unidades de electricidad, agua fria y agua caliente no son comparables, asi que
 casi todos los paneles tienen que fijar uno solo.
 
@@ -63,10 +63,10 @@ edificios pequenos. Por eso la tabla guarda tambien el denominador.
 
 ### 3. Calidad y anomalias
 
-Salud de los contadores: porcentaje de lecturas a cero, de anomalias y de
+Salud de los medidores: porcentaje de lecturas a cero, de anomalias y de
 lecturas validas, mas su evolucion temporal y las tablas de los grupos peores.
 
-El panel de ceros en el tiempo es donde **emergen los contadores muertos**: una
+El panel de ceros en el tiempo es donde **emergen los medidores muertos**: una
 lectura a cero aislada puede ser legitima, pero una banda continua hora tras
 hora no lo es. Se midio que en el dataset las rachas llegan a durar 8.051 horas
 seguidas, 335 dias.

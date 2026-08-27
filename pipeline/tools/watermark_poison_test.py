@@ -59,7 +59,7 @@ segundo con el filtro desactivado: 46 filas, luego 117 de golpe dos segundos
 despues de la inyeccion, y ninguna en los 44 siguientes mientras el simulador
 publicaba a 357 ev/s.
 
-Un contador de filas acumulado entre el principio y el final ve ese pico como
+Un medidor de filas acumulado entre el principio y el final ve ese pico como
 crecimiento y concluye "sigue funcionando", que es justo lo contrario de lo que
 pasa. Por eso se mide un tramo de ASENTAMIENTO —que absorbe la rafaga de cierre
 forzado— y despues un tramo de REGIMEN, y el veredicto sale del segundo. Es la

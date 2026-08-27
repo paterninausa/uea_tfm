@@ -135,7 +135,7 @@ Python 3.11 + PySpark 4.2.0):
   `KafkaSQL`.
 - El simulador publica en Mosquitto con la topologia de topicos
   `iot/{building_id}/{meter_type}/telemetry` —el topico identifica al sensor, que
-  es el par edificio-contador— y 0% de perdida en la prueba corta.
+  es el par edificio-medidor— y 0% de perdida en la prueba corta.
 
 - Esquema Avro v1 registrado en Apicurio como `iot/iot.telemetry.raw-value`,
   con las reglas `VALIDITY=FULL` y `COMPATIBILITY=FULL_TRANSITIVE` activas y

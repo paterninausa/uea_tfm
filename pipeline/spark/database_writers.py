@@ -179,7 +179,7 @@ def load_reference_tables(spark: SparkSession, dim_path: Path, base_path: Path,
     """Vuelca las dos tablas de referencia en PostgreSQL al arrancar.
 
     Es lo que hace autosuficiente a Power BI: con la dimension de edificios y la
-    linea base por contador puede calcular por si mismo la intensidad
+    linea base por medidor puede calcular por si mismo la intensidad
     energetica, las lecturas atipicas y cualquier umbral que el analista quiera
     ajustar, con un join sencillo en lugar de recalcular percentiles sobre todo
     el historico.

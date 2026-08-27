@@ -56,7 +56,7 @@ defecto se resumen en una linea con su recuento:
 ```
 desglose de los 7 eventos rechazados:
       4 x ValueError: timestamp en el futuro ..., lo que envenenaria el watermark
-      3 x ValueError: meter_reading negativo ..., imposible en un contador
+      3 x ValueError: meter_reading negativo ..., imposible en un medidor
 ```
 
 El valor exacto se conserva en el registro de la DLQ y en el aviso individual de
@@ -293,14 +293,14 @@ pipeline refleja**. En el escalon mas alto, el productor registro 40.000
 publicados y 0 fallidos —recibio confirmacion de todos— mientras al bridge
 llegaron 38.221: el broker descarto 1.779 al llenarse su cola de salida. Un
 **4,4% de perdida** sin error en el productor, en el bridge, en la DLQ ni en los
-registros del broker. El unico indicio es el contador `$SYS`, que `kpi_report.py`
+registros del broker. El unico indicio es el medidor `$SYS`, que `kpi_report.py`
 consulta.
 
 ---
 
 ## 6. Limites conocidos
 
-**Sensores que dejan de emitir.** No hay deteccion de ausencias: si un contador
+**Sensores que dejan de emitir.** No hay deteccion de ausencias: si un medidor
 se apaga, sus eventos dejan de llegar sin que nada lo senale. Los sensores
 activos siguen contando, las latencias se mantienen y los agregados continuan
 escribiendose. La cobertura de este caso se delega en la vigilancia del dashboard
@@ -312,7 +312,7 @@ ventana. Solo se marcaria como anomalia si ese sensor dispone de linea base. Lo
 mismo ocurre con una medida expresada en la unidad equivocada: es indetectable
 sin contexto externo.
 
-**Combinaciones edificio-contador inexistentes.** Si el edificio existe, el join
+**Combinaciones edificio-medidor inexistentes.** Si el edificio existe, el join
 resuelve la dimension y el evento entra en los agregados con normalidad. No se
 comprueba que esa combinacion concreta sea real, aunque `sensor_baseline`
 contiene las 652 legitimas y permitiria hacerlo.

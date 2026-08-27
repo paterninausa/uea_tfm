@@ -1,13 +1,13 @@
 """
-Simulador del parque de contadores: reproduce el historico de ASHRAE sobre MQTT.
+Simulador del parque de medidores: reproduce el historico de ASHRAE sobre MQTT.
 
 Ocupa el lugar de los 652 sensores reales. Publica lo que emitirian ellos, en sus
 mismos topicos y con el mismo QoS, y por defecto **abre una conexion MQTT por
 sensor**, que es como se veria el parque desde el broker.
 
-EL PARQUE REAL GENERA 0,1797 EV/S. Verificado sobre el Parquet: cada contador
+EL PARQUE REAL GENERA 0,1797 EV/S. Verificado sobre el Parquet: cada medidor
 mide una vez por hora —mediana y p95 del intervalo son exactamente 3600 s, sin
-dispersion— y hay 652 contadores con datos en el 99,2% de las horas de 2016. Ese
+dispersion— y hay 652 medidores con datos en el 99,2% de las horas de 2016. Ese
 es el caso de uso: **menos de una quinta parte de un evento por segundo**, sobre
 un historico de 8.784 horas.
 
@@ -23,10 +23,10 @@ Por eso el simulador acelera el reloj. `--acelerar` es el factor:
 Es un factor POR SENSOR, no una tasa global, y esa diferencia importa para el
 Objetivo 5: con una tasa global fija, pasar de 100 a 652 sensores reparte los
 mismos eventos entre mas identidades y no escala nada. Con `--acelerar`, cada
-contador mantiene su cadencia y la carga crece con el numero de contadores, que
+medidor mantiene su cadencia y la carga crece con el numero de medidores, que
 es lo que significa "sensores concurrentes".
 
-POR QUE NO SE REPRODUCEN LAS RAFAGAS. Los contadores reales miden en la hora en
+POR QUE NO SE REPRODUCEN LAS RAFAGAS. Los medidores reales miden en la hora en
 punto, asi que un replay literal publicaria los 652 de golpe y luego callaria. No
 se hace, y no por comodidad: con un factor alto esa rafaga desborda el sistema.
 Con un drenaje del bridge de unos 4.000 ev/s, el replay fiel se sostiene hasta
@@ -73,7 +73,7 @@ logger = logging.getLogger("mqtt_simulator")
 
 TOPIC_TEMPLATE = "iot/{building_id}/{meter_type}/telemetry"
 
-# Cadencia del contador real, en segundos. Es la constante de la que sale todo:
+# Cadencia del medidor real, en segundos. Es la constante de la que sale todo:
 # el factor de aceleracion, la tasa agregada y el escalonado entre sensores.
 PERIODO_SENSOR_S = 3600.0
 
@@ -158,10 +158,10 @@ def repartir(df, n_clientes: int) -> list[list]:
     en orden, y dos clientes publicando el mismo topico en paralelo no lo
     garantizan.
 
-    Con `--clients` igual al numero de sensores, cada contador tiene su propia
+    Con `--clients` igual al numero de sensores, cada medidor tiene su propia
     conexion, que es el parque real. Con un valor menor, cada conexion agrupa
-    varios contadores, y eso tambien modela algo real: en un edificio los
-    contadores hablan BACnet o Modbus con una pasarela, y es la pasarela la que
+    varios medidores, y eso tambien modela algo real: en un edificio los
+    medidores hablan BACnet o Modbus con una pasarela, y es la pasarela la que
     publica por todos. El numero de conexiones MQTT de un despliegue de verdad
     no lo fija el numero de sensores, sino el de pasarelas.
     """
@@ -182,7 +182,7 @@ def _programa(filas, fraccion: float, t_sim0, speedup: float):
 
     El instante sale del tiempo de evento comprimido por `speedup`, mas el
     desfase propio del sensor dentro de su intervalo. Ese desfase es lo que
-    impide que los 652 contadores publiquen a la vez: equivale a suponer que sus
+    impide que los 652 medidores publiquen a la vez: equivale a suponer que sus
     relojes no estan sincronizados al milisegundo, que es lo que ocurre en un
     parque real y ademas evita la rafaga que desbordaria al bridge.
     """
@@ -195,7 +195,7 @@ async def cliente_mqtt(indice: int, trabajo: list, args, contadores: Contadores,
                        parada, t0: float, t_sim0) -> None:
     """Una conexion MQTT publicando las lecturas de los sensores que le tocaron.
 
-    RECONECTA Y REINTIENTA LO NO CONFIRMADO, que es lo que hace un contador real:
+    RECONECTA Y REINTIENTA LO NO CONFIRMADO, que es lo que hace un medidor real:
     los medidores inteligentes guardan el perfil de carga y lo vuelcan cuando
     recuperan el enlace. Sin esto, el comportamiento medido al tumbar el broker
     era el peor posible: `aiomqtt` no reconecta por su cuenta, asi que cada
@@ -329,7 +329,7 @@ def run(args: argparse.Namespace) -> int:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Simulador del parque de contadores IoT (TFM)")
+        description="Simulador del parque de medidores IoT (TFM)")
     anadir_argumentos_dataset(p)
     anadir_argumentos_mqtt(p, client_id="tfm-sim")
     p.add_argument("--acelerar", dest="speedup", metavar="FACTOR", type=float, default=2000.0,
@@ -342,7 +342,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--report-interval", type=float, default=10.0,
                    help="Segundos entre informes de progreso")
     p.add_argument("--max-reconexiones", type=int, default=20,
-                   help="Intentos de reconexion por sensor antes de abandonarlo. Un contador "
+                   help="Intentos de reconexion por sensor antes de abandonarlo. Un medidor "
                         "real reintenta y vuelca lo acumulado cuando recupera el enlace")
     p.add_argument("--espera-reconexion", type=float, default=3.0,
                    help="Segundos entre intentos de reconexion")

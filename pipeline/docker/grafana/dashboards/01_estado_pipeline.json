@@ -1,7 +1,7 @@
 {
   "uid": "tfm-pipeline",
   "title": "1. Estado del pipeline",
-  "description": "Salud del pipeline en tiempo real. El eje temporal es ingested_at (reloj de pared), no window_start (tiempo de evento): aqui interesa cuando llegaron los datos, no cuando se midieron. Contiene la evidencia en vivo del KPI de latencia del Objetivo 1.",
+  "description": "Salud del pipeline en tiempo real. El eje temporal es ingested_at (reloj de pared), no window_start (tiempo de evento): aqui interesa cuando llegaron los datos, no cuando se midieron. Contiene la evidencia en vivo de la latencia de ingesta.",
   "tags": ["tfm", "operacional"],
   "timezone": "utc",
   "refresh": "5s",
@@ -12,7 +12,7 @@
       "id": 1,
       "type": "stat",
       "title": "Latencia extremo a extremo (p95)",
-      "description": "KPI del Objetivo 1: publicacion MQTT -> fila persistida. Objetivo < 2 s.",
+      "description": "Latencia de ingesta: publicacion MQTT -> fila persistida. Objetivo < 2 s.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "postgres"},
       "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
       "fieldConfig": {

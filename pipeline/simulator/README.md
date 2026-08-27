@@ -1,6 +1,6 @@
 # Simulador MQTT de telemetria IoT
 
-Reproduce el historico de ASHRAE sobre MQTT, como si 652 contadores estuvieran
+Reproduce el historico de ASHRAE sobre MQTT, como si 652 medidores estuvieran
 emitiendo en directo. Es el punto de entrada del pipeline (Objetivo 1).
 
 ## Topologia de topicos
@@ -9,8 +9,8 @@ emitiendo en directo. Es el punto de entrada del pipeline (Objetivo 1).
 
 Ejemplo real: `iot/156/electricity/telemetry`
 
-**Un sensor es el par (edificio, tipo de contador).** Un mismo edificio con
-contador de electricidad y de agua fria son dos sensores con series
+**Un sensor es el par (edificio, tipo de medidor).** Un mismo edificio con
+medidor de electricidad y de agua fria son dos sensores con series
 independientes: 498 edificios dan 652 sensores. El topico identifica
 exactamente eso: al sensor.
 
@@ -24,7 +24,7 @@ join de Spark contra la dimension.
 
 ## Que va en el topico y que va en el payload
 
-El payload lleva **solo lo que emitiria el contador**:
+El payload lleva **solo lo que emitiria el medidor**:
 
 ```json
 {
@@ -40,7 +40,7 @@ Los atributos del edificio —uso, superficie, ano de construccion— no
 aparecen en ninguna parte del mensaje: viven en la tabla de dimension y es
 Spark quien los incorpora con un broadcast join.
 
-`sim_publish_ts` es el unico campo que no emite el contador: es instrumentacion
+`sim_publish_ts` es el unico campo que no emite el medidor: es instrumentacion
 para medir la latencia extremo a extremo del Objetivo 1. `timestamp` viaja en
 ISO-8601 y el bridge lo convierte a epoch en milisegundos, que es lo que declara
 el esquema Avro; se mantiene en ISO aqui porque hace legible el trafico al
@@ -66,8 +66,8 @@ artificio de banco de pruebas**. Lo que mide y orquesta vive en `tools/`.
 
 ## El parque real genera 0,1797 ev/s
 
-Verificado sobre el Parquet: cada contador mide una vez por hora —mediana y p95
-del intervalo son exactamente 3.600 s, sin dispersion— y los 652 contadores
+Verificado sobre el Parquet: cada medidor mide una vez por hora —mediana y p95
+del intervalo son exactamente 3.600 s, sin dispersion— y los 652 medidores
 tienen datos en el 99,2% de las 8.784 horas de 2016. **El caso de uso completo
 son menos de dos decimas de evento por segundo.**
 
@@ -84,8 +84,8 @@ Por eso el simulador acelera el reloj:
 **Es un factor POR SENSOR, no una tasa global**, y esa diferencia decide si la
 escalera del Objetivo 5 significa algo: con una tasa global fija, pasar de 100 a
 652 sensores reparte los mismos eventos entre mas identidades y la carga total no
-cambia. Con `--speedup`, cada contador mantiene su cadencia y la carga crece con
-el numero de contadores, que es lo que quiere decir "sensores concurrentes".
+cambia. Con `--speedup`, cada medidor mantiene su cadencia y la carga crece con
+el numero de medidores, que es lo que quiere decir "sensores concurrentes".
 
 Si el simulador no consigue sostener el ritmo pedido, **la ejecucion se marca
 como no valida** (codigo de salida 1) en lugar de recuperar el tiempo perdido
@@ -93,7 +93,7 @@ publicando a rafagas: sus cifras medirian entonces esta maquina y no el pipeline
 
 ## Por que no se reproducen las rafagas horarias
 
-Los contadores reales miden en la hora en punto, asi que un replay literal
+Los medidores reales miden en la hora en punto, asi que un replay literal
 publicaria los 652 de golpe y luego callaria durante todo el intervalo. No se
 hace, y el motivo es cuantitativo: con un drenaje del bridge de unos 4.000 ev/s,
 el replay fiel se sostiene hasta **x22.000** —de `652 / (3600/speedup) <= 4.000`—
@@ -111,8 +111,8 @@ Por defecto (`--clients 0`) el simulador abre **una conexion MQTT por sensor**:
 fallo. Es lo que hace que "652 sensores concurrentes" signifique 652 sesiones y
 no 652 identidades compartiendo una conexion.
 
-Con un valor menor, cada conexion agrupa varios contadores, y eso tambien modela
-algo real: en un edificio los contadores hablan BACnet o Modbus con una pasarela,
+Con un valor menor, cada conexion agrupa varios medidores, y eso tambien modela
+algo real: en un edificio los medidores hablan BACnet o Modbus con una pasarela,
 y es la pasarela la que publica por todos. **El numero de conexiones MQTT de un
 despliegue real no lo fija el numero de sensores, sino el de pasarelas.**
 
@@ -189,7 +189,7 @@ KPI de latencia. Lo que hace no es leer una fila, es emitirla.
 
 - Publicacion contra Mosquitto con la topologia correcta
   (`iot/156/electricity/telemetry`) y payload de cinco campos.
-- Filtrado jerarquico por tipo de contador: una suscripcion a
+- Filtrado jerarquico por tipo de medidor: una suscripcion a
   `iot/+/chilledwater/telemetry` recibe solo las lecturas de agua fria.
 - Escalera de sensores anidada: 100 ⊂ 250 ⊂ 500 ⊂ 652.
 - `--rebase-end now` desplaza el rango completo conservando las distancias

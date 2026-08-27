@@ -136,7 +136,7 @@ python pipeline/tools/load_ladder.py --ladder 100,250,500,652 --acelerar 2000
 652 sensores publican los mismos eventos por segundo: se reparte la misma carga
 entre mas identidades y no se escala nada —de ahi salia aquella degradacion del
 0,6% que no significaba gran cosa—. `--acelerar` fija la cadencia por sensor, asi
-que la carga total crece con el numero de contadores, que es lo que dice el
+que la carga total crece con el numero de medidores, que es lo que dice el
 objetivo.
 
 **Por que se mide en el consumo y no en el productor.** El PUBACK de Mosquitto
@@ -329,7 +329,7 @@ envenenado. Contaba filas entre el principio y el final, y vio crecimiento.
 Mirando las escrituras segundo a segundo se ve por que: 46 filas, **117 de golpe
 dos segundos despues de la inyeccion**, y ninguna en los 44 siguientes. Al saltar
 el watermark, todas las ventanas abiertas quedan por debajo de el y Spark las
-cierra y las emite a la vez. Ese pico terminal es lo que un contador acumulado
+cierra y las emite a la vez. Ese pico terminal es lo que un medidor acumulado
 interpreta como buena salud.
 
 De ahi los dos tramos: uno de **asentamiento**, que absorbe la rafaga, y otro de

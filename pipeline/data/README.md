@@ -7,7 +7,7 @@ emplazamientos, medido durante 2016.
     https://www.kaggle.com/competitions/ashrae-energy-prediction
 
 Es un subconjunto del proyecto Building Data Genome 2 (BDG2). Son medidas
-reales de sistemas de contadores, con su error de medicion y sus problemas de
+reales de sistemas de medidores, con su error de medicion y sus problemas de
 calidad; no hay ningun dato sintetico.
 
 Este es un paso de preparacion de UN SOLO USO, independiente del pipeline en
@@ -91,10 +91,10 @@ Produce tres ficheros, que no se versionan por estar en `.gitignore`:
 |---|---|---|
 | `ashrae_telemetry.parquet` | Tabla de hechos: 5.682.185 lecturas | ~18 MB |
 | `ashrae_buildings.parquet` | Dimension: 498 edificios | ~11 KB |
-| `ashrae_sensor_baseline.parquet` | Cuartiles del historico de cada contador | ~23 KB |
+| `ashrae_sensor_baseline.parquet` | Cuartiles del historico de cada medidor | ~23 KB |
 
 La linea base la usan Spark, para marcar picos atipicos contra el historial del
-propio contador, y Power BI, que la recibe cargada en PostgreSQL y puede ajustar
+propio medidor, y Power BI, que la recibe cargada en PostgreSQL y puede ajustar
 el umbral sin tocar el pipeline. Se calcula aqui, una sola vez, porque exige
 recorrer el historico completo.
 
@@ -119,7 +119,7 @@ De los 16 emplazamientos de la tabla original se usan tres:
 
 | | Subconjunto elegido | Dataset completo |
 |---|---|---|
-| Sensores (edificio × contador) | **652** | 2.380 |
+| Sensores (edificio × medidor) | **652** | 2.380 |
 | Eventos | **5.682.185** | 20.216.100 |
 | Combinaciones de agregación | **46** | 193 |
 | Reproducción a 740 eventos/s | **128 min** | 6,6 h |
@@ -129,17 +129,17 @@ De los 16 emplazamientos de la tabla original se usan tres:
   throughput.
 - El **emplazamiento 3** con 274 sensores tiene la mejor calidad del dataset, apenas un
   0,1% de lecturas a cero.
-- El **emplazamiento 2** aporta la variedad de contadores (electricidad, agua
+- El **emplazamiento 2** aporta la variedad de medidores (electricidad, agua
   fria y agua caliente) y un ciclo estacional de refrigeracion muy marcado -el
   consumo medio de agua fria pasa de 152 en enero a 528 en agosto-.
 - El **emplazamiento 5** tiene completitud del 100%, sirve de referencia limpia.
 
-Se descartó anadir un emplazamiento con contador de vapor: en los candidatos
+Se descartó anadir un emplazamiento con medidor de vapor: en los candidatos
 mas limpios su perfil anual resultó anómalo (en el emplazamiento 13 se dispara
 de marzo a junio y cae casi a cero de julio a octubre, un factor 50x que no
 corresponde a ninguna demanda de calefaccion), y cada uno añadía entre 15 y 60
 minutos de reproducción. No obstante esquema Avro declara los cuatro simbolos
-de contador describiendo el dominio, no la muestra concreta.
+de medidor describiendo el dominio, no la muestra concreta.
 
 ## Emplazamiento 14 excluido de todo análisis
 
@@ -159,13 +159,13 @@ tipos de edificio, y solo importaria al cruzar con datos meteorológicos.
 
 ## Decisiones de modelado
 
-### La tabla de hechos reproduce lo que emite el contador
+### La tabla de hechos reproduce lo que emite el medidor
 
     building_id | meter_type | timestamp | meter_reading
 
 Cuatro columnas y nada más. El dataset original se publicó para entrenar
 modelos de prediccion, asi que las caracteristicas del edificio estan ahi como
-variables de entrada del modelo. Pero un contador real no envia estos datos 
+variables de entrada del modelo. Pero un medidor real no envia estos datos 
 con cada lectura: envia quien es y cuanto midio.
 Cualquier columna adicional la anadiriamos nosotros y dejaria de reproducir el
 comportamiento del sensor.
@@ -205,13 +205,13 @@ Un UUID generado en la ingesta falla en la primera propiedad —cada reproceso
 inventaria identificadores nuevos y duplicaria filas— y el offset de Kafka
 falla en la tercera.
 
-**`(building_id, timestamp)` no basta**: un mismo edificio tiene contadores de
+**`(building_id, timestamp)` no basta**: un mismo edificio tiene medidores de
 electricidad, agua fria y agua caliente midiendo a la misma hora. Sin
 `meter_type` en la clave se colapsarian 1.345.428 eventos.
 
 **No confundir con la clave del mensaje en Kafka**, que es solo
 `(building_id, meter_type)` —el sensor, 652 valores distintos—. Es lo que
-mantiene en la misma particion y en orden todas las lecturas de un contador,
+mantiene en la misma particion y en orden todas las lecturas de un medidor,
 que es lo que necesitan las ventanas de Spark. Usar la clave del evento como
 clave de Kafka repartiria cada lectura a una particion al azar.
 
@@ -233,7 +233,7 @@ reprocesar el historico entero.
 
 ### Otras decisiones
 
-**Un sensor es el par edificio-contador.** Un mismo edificio con contador de
+**Un sensor es el par edificio-medidor.** Un mismo edificio con medidor de
 electricidad y de agua fria son dos sensores con series independientes. De ahi
 la topologia de topicos, que solo identifica al sensor:
 
