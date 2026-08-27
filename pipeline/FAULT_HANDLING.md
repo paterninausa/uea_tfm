@@ -321,6 +321,18 @@ contiene las 652 legitimas y permitiria hacerlo.
 al dato, pero un productor podria creer que envia informacion que no llega a
 ningun destino.
 
+**Contenedor `unhealthy` sin recuperacion automatica.** `restart: unless-stopped`
+reinicia un contenedor que muere, pero ni Docker ni Compose actuan sobre el
+estado `unhealthy` de uno que sigue vivo: un proceso colgado que no supera su
+propio healthcheck se queda marcado como no sano indefinidamente, sin que nada
+lo reinicie. `depends_on: condition: service_healthy` tampoco lo cubre, porque
+solo ordena el arranque, no vigila en tiempo de ejecucion. No se ha observado
+en la practica. Si llegara a manifestarse, la solucion estandar sin salir de
+Docker Compose es un sidecar tipo
+`autoheal` ([willfarrell/autoheal](https://github.com/willfarrell/docker-autoheal)):
+un contenedor que monta `/var/run/docker.sock` y ejecuta `docker restart` sobre
+cualquier contenedor etiquetado que Docker marque `unhealthy`.
+
 ---
 
 ## 7. Reproduccion
