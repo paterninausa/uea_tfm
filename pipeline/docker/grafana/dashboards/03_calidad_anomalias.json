@@ -1,7 +1,7 @@
 {
   "uid": "tfm-calidad",
-  "title": "3. Calidad y anomalias",
-  "description": "Estado de salud de los medidores. Las lecturas a cero y los picos atipicos se calculan en el pipeline y se agregan por ventana; a este nivel emergen patrones que un evento aislado no revela, como los medidores muertos.",
+  "title": "3. Calidad y anomalías",
+  "description": "Estado de salud de los medidores. Las lecturas a cero y los picos atípicos se calculan en el pipeline y se agregan por ventana; a este nivel emergen patrones que un evento aislado no revela, como los medidores muertos.",
   "tags": ["tfm", "calidad"],
   "timezone": "utc",
   "refresh": "30s",
@@ -11,8 +11,7 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "Lecturas a cero",
-      "description": "Porcentaje sobre el total. Una lectura a cero aislada puede ser legitima; lo revelador es su concentracion, visible en el panel de abajo.",
+      "title": "Medidores con lecturas cero",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 5, "w": 8, "x": 0, "y": 0},
       "fieldConfig": {
@@ -32,8 +31,8 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Anomalias detectadas",
-      "description": "Lecturas que superan p75 + 5 x IQR de la linea base del PROPIO medidor. El umbral se eligio midiendo la tasa de disparo sobre el dataset completo: 3xIQR marca el 0,95%, 5xIQR el 0,34% y 10xIQR el 0,04%.",
+      "title": "Anomalías detectadas",
+      "description": "Lecturas con valor superior a p75 + 5 x IQR del mismo medidor.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 5, "w": 8, "x": 8, "y": 0},
       "fieldConfig": {
@@ -47,41 +46,41 @@
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
       "targets": [{
         "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
-        "rawSql": "SELECT 100.0 * sum(anomaly_count) / NULLIF(sum(event_count), 0) AS \"pct anomalias\"\nFROM telemetry_metrics\nWHERE $__timeFilter(window_start)"
+        "rawSql": "SELECT 100.0 * sum(anomaly_count) / NULLIF(sum(event_count), 0) AS \"pct anomalías\"\nFROM telemetry_metrics\nWHERE $__timeFilter(window_start)"
       }]
     },
     {
       "id": 3,
       "type": "stat",
-      "title": "Lecturas validas",
+      "title": "Lecturas válidas",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 5, "w": 8, "x": 16, "y": 0},
       "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2, "color": {"mode": "fixed", "fixedColor": "green"}}},
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
       "targets": [{
         "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
-        "rawSql": "SELECT 100.0 * (sum(event_count) - sum(zero_count) - sum(anomaly_count)) / NULLIF(sum(event_count), 0) AS \"pct validas\"\nFROM telemetry_metrics\nWHERE $__timeFilter(window_start)"
+        "rawSql": "SELECT 100.0 * (sum(event_count) - sum(zero_count) - sum(anomaly_count)) / NULLIF(sum(event_count), 0) AS \"pct válidas\"\nFROM telemetry_metrics\nWHERE $__timeFilter(window_start)"
       }]
     },
     {
       "id": 4,
       "type": "timeseries",
-      "title": "Ceros y anomalias en el tiempo",
-      "description": "Una banda continua de ceros hora tras hora delata un medidor muerto. Se midio que en el dataset las rachas de ceros llegan a durar 8.051 horas seguidas, 335 dias, lo que ya no es una medida.",
+      "title": "Ceros y anomalías en el tiempo",
+      "description": "Una banda continua de ceros hora tras hora evidencia un medidor muerto.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 9, "w": 14, "x": 0, "y": 5},
-      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 70, "stacking": {"mode": "normal"}}}},
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
       "targets": [{
         "refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code",
-        "rawSql": "SELECT\n  $__timeGroupAlias(window_start, $__interval),\n  sum(zero_count) AS \"lecturas a cero\",\n  sum(anomaly_count) AS \"anomalias\"\nFROM telemetry_metrics\nWHERE $__timeFilter(window_start)\nGROUP BY 1\nORDER BY 1"
+        "rawSql": "SELECT\n  $__timeGroupAlias(window_start, $__interval),\n  sum(zero_count) AS \"lecturas a cero\",\n  sum(anomaly_count) AS \"anomalías\"\nFROM telemetry_metrics\nWHERE $__timeFilter(window_start)\nGROUP BY 1\nORDER BY 1"
       }]
     },
     {
       "id": 5,
       "type": "table",
-      "title": "Grupos con mas lecturas a cero",
-      "description": "Candidatos a medidor muerto o fuera de servicio. Al no estar building_id en la agregacion, el grupo acota donde mirar; el edificio concreto se identifica consultando telemetry_events, que conserva el grano de evento.",
+      "title": "Grupos con más lecturas a cero",
+      "description": "Candidatos a medidor muerto o fuera de servicio.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 9, "w": 10, "x": 14, "y": 5},
       "options": {"showHeader": true},
@@ -93,13 +92,13 @@
     {
       "id": 6,
       "type": "table",
-      "title": "Ventanas con anomalias recientes",
+      "title": "Ventanas con anomalías recientes",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 14},
       "options": {"showHeader": true},
       "targets": [{
         "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
-        "rawSql": "SELECT\n  window_start AS \"ventana\",\n  site_id AS \"Emplazamiento\",\n  primary_use AS \"Uso de edificacion\",\n  meter_type AS \"Tipo de medidor\",\n  anomaly_count AS \"anomalias\",\n  event_count AS \"lecturas\",\n  round(max_reading::numeric, 1) AS \"lectura maxima\"\nFROM telemetry_metrics\nWHERE $__timeFilter(window_start) AND anomaly_count > 0\nORDER BY window_start DESC, anomaly_count DESC\nLIMIT 50"
+        "rawSql": "SELECT\n  window_start AS \"ventana\",\n  site_id AS \"Emplazamiento\",\n  primary_use AS \"Uso de edificacion\",\n  meter_type AS \"Tipo de medidor\",\n  anomaly_count AS \"anomalías\",\n  event_count AS \"lecturas\",\n  round(max_reading::numeric, 1) AS \"lectura máxima\"\nFROM telemetry_metrics\nWHERE $__timeFilter(window_start) AND anomaly_count > 0\nORDER BY window_start DESC, anomaly_count DESC\nLIMIT 50"
       }]
     }
   ]

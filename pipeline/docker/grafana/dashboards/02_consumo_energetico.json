@@ -1,8 +1,8 @@
 {
   "uid": "tfm-consumo",
-  "title": "2. Consumo energetico",
-  "description": "Analisis situacional del consumo. El eje temporal es window_start (tiempo de evento). Sigue las metricas habituales de gestion energetica de edificios: perfil de carga, demanda pico, consumo base y factor de carga.",
-  "tags": ["tfm", "energia"],
+  "title": "2. Consumo energético",
+  "description": "Análisis situacional del consumo. El eje temporal es window_start (tiempo de evento). Sigue las métricas habituales de gestión energética de edificios: perfil de carga, demanda pico, consumo base y factor de carga.",
+  "tags": ["tfm", "energía"],
   "timezone": "utc",
   "refresh": "30s",
   "time": {"from": "now-7d", "to": "now"},
@@ -24,7 +24,7 @@
       "id": 1,
       "type": "stat",
       "title": "Demanda pico (kWh)",
-      "description": "Maximo consumo agregado en una hora. Es la magnitud por la que las electricas facturan la potencia contratada a un cliente comercial, no solo por la energia consumida.",
+      "description": "Máximo consumo agregado en una hora. Es la magnitud por la que las eléctricas facturan la potencia contratada a un cliente comercial, no solo por la energía consumida.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
       "fieldConfig": {"defaults": {"unit": "kwatth", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "red"}}},
@@ -38,7 +38,7 @@
       "id": 2,
       "type": "stat",
       "title": "Consumo base (kWh)",
-      "description": "Minimo horario: lo que consume el conjunto cuando no hay actividad. Es el diagnostico clasico de consumo fantasma; cuanto mas cerca del pico, mas equipamiento permanentemente encendido.",
+      "description": "El consumo agregado más bajo de todas las horas del periodo seleccionado. Es el diagnóstico de equipos permanentemente encendidos.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
       "fieldConfig": {"defaults": {"unit": "kwatth", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "orange"}}},
@@ -52,7 +52,7 @@
       "id": 3,
       "type": "stat",
       "title": "Factor de carga",
-      "description": "Media dividida entre pico. Mide como de bien se aprovecha la potencia contratada: cercano a 1 indica demanda plana, valores bajos indican picos puntuales que encarecen la factura sin aportar consumo.",
+      "description": "Media dividida entre pico. Mide cómo de bien se aprovecha la potencia contratada: cercano a 1 indica demanda plana, valores bajos indican picos puntuales que encarecen la factura sin aportar consumo.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
       "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 3, "min": 0, "max": 1}},
@@ -79,7 +79,6 @@
       "id": 5,
       "type": "timeseries",
       "title": "Consumo kWh por Tipo de medidor",
-      "description": "Series separadas porque las unidades NO son comparables entre medios: sumarlas produciria una cifra sin significado fisico.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 9, "w": 14, "x": 0, "y": 5},
       "fieldConfig": {"defaults": {"unit": "kwatth", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
@@ -92,11 +91,16 @@
     {
       "id": 6,
       "type": "barchart",
-      "title": "Perfil de carga por hora del dia (kWh)",
-      "description": "El grafico canonico de gestion energetica: como se distribuye el consumo a lo largo del dia. El valle nocturno y el pico de actividad son la firma del uso del edificio.",
+      "title": "Perfil de carga por hora del día (kWh)",
+      "description": "Agrupa las lecturas por hora del día (0 a 23) en una sola barra por hora para todas las fechas del análisis. Revela el patrón típico de actividad diaria de los edificios.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 9, "w": 10, "x": 14, "y": 5},
-      "fieldConfig": {"defaults": {"unit": "kwatth", "custom": {"fillOpacity": 80}}},
+      "fieldConfig": {
+        "defaults": {"unit": "kwatth", "custom": {"fillOpacity": 80}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "hora"}, "properties": [{"id": "unit", "value": "short"}]}
+        ]
+      },
       "options": {"xField": "hora", "legend": {"showLegend": false}},
       "targets": [{
         "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",

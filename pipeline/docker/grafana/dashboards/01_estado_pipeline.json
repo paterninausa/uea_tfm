@@ -1,7 +1,7 @@
 {
   "uid": "tfm-pipeline",
   "title": "1. Estado del pipeline",
-  "description": "Salud del pipeline en tiempo real. El eje temporal es ingested_at (reloj de pared), no window_start (tiempo de evento): aqui interesa cuando llegaron los datos, no cuando se midieron. Contiene la evidencia en vivo de la latencia de ingesta.",
+  "description": "Salud del pipeline en tiempo real. El eje temporal es ingested_at (reloj de pared), no window_start (tiempo de evento): aquí interesa cuando llegaron los datos, no cuando se midieron. Contiene la evidencia en vivo de la latencia de ingesta.",
   "tags": ["tfm", "operacional"],
   "timezone": "utc",
   "refresh": "5s",
@@ -12,7 +12,7 @@
       "id": 1,
       "type": "stat",
       "title": "Latencia extremo a extremo (p95)",
-      "description": "Latencia de ingesta: publicacion MQTT -> fila persistida. Objetivo < 2 s.",
+      "description": "Latencia de ingesta: publicación MQTT -> fila guardada. Objetivo: latencia < 2 s.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "postgres"},
       "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
       "fieldConfig": {
@@ -38,8 +38,8 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Antiguedad del ultimo dato",
-      "description": "Segundos desde la ultima escritura. Si crece sin parar, el pipeline esta detenido o atascado.",
+      "title": "Antigüedad del último dato",
+      "description": "Tiempo desde la última escritura. Si crece sin parar, el pipeline está detenido o atascado.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
       "fieldConfig": {
@@ -98,7 +98,7 @@
       "id": 5,
       "type": "timeseries",
       "title": "Latencia extremo a extremo en el tiempo",
-      "description": "Percentiles 50 y 95 de (ingested_at - sim_publish_ts). La linea de referencia marca el objetivo de 2 s.",
+      "description": "Percentiles 50 y 95 de (ingested_at - sim_publish_ts).",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "postgres"},
       "gridPos": {"h": 9, "w": 12, "x": 0, "y": 5},
       "fieldConfig": {
@@ -123,7 +123,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Ritmo de escritura",
-      "description": "Eventos agregados y filas de metricas escritas por intervalo. Es el pulso del pipeline.",
+      "description": "Eventos agregados y filas de métricas escritas por intervalo. Es el pulso del pipeline.",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 9, "w": 12, "x": 12, "y": 5},
       "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60}}},
@@ -133,7 +133,7 @@
         "format": "time_series",
         "rawQuery": true,
         "editorMode": "code",
-        "rawSql": "SELECT\n  $__timeGroupAlias(ingested_at, $__interval),\n  sum(event_count) AS \"eventos\",\n  count(*) AS \"filas de metricas\"\nFROM telemetry_metrics\nWHERE $__timeFilter(ingested_at)\nGROUP BY 1\nORDER BY 1"
+        "rawSql": "SELECT\n  $__timeGroupAlias(ingested_at, $__interval),\n  sum(event_count) AS \"eventos\",\n  count(*) AS \"filas de métricas\"\nFROM telemetry_metrics\nWHERE $__timeFilter(ingested_at)\nGROUP BY 1\nORDER BY 1"
       }]
     }
   ]
