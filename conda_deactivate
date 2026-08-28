@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # conda_deactivate — drop out of every conda env in the CURRENT shell.
 #
-# Use it before working on the uv-based course project, so that `python`,
-# `pip` and `uv pip install` can't silently resolve to a conda env.
+# Use it before working on this project, so that `python` and `pip` can't
+# silently resolve to a conda env instead of this project's own venv.
 #
 # MUST BE SOURCED, not executed:
 #
@@ -49,18 +49,17 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Activate this project's venv (pipeline/requirements.txt), now that conda
-# is out of the way and can't shadow it on PATH.
+# Activate this project's venv (requirements.txt, at the repo root), now
+# that conda is out of the way and can't shadow it on PATH.
 # ---------------------------------------------------------------------------
 __cd_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 __cd_venv="${__cd_script_dir}/.venv/bin/activate"
 if [[ -f "${__cd_venv}" ]]; then
     source "${__cd_venv}"
 else
-    echo "warning: ${__cd_venv} not found — run pipeline/setup_env.sh first" >&2
+    echo "warning: ${__cd_venv} not found — run setup.sh first" >&2
 fi
 unset __cd_script_dir __cd_venv
 
 echo "conda    : CONDA_SHLVL=${CONDA_SHLVL:-0} CONDA_DEFAULT_ENV='${CONDA_DEFAULT_ENV:-<none>}'"
-echo "python   : $(command -v python || echo '<none on PATH — expected; use uv run>')"
-echo "uv       : $(command -v uv || echo '<not found>')"
+echo "python   : $(command -v python || echo '<none on PATH>')"
