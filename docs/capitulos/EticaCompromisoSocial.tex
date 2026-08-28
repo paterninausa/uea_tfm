@@ -1,0 +1,23 @@
+\chapter{ÉTICA Y COMPROMISO SOCIAL}
+
+Este capítulo recoge el compromiso del trabajo con los principios de igualdad de género y su contribución a los Objetivos de Desarrollo Sostenible (ODS) de la Agenda 2030 de Naciones Unidas.
+
+\section{Igualdad de género}
+
+Este trabajo se alinea con los principios de igualdad de género y respeto a la diversidad. Por su naturaleza (el desarrollo de un pipeline de procesamiento de datos de telemetría energética a partir de un conjunto de datos público de mediciones de contadores, sin participación de sujetos humanos) no requiere consideraciones de muestreo poblacional ni plantea riesgos de sesgo respecto a colectivos protegidos. Su desarrollo y redacción se han realizado garantizando un entorno de trabajo respetuoso, con tolerancia cero hacia cualquier forma de discriminación, y empleando un lenguaje inclusivo y no sexista en toda la memoria.
+
+El ámbito de la ingeniería de datos y de las infraestructuras de código abierto sigue siendo, en la actualidad, un entorno con una representación desigual de mujeres, tanto en su historia (con frecuencia invisibilizada, desde las pioneras de la programación hasta las primeras analistas de sistemas) como en su composición actual. Iniciativas como Women in Big Data o los programas de mentoría en comunidades de software libre buscan corregir ese desequilibrio estructural.
+
+Este trabajo contribuye modestamente en esa dirección por la vía de la accesibilidad: al basarse exclusivamente en herramientas de código abierto y en un conjunto de datos público, y al documentar de forma completa y reproducible su metodología (arquitectura, decisiones de diseño y procedimientos de medición), elimina barreras económicas y de acceso privilegiado a la información que tradicionalmente han filtrado quién puede participar en el aprendizaje y la práctica de la ingeniería de datos en streaming. Un pipeline que cualquiera puede clonar, ejecutar, estudiar y extender sin depender de licencias comerciales ni de servicios gestionados de pago es, por construcción, más accesible que uno reservado a quienes ya cuentan con presupuesto o acceso privilegiado dentro de la industria.
+
+\section{Objetivos de Desarrollo Sostenible}
+
+Este trabajo se relaciona principalmente con los Objetivos de Desarrollo Sostenible 9 (Industria, Innovación e Infraestructura), 7 (Energía Asequible y No Contaminante) y 11 (Ciudades y Comunidades Sostenibles).
+
+Respecto al ODS 9, el proyecto construye una infraestructura de procesamiento de datos en tiempo real íntegramente basada en tecnologías de código abierto (Mosquitto, Apache Kafka, Apicurio, Apache Spark, TimescaleDB, PostgreSQL, Grafana, Docker), documentada y desplegable mediante contenedores, cuyo patrón arquitectónico (ingesta MQTT, gobernanza de esquemas y doble sumidero operacional/analítico) es directamente transferible a otros sectores industriales que requieran monitorización de dispositivos IoT, como el mantenimiento predictivo o la telemetría de flotas. La validación metodológicamente honesta de sus resultados (pruebas de carga y de recuperación ante fallos medidas y reproducibles, en lugar de cifras estimadas) promueve además una cultura de innovación rigurosa y transparente.
+
+Respecto al ODS 7, el sistema desarrollado procesa telemetría de consumo eléctrico y de agua (fría y caliente) de edificios, calculando índices de eficiencia energética, perfiles de carga y detección de anomalías de consumo. Este tipo de instrumentación es la base técnica sobre la que se apoyan las estrategias de gestión activa de la demanda y de reducción del consumo fantasma, contribuyendo indirectamente a un uso más eficiente y sostenible de la energía en el parque de edificios.
+
+Respecto al ODS 11, la monitorización granular del consumo energético de edificios (a nivel de emplazamiento, tipo de medidor y ventana temporal) constituye una capacidad habilitadora para la gestión sostenible de infraestructuras urbanas, permitiendo identificar patrones de consumo ineficiente y priorizar intervenciones de mejora energética en el parque construido.
+
+De forma complementaria, el trabajo guarda relación con el ODS 4 (Educación de Calidad), en la medida en que el sistema completo (código, configuración de despliegue y documentación de las decisiones de diseño y de los resultados medidos) queda disponible como material formativo reutilizable para la enseñanza de la ingeniería de datos en streaming aplicada a un caso de uso real.
