@@ -43,12 +43,13 @@ La naturaleza de Kafka es de un log persistente de bytes crudos, ajeno a la estr
 Spark Structured Streaming consume y deserializa cada mensaje mediante dos consultas independientes sobre el mismo flujo de Kafka; en una de ellas enriquece los mensajes y agrega métricas por ventana temporal hacia TimescaleDB para el consumo operacional en Grafana, y en la otra consulta guarda los mensajes hacia PostgreSQL para el consumo analítico con Power BI. Al tratarse de consultas independientes, cada una mantiene su propio \textit{checkpoint} y su propia tolerancia a fallos, de modo que la caída de una consulta no interrumpe a la otra (sección~\ref{sec:validacion-procesamiento}).
 
 \subsection{Fuente de datos y variables utilizadas}
+\label{sec:fuente-datos}
 
 Todos los datos provienen de la competición Kaggle ASHRAE -- Great Energy Predictor III \cite{ashrae2019}, un subconjunto del proyecto Building Data Genome 2 que recoge el consumo energético horario real de 1.449 edificios en 16 emplazamientos durante 2016, con errores de medición y problemas de calidad propios de medidores reales (no hay datos sintéticos).
 
 El script de preparación (\texttt{prepare\_ashrae.py}) reduce el dataset original a un subconjunto de tres emplazamientos (identificados como 2, 3 y 5 con un total de 652 medidores y 5.682.185 lecturas), produciendo tres tablas Parquet: una tabla de hechos con la lectura de cada medidor (Tabla~\ref{tab:variables-hechos}), una tabla de dimensión con los atributos de cada edificio (Tabla~\ref{tab:variables-dimension}), y una tabla de línea base con el cálculo de los cuartiles según los datos completos de cada medidor (Tabla~\ref{tab:variables-baseline}).
 
-\begin{table}[ht!]
+\begin{table}[H]
   \centering
   \begin{tabular}{|l|p{9cm}|}
     \hline
@@ -62,7 +63,7 @@ El script de preparación (\texttt{prepare\_ashrae.py}) reduce el dataset origin
   \label{tab:variables-hechos}
 \end{table}
 
-\begin{table}[ht!]
+\begin{table}[H]
   \centering
   \begin{tabular}{|l|p{9cm}|}
     \hline
@@ -78,7 +79,7 @@ El script de preparación (\texttt{prepare\_ashrae.py}) reduce el dataset origin
   \label{tab:variables-dimension}
 \end{table}
 
-\begin{table}[ht!]
+\begin{table}[H]
   \centering
   \begin{tabular}{|l|p{9cm}|}
     \hline
@@ -91,6 +92,58 @@ El script de preparación (\texttt{prepare\_ashrae.py}) reduce el dataset origin
   \caption{Variables de la línea base por sensor (\texttt{ashrae\_sensor\_baseline.parquet}) empleadas.}
   \label{tab:variables-baseline}
 \end{table}
+
+\subsection{Alternativas de herramientas consideradas}
+
+A continuación se documentan tres casos en los que se evaluaron herramientas usando los criterios planteados en el capítulo de Antecedentes y estado del arte, resultando en decisiones enmarcadas en los requisitos particulares de este proyecto.
+
+\textbf{Broker MQTT: Mosquitto con bridge propio frente a EMQX/HiveMQ Enterprise.} Como recoge la Tabla~\ref{tab:brokers-mqtt}, ningún broker MQTT con licencia aprobada por la Open Source Initiative ofrece un puente nativo hacia Kafka: esa función está disponible en las ediciones comerciales de EMQX \cite{emqx2026} y HiveMQ \cite{hivemq2026}. Quedaban dos opciones compatibles con la filosofía de código abierto de este trabajo: adoptar un conector genérico como el conector MQTT de Stream Reactor para Kafka Connect \cite{lensesio2026}, o desarrollar un microservicio de \textit{bridging} propio. Se optó por la segunda opción porque permite asignarle al bridge responsabilidades adicionales más allá del simple reenvío de mensajes, sin depender de las limitaciones de configuración de un conector genérico. Adicionalmente, Eclipse Mosquitto se eligió sobre el resto de brokers de la Tabla~\ref{tab:brokers-mqtt} por ser la implementación de referencia de la Eclipse Foundation, con una huella de despliegue mínima adecuada para el volumen de mensajes de este proyecto.
+
+\textbf{Almacenamiento de series temporales: TimescaleDB frente a InfluxDB.} La sección~\ref{sec:benchmarks-series-temporales} advierte que los \textit{benchmarks} de rendimiento entre los almacenamientos de series temporales proceden mayoritariamente de los propios fabricantes, por lo que la decisión en este proyecto no se apoyó en esas cifras sino en el ajuste con el resto de la arquitectura. Al ser TimescaleDB una extensión de PostgreSQL que ya se emplea en el sumidero analítico, se comparten cliente, dialecto SQL y patrón de escritura \textit{upsert} en el mismo job de Spark, evitando incorporar un lenguaje de consulta adicional (como Flux o InfluxQL) al proyecto.
+
+\textbf{Motor de procesamiento de flujos: Spark Structured Streaming frente a PyFlink.} Aplicando los criterios de la sección~\ref{sec:criterios-streaming} (relación entre la cadencia de los datos y los requisitos de latencia, madurez de la API en el lenguaje de implementación, unificación del modelo \textit{batch}/streaming, y disponibilidad de talento) al caso concreto de este proyecto: el parque de medidores emite, verificado sobre el propio conjunto de datos, una lectura por hora y sensor, muy por debajo del umbral en el que las ventajas de latencia sub-segundo de un motor de streaming nativo como Flink resultan necesarias. A esto se suma que la API de PySpark tiene mayor madurez que la de PyFlink dentro del ecosistema Python, que Spark unifica el procesamiento por lotes y en streaming bajo el mismo modelo de \textit{DataFrame}, y que su adopción en el ámbito profesional es más amplia.
+
+\subsection{Estructura del repositorio}
+
+El código fuente completo del proyecto se organiza como sigue:
+
+{\footnotesize
+\begin{verbatim}
+tfm_boris_paternina/
+|-- setup.sh                    # Crea el entorno virtual y prepara el dataset
+|-- requirements.txt            # Dependencias Python del pipeline completo
+|-- .sdkmanrc                   # Versión de Java fijada (21 Temurin) para PySpark
+|-- pipeline/
+|   |-- docker-compose.yml      # Orquesta Mosquitto, Kafka, Apicurio, TimescaleDB,
+|   |                           #   PostgreSQL y Grafana
+|   |-- bridge/
+|   |   |-- mqtt_kafka_bridge.py    # Microservicio bridge MQTT -> Kafka (Objetivo 1)
+|   |-- simulator/
+|   |   |-- mqtt_simulator.py       # Simulador del parque de medidores
+|   |   |-- telemetry_dataset.py    # Carga y reparto del dataset para el simulador
+|   |-- schemas/
+|   |   |-- telemetry_event_v1.avsc # Contrato de datos en Apicurio (Objetivo 2)
+|   |   |-- register_schema.py      # Registro y gobernanza de esquemas en Apicurio
+|   |-- spark/
+|   |   |-- stream_processing.py    # Job de Structured Streaming (Objetivos 3 y 4)
+|   |   |-- database_writers.py     # Escritura idempotente hacia los dos sumideros
+|   |   |-- monitoring.py           # Supervisión y KPI de latencia del job
+|   |-- data/
+|   |   |-- prepare_ashrae.py       # Preparación del subconjunto (ver Sección 5.2.2)
+|   |-- common/                     # Utilidades compartidas: logging, conexiones, Apicurio
+|   |-- docker/
+|   |   |-- mosquitto/              # Configuración del broker MQTT
+|   |   |-- grafana/                # Datasources y dashboards provisionados
+|   |   |-- timescaledb/            # Esquema SQL de métricas y progreso de streaming
+|   |   |-- postgres/               # Esquema SQL de eventos enriquecidos
+|   |-- tools/                      # Scripts de medición (KPIs), prueba de fallos, demo
+|   |-- logs/                       # Logs de ejecución
+|-- powerbi/
+    |-- powerbi_dashboard_analitico.pbip           # Proyecto Power BI (formato PBIP)
+    |-- powerbi_dashboard_analitico.Report/        # Definición de páginas y visuales
+    |-- powerbi_dashboard_analitico.SemanticModel/ # Modelo semántico: tablas y relaciones
+\end{verbatim}
+}
 
 \section{Recursos requeridos}
 En este apartado debes enumerar los recursos que has utilizado para la ejecución del proyecto (recursos técnicos, dispositivos, material de laboratorio, asistencia de expertos, etc.). Si bien, en la sección donde se describe Metodología y Herramientas empleadas, se describen en detalle las mismas, en esta sección, únicamente debes enumerarlas.

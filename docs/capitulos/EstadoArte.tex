@@ -54,6 +54,7 @@ Ejemplos recientes de implementación práctica de Kappa en contextos IoT incluy
 \section{Estado del arte}
 
 \subsection{Ecosistema de herramientas de código abierto en el ámbito de los datos IoT}
+\label{sec:benchmarks-series-temporales}
 
 El ecosistema de herramientas de código abierto disponibles para cada capa del pipeline ha madurado considerablemente, como ilustran las implementaciones de S. Shinde \cite{shinde2025} y G. Zefkilis \cite{zefkilis2025} comentadas en la sección anterior.
 
@@ -104,7 +105,7 @@ Todas las plataformas de la Tabla~\ref{tab:log-distribuido} son técnicamente vi
 
 En la capa de procesamiento de flujos, Apache Flink se ha consolidado como la mejor opción para el cómputo en tiempo real usando la semántica de eventos, mientras que Kafka Streams ocupa un nicho más acotado como librería embebida para aplicaciones Java/Scala nativas de Apache Kafka que no requieren un clúster de procesamiento independiente. Apache Spark Structured Streaming, por su parte, se presenta como el estándar de la industria para el procesamiento por micro-lotes, apoyado en la amplitud de su ecosistema y la unificación del procesamiento en lotes y en streaming bajo una misma API; característica que comparte Apache Flink pero que en Spark se beneficia de una integración más amplia con el ecosistema de almacenamiento \textit{lakehouse} y herramientas SQL (S. Lakshmipathy \cite{lakshmipathy2025}).
 
-Para el almacenamiento de series temporales de los datos IoT, sistemas especializados como InfluxDB \cite{influxdata2025}, TimescaleDB \cite{tigerdata2026} y QuestDB \cite{questdb2025} compiten por ofrecer el mejor equilibrio entre velocidad de escritura, compresión de datos y capacidad de consulta analítica; conviene advertir, sin embargo, que buena parte de los benchmarks de rendimiento publicados provienen directamente de los creadores de cada producto como se aprecia en las citadas fuentes, por lo que dichos benchmarks deben interpretarse con cautela hasta que existan estudios independientes.
+Para el almacenamiento de series temporales de los datos IoT, sistemas especializados como InfluxDB \cite{influxdata2025}, TimescaleDB \cite{tigerdata2026} y QuestDB \cite{questdb2025} compiten por ofrecer el mejor equilibrio entre velocidad de escritura, compresión de datos y capacidad de consulta analítica; sin embargo conviene advertir que buena parte de los benchmarks de rendimiento publicados provienen directamente de los creadores de cada producto como se aprecia en las citadas fuentes, por lo que dichos benchmarks deben interpretarse con cautela hasta que existan estudios independientes.
 
 En la capa de visualización, Grafana se ha convertido en el estándar para paneles operacionales sobre datos de series temporales, en muchos casos combinado con Prometheus para monitoreo de infraestructura.
 
@@ -123,6 +124,7 @@ Pese a la madurez alcanzada por las herramientas disponibles, Y. Liu \cite{liu20
 \end{itemize}
 
 \subsection{Criterios de selección de herramientas de procesamiento streaming}
+\label{sec:criterios-streaming}
 
 La elección de un sistema concreto para el procesamiento de flujos dentro de una arquitectura Kappa no tiene una respuesta universal: distintas herramientas optimizan frente a distintos compromisos, y la decisión debe fundamentarse en los criterios aplicables al proyecto de procesamiento de streaming, no en percepciones públicas o popularidad de una herramienta. 
 
