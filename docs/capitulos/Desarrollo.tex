@@ -42,6 +42,56 @@ La naturaleza de Kafka es de un log persistente de bytes crudos, ajeno a la estr
 
 Spark Structured Streaming consume y deserializa cada mensaje mediante dos consultas independientes sobre el mismo flujo de Kafka; en una de ellas enriquece los mensajes y agrega métricas por ventana temporal hacia TimescaleDB para el consumo operacional en Grafana, y en la otra consulta guarda los mensajes hacia PostgreSQL para el consumo analítico con Power BI. Al tratarse de consultas independientes, cada una mantiene su propio \textit{checkpoint} y su propia tolerancia a fallos, de modo que la caída de una consulta no interrumpe a la otra (sección~\ref{sec:validacion-procesamiento}).
 
+\subsection{Fuente de datos y variables utilizadas}
+
+Todos los datos provienen de la competición Kaggle ASHRAE -- Great Energy Predictor III \cite{ashrae2019}, un subconjunto del proyecto Building Data Genome 2 que recoge el consumo energético horario real de 1.449 edificios en 16 emplazamientos durante 2016, con errores de medición y problemas de calidad propios de medidores reales (no hay datos sintéticos).
+
+El script de preparación (\texttt{prepare\_ashrae.py}) reduce el dataset original a un subconjunto de tres emplazamientos (identificados como 2, 3 y 5 con un total de 652 medidores y 5.682.185 lecturas), produciendo tres tablas Parquet: una tabla de hechos con la lectura de cada medidor (Tabla~\ref{tab:variables-hechos}), una tabla de dimensión con los atributos de cada edificio (Tabla~\ref{tab:variables-dimension}), y una tabla de línea base con el cálculo de los cuartiles según los datos completos de cada medidor (Tabla~\ref{tab:variables-baseline}).
+
+\begin{table}[ht!]
+  \centering
+  \begin{tabular}{|l|p{9cm}|}
+    \hline
+    \textbf{Variable} & \textbf{Uso en el sistema} \\ \hline
+    \texttt{building\_id} & Identificador del edificio; primer componente de la clave de partición en Kafka \\ \hline
+    \texttt{meter\_type} & Tipo de medidor (electricidad, agua fría, agua caliente); segundo componente de la clave de partición en Kafka \\ \hline
+    \texttt{timestamp} & Instante en que se leyó el consumo; usado para el agregado por ventanas y el cálculo de `cierre de la ventana' ante mensajes tardíos \\ \hline
+    \texttt{meter\_reading} & Medición del consumo en kWh; usado para la detección de calidad, anomalías y métricas agregadas en los análisis \\ \hline
+  \end{tabular}
+  \caption{Variables de la tabla de hechos (\texttt{ashrae\_telemetry.parquet}) empleadas.}
+  \label{tab:variables-hechos}
+\end{table}
+
+\begin{table}[ht!]
+  \centering
+  \begin{tabular}{|l|p{9cm}|}
+    \hline
+    \textbf{Variable} & \textbf{Uso en el sistema} \\ \hline
+    \texttt{building\_id} & Clave de unión con la tabla de hechos \\ \hline
+    \texttt{site\_id} & Emplazamiento; primera clave de agrupación en las métricas agregadas \\ \hline
+    \texttt{primary\_use} & Uso principal del edificio; segunda clave de agrupación de las métricas agregadas \\ \hline
+    \texttt{square\_feet} & Superficie construida; base del cálculo de intensidad energética \\ \hline
+    \texttt{year\_built} & Año de construcción; dejado para análisis futuros \\ \hline
+    \texttt{floor\_count} & Número de plantas; dejado para análisis futuros \\ \hline
+  \end{tabular}
+  \caption{Variables de la tabla de dimensión (\texttt{ashrae\_buildings.parquet}) empleadas.}
+  \label{tab:variables-dimension}
+\end{table}
+
+\begin{table}[ht!]
+  \centering
+  \begin{tabular}{|l|p{9cm}|}
+    \hline
+    \textbf{Variable} & \textbf{Uso en el sistema} \\ \hline
+    \texttt{building\_id} & Primera clave de unión con la tabla de hechos \\ \hline
+    \texttt{meter\_type} & Segunda clave de unión con la tabla de hechos \\ \hline
+    \texttt{baseline\_p75} & Percentil 75 histórico del medidor, usado para la detección de picos atípicos \\ \hline
+    \texttt{baseline\_iqr} & Rango intercuartílico histórico del medidor \\ \hline
+  \end{tabular}
+  \caption{Variables de la línea base por sensor (\texttt{ashrae\_sensor\_baseline.parquet}) empleadas.}
+  \label{tab:variables-baseline}
+\end{table}
+
 \section{Recursos requeridos}
 En este apartado debes enumerar los recursos que has utilizado para la ejecución del proyecto (recursos técnicos, dispositivos, material de laboratorio, asistencia de expertos, etc.). Si bien, en la sección donde se describe Metodología y Herramientas empleadas, se describen en detalle las mismas, en esta sección, únicamente debes enumerarlas.
 
