@@ -23,11 +23,11 @@ El proyecto se desarrolló a lo largo de tres meses, entre junio y agosto de 202
   \label{tab:planificacion}
 \end{table}
 
-\section{Descripción de la solución, metodologías y herramientas empleadas}
+\section{Descripción de la solución, metodologías y herramientas \mbox{empleadas}}
 
 \subsection{Visión general de la arquitectura}
 
-El sistema implementa una arquitectura Kappa de flujo único con una bifurcación final hacia dos consumidores especializados, tal y como muestra la Figura~\ref{fig:arquitectura-tfm}. Cada componente es un servicio independiente, desplegado en su propio contenedor Docker, y la comunicación entre ellos ocurre exclusivamente a través de Kafka como registro reproducible, salvo la gobernanza de esquemas, que se resuelve aparte.
+El sistema implementa una arquitectura Kappa de flujo único con una bifurcación final hacia dos sumideros, tal y como muestra la Figura~\ref{fig:arquitectura-tfm}. Los componentes son servicios independientes, desacoplados mediante contenedores Docker, y la comunicación entre productores y consumidores de datos se ejecuta usando Kafka como log reproducible, mientras que la gobernanza de esquemas se resuelve a través del registro Apicurio.
 
 \begin{figure}[ht!]
   \centering
@@ -36,11 +36,15 @@ El sistema implementa una arquitectura Kappa de flujo único con una bifurcació
   \label{fig:arquitectura-tfm}
 \end{figure}
 
-El simulador (\texttt{mqtt\_simulator.py}) publica telemetría hacia Eclipse Mosquitto, que actúa únicamente como broker de ingesta MQTT. El bridge, un microservicio propio, suscribe los mensajes, los serializa contra Apicurio Registry conforme al esquema Avro vigente y los publica en Kafka. Es importante notar que Kafka no participa en la gobernanza de esquemas: almacena únicamente un log persistente de bytes opacos, sin conocimiento de su estructura interna; es el bridge, en la escritura, y Spark Structured Streaming, en la lectura, quienes dialogan directamente con Apicurio para serializar y deserializar cada evento respectivamente.
+El simulador (\texttt{mqtt\_simulator.py}) publica telemetría hacia Eclipse Mosquitto, que actúa únicamente como broker de ingesta MQTT. El bridge, un microservicio de diseño propio, se suscribe a los mensajes desde Mosquitto, los serializa contra Apicurio Registry conforme al esquema Avro vigente y los publica en Kafka. 
 
-Spark Structured Streaming consume el flujo, enriquece cada evento mediante \textit{join} con las tablas de referencia del edificio y del sensor, y ejecuta dos consultas de streaming independientes sobre el mismo tópico: una agrega métricas por ventana temporal hacia TimescaleDB para su consumo operacional en Grafana, y otra persiste eventos enriquecidos hacia PostgreSQL para su consumo analítico en Power BI. Al tratarse de consultas independientes, cada una mantiene su propio \textit{checkpoint} y su propia tolerancia a fallos, de modo que la caída de un sumidero no interrumpe al otro (sección~\ref{sec:validacion-procesamiento}).
+La naturaleza de Kafka es de un log persistente de bytes crudos, ajeno a la estructura interna de los mensajes MQTT almacenados y distribuídos. Es por ello que el bridge, en la escritura, y Spark Structured Streaming, en la lectura, son quienes dialogan directamente con Apicurio para serializar y deserializar los bytes almacenados y distribuídos por Kafka.
+
+Spark Structured Streaming consume el flujo, deserializando y enriqueciendo cada mensaje: mediante dos consultas independientes sobre el mismo flujo de Kafka, en una de ellas agrega métricas por ventana temporal hacia TimescaleDB para el consumo operacional en Grafana, y en la otra consulta guarda mensajes enriquecidos mediante \textit{join} con tablas de referencia hacia PostgreSQL, para el consumo analítico con Power BI. Al tratarse de consultas independientes, cada una mantiene su propio \textit{checkpoint} y su propia tolerancia a fallos, de modo que la caída de una consulta no interrumpe a la otra (sección~\ref{sec:validacion-procesamiento}).
+
 \section{Recursos requeridos}
 En este apartado debes enumerar los recursos que has utilizado para la ejecución del proyecto (recursos técnicos, dispositivos, material de laboratorio, asistencia de expertos, etc.). Si bien, en la sección donde se describe Metodología y Herramientas empleadas, se describen en detalle las mismas, en esta sección, únicamente debes enumerarlas.
+
 \section{Presupuesto}
 El Presupuesto supone la evaluación económica total del proyecto.
 No olvides que tu tiempo también vale dinero, no sólo hay que incluir el coste de los materiales empleados.
