@@ -1,11 +1,44 @@
 \chapter{DESARROLLO DEL PROYECTO}
 \section{Planificación del proyecto}
-Incluye un cronograma y una breve descripción de todas las actividades reales y su esfuerzo, que se han realizado en el proyecto. Algunos ejemplos de actividades son: estudio del arte, análisis de alterativas actuales, estudio de informes previos, análisis técnico de interfaces con sistemas externos, diseño del sistema, diseño de la validación y/o de pruebas, desarrollo de Software, realización de entrevistas, visualización de videos relacionados con el tema, reuniones mantenidas con personas de empresa y otras entidades, etc.
-Puedes reutilizar el formato del plan indicado en tu anteproyecto.
+
+El proyecto se desarrolló a lo largo de tres meses, entre junio y agosto de 2026, mediante fases consecutivas e incrementales. El esfuerzo total fue de 330 horas, a un ritmo aproximado de 28 horas semanales (112 horas mensuales). La Tabla~\ref{tab:planificacion} recoge el cronograma con las actividades realizadas y su esfuerzo.
+
+\begin{table}[ht!]
+  \centering
+  \small
+  \begin{tabular}{|p{4.3cm}|p{1.7cm}|c|p{5.8cm}|}
+    \hline
+    \textbf{Actividad} & \textbf{Periodo} & \textbf{Horas} & \textbf{Entregable} \\ \hline
+    Estudio de los antecedentes y estado del arte & Jun. 2026 & 30 & Revisión bibliográfica \\ \hline
+    Búsqueda y adaptación de la fuente de datos; establecimiento de objetivos & Jun. 2026 & 5 & \texttt{prepare\_ashrae.py}, objetivos y KPIs \\ \hline
+    Selección de herramientas y diseño de la arquitectura & Jun. 2026 & 5 & Documento de diseño \\ \hline
+    Desarrollo técnico y pruebas iniciales de la sección de procesamiento & Jun.--Jul. 2026 & 80 & Artefactos en \texttt{bridge/}, \texttt{common/}, \texttt{docker/}, \texttt{schemas/}, \texttt{simulator/} y \texttt{spark/} \\ \hline
+    Validación, pruebas y ajustes de la sección de procesamiento & Jul. 2026 & 100 & Informe de resultados: pérdida de mensajes (0,0000\,\%), latencia de ingesta p50/p95 (0,766 / 1,277 s), throughput bajo carga y degradación (652 sensores concurrentes, degradación real 0,6\,\%), tiempo de recuperación ante fallo (4,1 s TimescaleDB / 5,1 s PostgreSQL) \\ \hline
+    Creación, pruebas y ajustes de la sección de visualización & Jul.--Ago. 2026 & 30 & Artefactos en \texttt{grafana/} y \texttt{powerbi/} \\ \hline
+    Creación y prueba de scripts auxiliares & Ago. 2026 & 5 & Artefactos en \texttt{tools/} y \texttt{setup.sh} \\ \hline
+    Redacción de la memoria & Jun.--Ago. 2026 & 75 & Este documento \\ \hline
+    \textbf{Total} & & \textbf{330} & \\ \hline
+  \end{tabular}
+  \caption{Cronograma y esfuerzo de las actividades del proyecto}
+  \label{tab:planificacion}
+\end{table}
+
 \section{Descripción de la solución, metodologías y herramientas empleadas}
-Para un proyecto cuyo foco sea el ámbito científico y de investigación, aquí se describen las metodologías utilizadas para la realización del proyecto, incluye herramientas tecnológicas, programas de cálculo, dispositivos utilizados, modelos aplicados para el desarrollo del proyecto, descripción del análisis de datos cuyos resultados se presentarán en la sección de resultados, etc.
-Para un proyecto cuyo foco sea el desarrollo de producto, aquí se describe la solución, modelos analizados, diseños realizados, algoritmos aplicados, desarrollos implementados, etc. incluye herramientas tecnológicas, programas de cálculo, dispositivos utilizados, modelos aplicados para el desarrollo del proyecto, descripción del análisis de datos cuyos resultados se presentarán en la sección de resultados, etc.
-Puedes añadir una estructura en subsecciones si facilita la organización de esta sección.
+
+\subsection{Visión general de la arquitectura}
+
+El sistema implementa una arquitectura Kappa de flujo único con una bifurcación final hacia dos consumidores especializados, tal y como muestra la Figura~\ref{fig:arquitectura-tfm}. Cada componente es un servicio independiente, desplegado en su propio contenedor Docker, y la comunicación entre ellos ocurre exclusivamente a través de Kafka como registro reproducible, salvo la gobernanza de esquemas, que se resuelve aparte.
+
+\begin{figure}[ht!]
+  \centering
+  \includegraphics[width=0.85\textwidth]{imagenes/tfm_arquitectura.png}
+  \caption[Arquitectura del pipeline IoT]{Arquitectura del sistema: flujo único Kappa (simulador, Mosquitto, bridge, Kafka, Spark) con bifurcación hacia el doble sumidero operacional y analítico. Elaboración propia.}
+  \label{fig:arquitectura-tfm}
+\end{figure}
+
+El simulador (\texttt{mqtt\_simulator.py}) publica telemetría hacia Eclipse Mosquitto, que actúa únicamente como broker de ingesta MQTT. El bridge, un microservicio propio, suscribe los mensajes, los serializa contra Apicurio Registry conforme al esquema Avro vigente y los publica en Kafka. Es importante notar que Kafka no participa en la gobernanza de esquemas: almacena únicamente un log persistente de bytes opacos, sin conocimiento de su estructura interna; es el bridge, en la escritura, y Spark Structured Streaming, en la lectura, quienes dialogan directamente con Apicurio para serializar y deserializar cada evento respectivamente.
+
+Spark Structured Streaming consume el flujo, enriquece cada evento mediante \textit{join} con las tablas de referencia del edificio y del sensor, y ejecuta dos consultas de streaming independientes sobre el mismo tópico: una agrega métricas por ventana temporal hacia TimescaleDB para su consumo operacional en Grafana, y otra persiste eventos enriquecidos hacia PostgreSQL para su consumo analítico en Power BI. Al tratarse de consultas independientes, cada una mantiene su propio \textit{checkpoint} y su propia tolerancia a fallos, de modo que la caída de un sumidero no interrumpe al otro (sección~\ref{sec:validacion-procesamiento}).
 \section{Recursos requeridos}
 En este apartado debes enumerar los recursos que has utilizado para la ejecución del proyecto (recursos técnicos, dispositivos, material de laboratorio, asistencia de expertos, etc.). Si bien, en la sección donde se describe Metodología y Herramientas empleadas, se describen en detalle las mismas, en esta sección, únicamente debes enumerarlas.
 \section{Presupuesto}
