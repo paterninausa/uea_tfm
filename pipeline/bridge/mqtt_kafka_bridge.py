@@ -228,6 +228,18 @@ class Bridge:
             key_serializer=lambda k: k.encode("utf-8") if k else None,
         )
 
+        # Sin --shared-group, suscripcion normal: cada instancia recibe una
+        # copia de cada mensaje (el comportamiento de siempre, una sola
+        # instancia). Con --shared-group, el prefijo $share/<grupo>/ le pide
+        # al broker que REPARTA los mensajes entre las instancias del mismo
+        # grupo en vez de duplicarlos — es lo que hace falta para escalar el
+        # bridge horizontalmente. Mosquitto lo soporta desde la 1.6, sin
+        # cambiar de broker ni de version de protocolo MQTT.
+        self._topic_filter = (
+            f"$share/{args.shared_group}/{MQTT_TOPIC_FILTER}"
+            if args.shared_group else MQTT_TOPIC_FILTER
+        )
+
         self.mqtt_client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
             client_id=args.client_id,
@@ -254,8 +266,8 @@ class Bridge:
         if reason_code != 0:
             logger.error("Fallo al conectar con el broker MQTT (reason_code=%s)", reason_code)
             return
-        logger.info("Conectado a MQTT; suscribiendo a %s (QoS %d)", MQTT_TOPIC_FILTER, self.args.qos)
-        client.subscribe(MQTT_TOPIC_FILTER, qos=self.args.qos)
+        logger.info("Conectado a MQTT; suscribiendo a %s (QoS %d)", self._topic_filter, self.args.qos)
+        client.subscribe(self._topic_filter, qos=self.args.qos)
 
     def _on_disconnect(self, client, userdata, disconnect_flags, reason_code=None, properties=None):
         if not self._parada.is_set():
@@ -439,7 +451,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--qos", type=int, default=1, choices=[0, 1, 2],
                    help="QoS de la suscripcion MQTT (1 = al menos una vez, por defecto)")
     p.add_argument("--client-id", default="tfm-bridge",
-                   help="client_id MQTT. Debe ser estable: la sesion persistente se asocia a el")
+                   help="client_id MQTT. Debe ser estable Y UNICO por instancia: la sesion "
+                        "persistente se asocia a el, y dos instancias con el mismo client_id "
+                        "hacen que el broker desconecte la mas antigua al conectar la nueva")
+    p.add_argument("--shared-group", default=None,
+                   help="Nombre de grupo para suscripcion compartida ($share/<grupo>/...). "
+                        "Sin esto, cada instancia recibe una copia de cada mensaje (correcto "
+                        "con una sola instancia, duplica con varias). Con esto, el broker "
+                        "reparte los mensajes entre las instancias del grupo: es lo que "
+                        "permite escalar el bridge horizontalmente")
     p.add_argument("--bootstrap-servers", default="localhost:29092")
     p.add_argument("--topic", default="iot.telemetry.raw")
     p.add_argument("--dlq-topic", default="iot.telemetry.dlq")

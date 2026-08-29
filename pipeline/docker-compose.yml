@@ -186,6 +186,43 @@ services:
     networks: [tfm-net]
 
   # ---------------------------------------------------------------------------
+  # Bridge — MQTT -> Kafka con validacion Avro (Objetivos 1 y 2)
+  # ---------------------------------------------------------------------------
+  # Bajo un profile aparte ("bridge"): un `docker compose up -d` normal NO lo
+  # arranca, porque necesita el esquema YA registrado en Apicurio para poder
+  # resolverlo (register_schema.py sigue siendo un paso manual posterior).
+  # Arrancarlo junto al resto lo dejaria en bucle de reinicio hasta que alguien
+  # registre el esquema. Se levanta aparte, a proposito:
+  #
+  #   docker compose -f pipeline/docker-compose.yml up -d          # stack base
+  #   python pipeline/schemas/register_schema.py
+  #   docker compose -f pipeline/docker-compose.yml --profile bridge up -d bridge
+  #
+  # Sin container_name fijo, a diferencia del resto de servicios: es
+  # deliberado, para no impedir levantar una segunda instancia mas adelante
+  # (Docker exige nombres de contenedor unicos). Preparado para escalar
+  # horizontalmente via --shared-group (suscripcion compartida de MQTT), pero
+  # esta imagen por si sola no lo demuestra con varias instancias a la vez.
+  bridge:
+    build:
+      context: .
+      dockerfile: bridge/Dockerfile
+    profiles: ["bridge"]
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      apicurio:
+        condition: service_healthy
+    command:
+      - "--broker-host=mosquitto"
+      - "--bootstrap-servers=kafka:9092"
+      - "--registry-url=http://apicurio:8080"
+    networks: [tfm-net]
+
+  # ---------------------------------------------------------------------------
   # TimescaleDB — metricas agregadas por ventana temporal -> Grafana
   # ---------------------------------------------------------------------------
   # Se usa la variante `-oss` (edicion Apache-2) y no la imagen por defecto:
