@@ -18,7 +18,7 @@ datasources:
     url: timescaledb:5432
     user: tfm
     secureJsonData:
-      password: tfm_dev_password
+      password: $__env{TIMESCALE_PASSWORD}
     jsonData:
       # La base de datos va en jsonData desde Grafana 11: el campo `database`
       # de nivel superior se ignora en las versiones modernas y Grafana da

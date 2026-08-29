@@ -232,7 +232,7 @@ services:
     environment:
       POSTGRES_DB: tfm_metrics
       POSTGRES_USER: tfm
-      POSTGRES_PASSWORD: tfm_dev_password
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-tfm_dev_password}
     volumes:
       - timescaledb-data:/var/lib/postgresql/data
       # Los scripts de este directorio se ejecutan una unica vez, cuando el
@@ -261,7 +261,7 @@ services:
     environment:
       POSTGRES_DB: tfm_analytics
       POSTGRES_USER: tfm
-      POSTGRES_PASSWORD: tfm_dev_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tfm_dev_password}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
@@ -292,13 +292,14 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
-      # Acceso anonimo de solo lectura: para una demo o defensa, cada reinicio
+      # Acceso anonimo de solo lectura: para una demo, cada reinicio
       # del contenedor (docker compose down/up, p.ej. entre dos ejecuciones de
-      # demo.py) invalida la sesion de quien tenga el navegador abierto y
-      # obliga a reintroducir admin/admin. Sin sesion que perder, esto no
-      # ocurre. El rol Viewer no permite editar ni administrar: solo ver.
+      # demo.py) invalida la sesion del navegador abierto y
+      # obliga a reintroducir admin/admin.
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tfm_dev_password}
+      TIMESCALE_PASSWORD: ${TIMESCALE_PASSWORD:-tfm_dev_password}
     volumes:
       - grafana-data:/var/lib/grafana
       # Aprovisionamiento declarativo: la fuente de datos se define en un

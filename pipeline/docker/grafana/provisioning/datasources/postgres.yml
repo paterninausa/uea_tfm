@@ -18,7 +18,7 @@ datasources:
     url: postgres:5432
     user: tfm
     secureJsonData:
-      password: tfm_dev_password
+      password: $__env{POSTGRES_PASSWORD}
     jsonData:
       database: tfm_analytics
       sslmode: disable
