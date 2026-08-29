@@ -40,7 +40,7 @@ El simulador (\texttt{mqtt\_simulator.py}) publica telemetría hacia Eclipse Mos
 
 La naturaleza de Kafka es de un log persistente de bytes crudos, ajeno a la estructura interna de los mensajes almacenados y distribuidos. Es por ello que el bridge, en la escritura, y Spark Structured Streaming, en la lectura, son quienes dialogan directamente con Apicurio para serializar y deserializar los bytes almacenados y distribuidos por Kafka.
 
-Spark Structured Streaming consume y deserializa cada mensaje mediante dos consultas independientes sobre el mismo flujo de Kafka; en una de ellas enriquece los mensajes y agrega métricas por ventana temporal hacia TimescaleDB para el consumo operacional en Grafana, y en la otra consulta guarda los mensajes hacia PostgreSQL para el consumo analítico con Power BI. Al tratarse de consultas independientes, cada una mantiene su propio \textit{checkpoint} y su propia tolerancia a fallos, de modo que la caída de una consulta no interrumpe a la otra (sección~\ref{sec:validacion-procesamiento}).
+Spark Structured Streaming consume cada mensaje mediante dos consultas independientes sobre el mismo flujo de Kafka; en una de ellas enriquece los mensajes y agrega métricas por ventana temporal hacia TimescaleDB para el consumo operacional en Grafana, y en la otra consulta guarda los mensajes hacia PostgreSQL para el consumo analítico con Power BI. Al tratarse de consultas independientes, cada una mantiene su propio \textit{checkpoint} y su propia tolerancia a fallos, de modo que la caída de una consulta no interrumpe a la otra (sección~\ref{sec:validacion-procesamiento}).
 
 \subsection{Fuente de datos y variables utilizadas}
 \label{sec:fuente-datos}
@@ -105,8 +105,6 @@ A continuación se documentan tres casos en los que se evaluaron herramientas us
 
 \subsection{Estructura del repositorio}
 
-El código fuente completo del proyecto se organiza como sigue:
-
 {\footnotesize
 \begin{verbatim}
 tfm_boris_paternina/
@@ -114,10 +112,11 @@ tfm_boris_paternina/
 |-- requirements.txt            # Dependencias Python del pipeline completo
 |-- .sdkmanrc                   # Versión de Java fijada (21 Temurin) para PySpark
 |-- pipeline/
-|   |-- docker-compose.yml      # Orquesta Mosquitto, Kafka, Apicurio, TimescaleDB,
-|   |                           #   PostgreSQL y Grafana
+|   |-- docker-compose.yml      # Orquesta Mosquitto, Bridge, Apicurio, Kafka, 
+|   |                           #   TimescaleDB, PostgreSQL y Grafana
 |   |-- bridge/
 |   |   |-- mqtt_kafka_bridge.py    # Microservicio bridge MQTT -> Kafka (Objetivo 1)
+|   |   |-- Dockerfile              # Imagen del microservicio bridge
 |   |-- simulator/
 |   |   |-- mqtt_simulator.py       # Simulador del parque de medidores
 |   |   |-- telemetry_dataset.py    # Carga y reparto del dataset para el simulador

@@ -1,18 +1,13 @@
-# Stack de ingesta del pipeline IoT (TFM) — Fase 1
-#
-#   Simulador (host, venv) --MQTT--> Mosquitto --> bridge --Avro--> Kafka
-#                                                     |
-#                                                     +--> Apicurio (esquemas)
-#
-# Alcance de este fichero: capa de ingesta y gobernanza de esquemas. Las bases
-# de datos (TimescaleDB / PostgreSQL) y Grafana se anaden en una fase posterior.
 #
 # Spark Structured Streaming NO se containeriza: se ejecuta desde el venv del
 # host contra el listener EXTERNAL de Kafka (localhost:29092). Por eso Kafka
 # publica dos listeners — ver la nota en el servicio `kafka`.
 #
 # Uso:
-#   docker compose -f pipeline/docker-compose.yml up -d
+#   docker compose -f pipeline/docker-compose.yml up -d         # stack base
+#   python pipeline/schemas/register_schema.py                  # obligatorio antes de arrancar el bridge
+#   docker compose -f pipeline/docker-compose.yml --profile bridge up -d bridge
+#
 #   docker compose -f pipeline/docker-compose.yml ps
 #   docker compose -f pipeline/docker-compose.yml down          # conserva datos
 #   docker compose -f pipeline/docker-compose.yml down -v       # borra volumenes
@@ -22,7 +17,7 @@ name: tfm-iot
 services:
 
   # ---------------------------------------------------------------------------
-  # Broker MQTT — punto de entrada de la telemetria de los sensores simulados
+  # Broker MQTT — punto de entrada de la telemetria de los medidores simulados
   # ---------------------------------------------------------------------------
   mosquitto:
     image: eclipse-mosquitto:2.0.22
@@ -78,9 +73,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
 
-      # --- Retencion ---
-      # 7 dias. Es lo que sostiene el reprocesamiento de la arquitectura Kappa
-      # y la recuperacion sin perdida de datos del Objetivo 5.
+      # --- Retencion 7 dias ---
       KAFKA_LOG_RETENTION_HOURS: 168
       KAFKA_NUM_PARTITIONS: 3
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
@@ -155,8 +148,7 @@ services:
       QUARKUS_HTTP_CORS_ENABLED: "true"
       QUARKUS_HTTP_CORS_ORIGINS: "*"
     healthcheck:
-      # Se comprobo que esta imagen NO expone los endpoints de health de
-      # Quarkus (/q/health/ready, /health/ready -> 404). Se usa en su lugar una
+      # Se usa en su lugar una
       # llamada real a la API: listar grupos obliga a atravesar la capa de
       # almacenamiento kafkasql, asi que un 200 aqui prueba que el registro
       # esta realmente operativo y no solo que el puerto responde.
@@ -201,8 +193,7 @@ services:
   # Sin container_name fijo, a diferencia del resto de servicios: es
   # deliberado, para no impedir levantar una segunda instancia mas adelante
   # (Docker exige nombres de contenedor unicos). Preparado para escalar
-  # horizontalmente via --shared-group (suscripcion compartida de MQTT), pero
-  # esta imagen por si sola no lo demuestra con varias instancias a la vez.
+  # horizontalmente via --shared-group (suscripcion compartida de MQTT).
   bridge:
     build:
       context: .
