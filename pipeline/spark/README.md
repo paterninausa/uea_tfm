@@ -314,7 +314,7 @@ no puede delatar lo que no pasa. Para eso hay que comprobar invariantes.
 
 | Invariante | Que caza |
 |---|---|
-| `rows_dropped_by_watermark > 0` | Spark esta tirando eventos por tardios. Ocurre al reproducir el dataset dos veces con `--rebase-end now`: el watermark es monotono, ya esta en "ahora", y lo que llega despues cubre horas anteriores |
+| `rows_dropped_by_watermark > 0` | Spark esta tirando eventos por tardios. Ocurre al reproducir el dataset dos veces sin limpiar el checkpoint: el watermark es monotono, ya esta avanzado, y lo que llega despues cubre horas anteriores |
 | `offsets_behind` crece con cero filas de entrada | La consulta no consume mientras Kafka acumula. Se exige que persista tres volcados seguidos para no avisar por un pico de carga |
 
 Las dos salen del informe de progreso que Spark ya produce
@@ -322,9 +322,9 @@ Las dos salen del informe de progreso que Spark ya produce
 `sources[].metrics.maxOffsetsBehindLatest`—, asi que no cuestan una consulta
 extra a nadie, y quedan ademas en `streaming_progress` para revisarlas despues.
 
-Comprobado provocando el fallo a proposito: dos reproducciones seguidas con
-`--rebase-end now` dejaron 1.614 eventos descartados, y el log lo dijo mientras
-ocurria. Antes, el unico sintoma era que `telemetry_metrics` aparecia vacia.
+Comprobado provocando el fallo a proposito: dos reproducciones seguidas sin
+limpiar el checkpoint dejaron 1.614 eventos descartados, y el log lo dijo
+mientras ocurria. Antes, el unico sintoma era que `telemetry_metrics` aparecia vacia.
 
 ## Uso
 

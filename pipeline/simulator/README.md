@@ -59,8 +59,10 @@ python pipeline/simulator/mqtt_simulator.py --speedup 2000
 | `--max-sensors` | Publica solo los primeros N sensores (Objetivo 5) |
 | `--limite` | Techo de eventos publicados (prefijo, para la escalera de carga) |
 | `--ultimas-semanas` | Publica la cola de N semanas (demostracion en vivo) |
-| `--traer-a` | Reancla las marcas al presente. SOLO medicion (load_ladder); la reubicacion del camino de datos la hace `prepare_ashrae.py --fecha-final` |
 | `--max-lag` | Retraso tolerado antes de invalidar la ejecucion |
+
+Las marcas de tiempo se publican tal cual vienen del Parquet: la reubicacion al
+presente la hace `prepare_ashrae.py --fecha-final`, de una vez y fijada en disco.
 
 Son tres grupos —seleccion de datos, ritmo y conexiones— y **ninguno es un
 artificio de banco de pruebas**. Lo que mide y orquesta vive en `tools/`.
@@ -176,7 +178,7 @@ La frontera con `pipeline/simulator/telemetry_dataset.py` es esta:
 |---|---|
 | `build_topic()`, `build_payload()` — como se serializa un mensaje | `preparar()` — que filas se reproducen y con que marcas |
 | `repartir()` — que sensores van en cada conexion | `filtrar_sensores()` — cuales entran, en orden determinista |
-| `_programa()` — cuando publica cada sensor | `rebasar()` — a que instante se anclan las marcas |
+| `_programa()` — cuando publica cada sensor | `filtrar_ultimas_semanas()` — que ventana temporal se publica |
 | Los argumentos del broker: host, puerto, QoS | Los argumentos del dataset: fichero, limite, sensores |
 
 Dicho corto: **`telemetry_dataset` es el guion —que se dice y en que orden— y el simulador son
@@ -193,9 +195,9 @@ KPI de latencia. Lo que hace no es leer una fila, es emitirla.
 - Filtrado jerarquico por tipo de medidor: una suscripcion a
   `iot/+/chilledwater/telemetry` recibe solo las lecturas de agua fria.
 - Escalera de sensores anidada: 100 ⊂ 250 ⊂ 500 ⊂ 652.
-- `--traer-a now` desplaza el rango completo conservando las distancias
-  relativas entre eventos (herramienta de medicion de load_ladder; la demo usa
-  `--ultimas-semanas` sobre el Parquet ya reubicado por `--fecha-final`).
+- La cola de N semanas (`--ultimas-semanas`) sobre el Parquet ya reubicado al
+  presente por `prepare_ashrae.py --fecha-final` termina en fecha reciente, sin
+  ningun desplazamiento en tiempo de ejecucion.
 - **646 conexiones MQTT simultaneas** publicando 20.000 eventos con 0 fallos y 0
   conexiones caidas, a 357,7 ev/s efectivos frente a los 358,9 teoricos de
   `--speedup 2000`, con un retraso maximo sobre la agenda de 0,47 s (18 de agosto

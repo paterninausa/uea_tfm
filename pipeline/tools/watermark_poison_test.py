@@ -244,10 +244,11 @@ def run(args: argparse.Namespace) -> int:
     logger.info("Se envenenara con el edificio %s, que SI esta en la dimension", building_id)
 
     logger.info("Lanzando el simulador con speedup x%g en segundo plano...", args.speedup)
-    # SIN --rebase-end, por el mismo motivo que en failover_test.py: desplazar
-    # las marcas al presente deja el watermark clavado en "ahora" y la
-    # agregacion no escribe nada, con lo que la prueba no podria distinguir
-    # "envenenado" de "nunca escribio".
+    # Las marcas se publican tal cual vienen del Parquet (ya datadas en el
+    # presente por prepare_ashrae.py --fecha-final). Como en failover_test.py, la
+    # prueba parte de estado limpio: un watermark ya avanzado en el checkpoint
+    # dejaria la agregacion sin escribir y no podria distinguirse "envenenado" de
+    # "nunca escribio".
     simulador = subprocess.Popen(
         [sys.executable, str(SIMULADOR), "--acelerar", str(args.speedup),
          "--limite", str(args.limit)],
@@ -270,7 +271,7 @@ def run(args: argparse.Namespace) -> int:
                          "inyectar nada. La prueba no podria distinguir el envenenamiento "
                          "de una agregacion que nunca arranco. Causas habituales: el "
                          "checkpoint conserva un watermark ya envenenado de una pasada "
-                         "anterior (reset_state.py --yes), o se uso --rebase-end")
+                         "anterior (reset_state.py --yes)")
             return 1
 
         antes_metrics = contar(props_metrics, "telemetry_metrics")

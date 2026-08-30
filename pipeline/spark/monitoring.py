@@ -74,7 +74,7 @@ def _descartados_por_watermark(progreso: dict) -> int | None:
 
     Spark lo sabe y no se lo cuenta a nadie: no hay excepcion ni aviso, solo
     agregados que no aparecen. Es como se paso por alto que reproducir el
-    dataset dos veces con --rebase-end now dejaba `telemetry_metrics` a cero.
+    dataset dos veces sin limpiar el checkpoint dejaba `telemetry_metrics` a cero.
     """
     operadores = progreso.get("stateOperators") or []
     valores = [o.get("numRowsDroppedByWatermark") for o in operadores]
@@ -294,7 +294,7 @@ class RegistroProgreso:
                 logger.warning(
                     "[%s] SPARK ESTA DESCARTANDO EVENTOS POR TARDIOS: %d en este lote. "
                     "El watermark ya paso su tiempo de evento; si se reprodujo el dataset "
-                    "otra vez con --rebase-end, los agregados de esas ventanas no se "
+                    "otra vez sin limpiar el checkpoint, los agregados de esas ventanas no se "
                     "escribiran", nombre, descartados)
                 self._descartados_avisados[nombre] = descartados
 

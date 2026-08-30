@@ -82,13 +82,24 @@ def mensajes_en_kafka(topico: str) -> int:
     return sum(int(l.rsplit(":", 1)[1]) for l in r.stdout.splitlines() if ":" in l)
 
 
-def contar(props: dict, tabla: str) -> int:
+def contar_desde(props: dict, marca) -> int:
+    """Filas de telemetry_events TOCADAS (escritas o reescritas) desde `marca`.
+
+    No vale el `count(*)` de toda la tabla. Las marcas de tiempo vienen ya fijas
+    del Parquet (reubicadas de una vez por prepare_ashrae.py --fecha-final), asi
+    que un peldano que republica eventos ya presentes —el base repetido en
+    caliente, o el solape entre subconjuntos de sensores anidados— hace UPSERT
+    idempotente y el total de la tabla NO crece. El UPSERT si refresca
+    `ingested_at`, de modo que filtrando por `ingested_at >= marca` se cuentan
+    igual las filas reescritas y cada peldano queda aislado del anterior, sin
+    depender de que las marcas de tiempo sean distintas en cada ejecucion.
+    """
     import psycopg2
 
     conn = psycopg2.connect(**props)
     try:
         with conn.cursor() as cur:
-            cur.execute(f"SELECT count(*) FROM {tabla}")
+            cur.execute("SELECT count(*) FROM telemetry_events WHERE ingested_at >= %s", (marca,))
             return cur.fetchone()[0]
     finally:
         conn.close()
@@ -189,17 +200,22 @@ def micro_lote_p95(props_ts: dict, desde) -> float | None:
         conn.close()
 
 
-def esperar_drenaje(props_pg: dict, quietud: float, timeout: float, parada) -> int:
-    """Espera a que las filas en PostgreSQL dejen de crecer.
+def esperar_drenaje(props_pg: dict, marca, quietud: float, timeout: float, parada) -> int:
+    """Espera a que dejen de llegar filas del peldano y devuelve cuantas hubo.
 
     Sin esto, el recuento de un peldano se solaparia con el siguiente: cuando el
     simulador termina, al pipeline todavia le quedan mensajes en vuelo, y
     atribuirlos al peldano equivocado deforma justo la comparacion que se busca.
+
+    Vigila las filas TOCADAS desde `marca` (ver `contar_desde`), no el total de la
+    tabla: con las marcas ya fijas en el Parquet, un peldano que republica eventos
+    presentes no hace crecer `count(*)`, y vigilar el total daria el peldano por
+    drenado nada mas empezar.
     """
     limite = time.monotonic() + timeout
     ultimo, estable_desde = -1, None
     while time.monotonic() < limite and not parada.is_set():
-        actual = contar(props_pg, "telemetry_events")
+        actual = contar_desde(props_pg, marca)
         if actual == ultimo:
             if estable_desde is None:
                 estable_desde = time.monotonic()
@@ -208,7 +224,7 @@ def esperar_drenaje(props_pg: dict, quietud: float, timeout: float, parada) -> i
         else:
             ultimo, estable_desde = actual, None
         time.sleep(2)
-    return contar(props_pg, "telemetry_events")
+    return contar_desde(props_pg, marca)
 
 
 def ejecutar_peldano(args, sensores: int, speedup: float, etiqueta: str, parada) -> dict:
@@ -216,7 +232,9 @@ def ejecutar_peldano(args, sensores: int, speedup: float, etiqueta: str, parada)
     props_ts = props_bd(args, TIMESCALE)
 
     kafka_antes = mensajes_en_kafka(args.topic)
-    filas_antes = contar(props_pg, "telemetry_events")
+    # marca_pg/marca_ts se capturan ANTES de publicar: aislan lo que este peldano
+    # escribe (ingested_at >= marca) de lo que ya habia, sin depender de marcas
+    # de tiempo nuevas por peldano.
     marca_pg = marca_bd(props_pg)
     marca_ts = marca_bd(props_ts)
     tasa_teorica = sensores * speedup / 3600.0
@@ -228,17 +246,15 @@ def ejecutar_peldano(args, sensores: int, speedup: float, etiqueta: str, parada)
     orden = [sys.executable, str(SIMULADOR),
              "--acelerar", str(speedup),
              "--max-sensors", str(sensores),
-             "--limite", str(args.events_per_step),
-             "--traer-a", "now"]
+             "--limite", str(args.events_per_step)]
     completado = subprocess.run(orden)
     duracion_productor = time.monotonic() - t0
 
-    filas_despues = esperar_drenaje(props_pg, args.quietud, args.timeout, parada)
+    persistidos = esperar_drenaje(props_pg, marca_pg, args.quietud, args.timeout, parada)
     kafka_despues = mensajes_en_kafka(args.topic)
     dlq = mensajes_en_kafka(args.dlq_topic)
 
     entregados = kafka_despues - kafka_antes
-    persistidos = filas_despues - filas_antes
     resultado = {
         "etiqueta": etiqueta,
         "sensores": sensores,

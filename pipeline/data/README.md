@@ -91,8 +91,8 @@ Los datos de ASHRAE son de **2016**. `--fecha-final AAAA-MM-DD` desplaza toda la
 serie con un unico offset constante para que la **ultima lectura caiga en esa
 fecha**, dejando el Parquet datado en el presente. Asi no hay disparidad entre lo
 que dice esta tabla y lo que muestran Grafana y Power BI, y no queda ningun
-desplazamiento en tiempo de ejecucion que explicar (antes lo hacia `--traer-a now`
-en el simulador; ahora eso solo lo usa `load_ladder` como herramienta de medicion).
+desplazamiento en tiempo de ejecucion que explicar (antes lo hacia el simulador
+al vuelo; ahora las marcas quedan fijas en disco).
 
 Por ser un offset constante conserva **la cadencia horaria exacta** (mediana y p95
 del intervalo siguen siendo 3.600 s) y los ciclos diario y estacional, y la clave

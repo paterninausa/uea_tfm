@@ -11,10 +11,14 @@ aqui no hay una sola linea de protocolo, y alli no hay ninguna decision sobre lo
 datos.
 
 Vive en un fichero aparte del simulador porque el orden en que se aplican el
-filtrado, el recorte y el rebase temporal es una decision con consecuencias
+filtrado de sensores y el recorte de ventana es una decision con consecuencias
 medidas, y merece un sitio donde este documentada y no mezclada con el codigo de
 publicacion. Estuvo en `common/replay.py` mientras habia dos productores; al
 quedar uno solo, se movio aqui.
+
+Las marcas de tiempo NO se tocan aqui: vienen ya datadas en el presente desde
+`prepare_ashrae.py --fecha-final`. No hay ningun desplazamiento en tiempo de
+ejecucion.
 
 UN SENSOR ES EL PAR (edificio, tipo de medidor). Un mismo edificio con medidor
 de electricidad y de agua fria son dos sensores con series independientes; el
@@ -23,7 +27,6 @@ subconjunto en uso tiene 652.
 
 import argparse
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -89,8 +92,8 @@ def filtrar_ultimas_semanas(df: pd.DataFrame, semanas: int) -> pd.DataFrame:
     `prepare_ashrae.py --fecha-final`, la ultima marca cae en fecha reciente, asi
     que la cola de N semanas termina en el presente y los paneles de Grafana
     configurados a "ultimas N semanas" se llenan de izquierda a derecha segun
-    avanza el replay. Sustituye al viejo `--limite` (que tomaba el PREFIJO —las
-    primeras N semanas de 2016— y dependia de `--traer-a now` para reanclarlo).
+    avanza el replay. Es la alternativa a `--limite`, que toma el PREFIJO (el
+    principio del historico) en vez de la cola.
     """
     corte = df["timestamp"].max() - pd.Timedelta(weeks=semanas)
     recorte = df[df["timestamp"] >= corte].reset_index(drop=True)
@@ -100,45 +103,9 @@ def filtrar_ultimas_semanas(df: pd.DataFrame, semanas: int) -> pd.DataFrame:
     return recorte
 
 
-def rebasar(df: pd.DataFrame, destino: str) -> pd.DataFrame:
-    """Desplaza las marcas de tiempo para que la ULTIMA caiga en `destino`.
-
-    HERRAMIENTA DE MEDICION, NO DEL CAMINO DE DATOS. La reubicacion al presente
-    del Parquet que ven Grafana y Power BI la hace ahora `prepare_ashrae.py
-    --fecha-final`, de una vez y fijada en disco. Aqui se conserva por un motivo
-    distinto: `load_ladder.py` lo usa para que cada peldano reciba marcas nuevas
-    —y por tanto claves naturales nuevas— de forma que el recuento de filas
-    persistidas por peldano y la deteccion de drenaje por `count(*)` funcionen.
-    Sin ese reanclaje, un peldano que republica los mismos eventos (el base
-    repetido en caliente, o el solape entre 100/250/500 sensores) haria UPSERT
-    idempotente, `count(*)` no creceria y la herramienta reportaria una perdida
-    falsa. La demo NO debe usarlo: para acotar su ventana esta `--ultimas-semanas`.
-
-    Se aplica un unico offset constante a todo el conjunto, de modo que las
-    distancias relativas entre eventos —y por tanto los ciclos diario y
-    estacional— se conservan intactas.
-
-    Se ancla la ULTIMA marca y no la primera para que todo el historico quede en
-    el pasado respecto al instante indicado. Anclando la primera, el replay
-    acelerado generaria marcas en el futuro, y un evento con fecha futura envenena
-    el watermark de Spark: adelanta el reloj de evento y hace que los eventos
-    ordenados posteriores se descarten en silencio por tardios.
-    """
-    instante = datetime.now(timezone.utc) if destino == "now" else datetime.fromisoformat(destino)
-    if instante.tzinfo is None:
-        instante = instante.replace(tzinfo=timezone.utc)
-
-    offset = pd.Timestamp(instante).tz_localize(None) - df["timestamp"].max()
-    df = df.copy()
-    df["timestamp"] = df["timestamp"] + offset
-    logger.info("Marcas desplazadas %+.1f dias: el rango pasa a ser %s -> %s",
-                offset.total_seconds() / 86400, df["timestamp"].min(), df["timestamp"].max())
-    return df
-
-
 def preparar(telemetry_path: Path | None = None, max_sensores: int | None = None,
              limite: int | None = None, ultimas_semanas: int | None = None,
-             rebase_end: str | None = None, df: pd.DataFrame | None = None) -> pd.DataFrame:
+             df: pd.DataFrame | None = None) -> pd.DataFrame:
     """Aplica los pasos EN EL ORDEN QUE IMPORTA y devuelve lo publicable.
 
     El orden no es arbitrario y por eso esta encapsulado aqui en vez de repetido
@@ -155,8 +122,10 @@ def preparar(telemetry_path: Path | None = None, max_sensores: int | None = None
            terminar en el presente (el Parquet ya viene reubicado a fecha reciente).
          - `limite`: el PREFIJO de N eventos -> la escalera de carga, que solo
            necesita publicar un numero fijo por peldano.
-    4. Rebasar al final, sobre lo que realmente se va a publicar. SOLO lo usa la
-       escalera de carga (ver `rebasar`); la demo no lo toca.
+
+    Las marcas de tiempo se publican TAL CUAL vienen del Parquet: la reubicacion
+    al presente la hace `prepare_ashrae.py --fecha-final`, de una vez y fijada en
+    disco. No hay desplazamiento en tiempo de ejecucion.
 
     Se admite un DataFrame ya cargado (`df`) para la escalera de carga: son
     5,68 millones de filas y releer el Parquet en cada peldano anadiria a la
@@ -170,8 +139,6 @@ def preparar(telemetry_path: Path | None = None, max_sensores: int | None = None
         df = filtrar_ultimas_semanas(df, ultimas_semanas)
     if limite:
         df = df.head(limite)
-    if rebase_end:
-        df = rebasar(df, rebase_end)
     return df
 
 
@@ -189,8 +156,3 @@ def anadir_argumentos_dataset(p: argparse.ArgumentParser) -> None:
     p.add_argument("--max-sensors", type=int, default=None,
                    help="Publica solo los primeros N sensores, en orden determinista. "
                         "Para la escalera de carga del Objetivo 5: 100, 250, 500, 652")
-    p.add_argument("--traer-a", dest="rebase_end", metavar="ISO|now", default=None,
-                   help="HERRAMIENTA DE MEDICION (load_ladder), no para la demo. Desplaza las "
-                        "marcas para que la ultima caiga en este instante, dando a cada peldano "
-                        "claves naturales nuevas. La reubicacion del camino de datos la hace "
-                        "prepare_ashrae.py --fecha-final")

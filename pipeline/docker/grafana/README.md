@@ -93,21 +93,24 @@ Sin agregacion temporal, una consulta al ano completo devuelve 1,7 millones de
 puntos: no mata a la base —tarda 824 ms— pero si al navegador. Por eso la regla
 es que ningun panel devuelva series sin agrupar.
 
-## Las fechas: `--rebase-end`
+## Las fechas: `--fecha-final`
 
 Los datos son de 2016, asi que los paneles con rangos relativos saldrian vacios.
-El simulador desplaza las marcas con un offset constante:
+La serie se reubica al presente **de una vez, al preparar los datos**, no en
+tiempo de ejecucion:
 
 ```bash
-python pipeline/simulator/mqtt_simulator.py --rebase-end now --speedup 2000 --limit 60000
+python pipeline/data/prepare_ashrae.py --train ./raw/train.parquet --metadata ./raw/building_metadata.parquet --fecha-final 2026-08-30
 ```
 
-El desplazamiento se aplica **despues** del recorte por `--limit`, de modo que
-lo que realmente se publica termina en el instante indicado. Al ser un offset
-constante, los ciclos diario y estacional se conservan intactos.
+Desplaza todas las marcas con un offset constante para que la ultima lectura
+caiga en la fecha dada, dejando el Parquet datado en el presente. Al ser un
+offset constante, la cadencia horaria y los ciclos diario y estacional se
+conservan intactos. `setup.sh` pasa la fecha del dia automaticamente; para la
+demo en vivo, `demo.py` reproduce la cola de N semanas con `--ultimas-semanas`.
 
-Sin `--rebase-end` hay que fijar a mano el rango temporal de los dashboards a
-2016.
+Sin `--fecha-final` los datos quedan en 2016 y hay que fijar a mano el rango
+temporal de los dashboards.
 
 ## Estado verificado
 

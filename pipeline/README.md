@@ -172,7 +172,7 @@ python pipeline/tools/reset_state.py --yes
 ```
 
 ```bash
-python pipeline/simulator/mqtt_simulator.py --speedup 2000 --limit 50000 --rebase-end now
+python pipeline/simulator/mqtt_simulator.py --acelerar 2000 --limite 50000
 ```
 
 ```bash

@@ -306,8 +306,7 @@ async def simular(args, df) -> Contadores:
 
 
 def run(args: argparse.Namespace) -> int:
-    df = preparar(args.telemetry, args.max_sensors, args.limit,
-                  args.ultimas_semanas, args.rebase_end)
+    df = preparar(args.telemetry, args.max_sensors, args.limit, args.ultimas_semanas)
     contadores = asyncio.run(simular(args, df))
 
     r = contadores.resumen()

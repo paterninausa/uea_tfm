@@ -10,8 +10,8 @@ Los datos son las medidas reales de ASHRAE, REUBICADAS AL PRESENTE de una vez po
 `prepare_ashrae.py --fecha-final`: el Parquet ya viene datado en fechas recientes,
 asi que aqui basta con reproducir su COLA de `--semanas` semanas
 (`--ultimas-semanas`), que termina en el presente y se rellena de izquierda a
-derecha segun avanza el replay. Ya no hay ningun desplazamiento en tiempo de
-ejecucion (`--traer-a` quedo como herramienta exclusiva de load_ladder). En un
+derecha segun avanza el replay. No hay ningun desplazamiento temporal en tiempo
+de ejecucion. En un
 despliegue real esto no haria falta —los medidores reportan en directo y el
 historico se acumula solo—; aqui se comprime el tiempo porque no se dispone de
 meses de operacion.

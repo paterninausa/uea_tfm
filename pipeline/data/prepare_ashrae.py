@@ -110,11 +110,11 @@ def desplazar_a_fecha_final(tel: pd.DataFrame, fecha_final: str) -> pd.DataFrame
     cualquier ejecucion en vivo, ningun evento cae en el futuro y no se envenena el
     watermark de Spark; por eso conviene usar la fecha de hoy o anterior.
 
-    Sustituye al viejo `--traer-a now` del simulador EN EL CAMINO DE DATOS: al
-    quedar las marcas fijas en el Parquet, el mismo evento reprocesado desde Kafka
-    conserva su clave natural entre ejecuciones y la idempotencia del log se
-    sostiene, cosa que el rebase en tiempo de ejecucion rompia al reanclar a un
-    "ahora" distinto cada vez.
+    Sustituye al desplazamiento EN TIEMPO DE EJECUCION que antes hacia el
+    simulador: al quedar las marcas fijas en el Parquet, el mismo evento
+    reprocesado desde Kafka conserva su clave natural entre ejecuciones y la
+    idempotencia del log se sostiene, cosa que reanclar a un "ahora" distinto en
+    cada ejecucion rompia.
     """
     destino = pd.Timestamp(datetime.fromisoformat(fecha_final))
     offset = destino - tel["timestamp"].max()

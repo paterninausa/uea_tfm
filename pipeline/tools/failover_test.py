@@ -161,13 +161,13 @@ def run(args: argparse.Namespace) -> int:
 
     logger.info("Lanzando el simulador con speedup x%g en segundo plano...", args.speedup)
     simulador = subprocess.Popen(
-        # SIN --rebase-end a proposito. Desplazar las marcas al presente en cada
-        # ejecucion deja el watermark de Spark clavado en "ahora", y entonces
-        # todo lo que se publique despues —que cubre las horas ANTERIORES a ese
-        # instante— llega tarde y la agregacion por ventana lo descarta en
-        # silencio. Con eso, la consulta de metricas no escribe nada y una
-        # prueba de fallo sobre TimescaleDB no demuestra nada: la consulta
-        # "sobrevive" porque no llego a tocar la base.
+        # Las marcas se publican TAL CUAL vienen del Parquet (ya datadas en el
+        # presente por prepare_ashrae.py --fecha-final); no se desplazan en
+        # ejecucion. La prueba debe arrancar de estado limpio: el watermark de
+        # Spark es monotono, y un checkpoint ya avanzado de una pasada anterior
+        # descartaria por tardio lo que aqui se publique, con lo que la consulta
+        # de metricas "sobreviviria" sin llegar a tocar la base y la prueba de
+        # fallo sobre TimescaleDB no demostraria nada.
         [sys.executable, str(SIMULADOR), "--acelerar", str(args.speedup),
          "--limite", str(args.limit)],
     )
