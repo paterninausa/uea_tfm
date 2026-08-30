@@ -37,17 +37,9 @@ forma determinista dentro de cada intervalo, lo que equivale a suponer que sus
 relojes no estan sincronizados al milisegundo: mas realista que la rafaga
 perfecta, y sin perdida artificial.
 
-NO HAY OPCIONES DE BANCO DE PRUEBAS AQUI. Existio un `load_generator.py` aparte
-que alcanzaba tasas altas con una VENTANA DE MENSAJES EN VUELO: publicaba N
-mensajes sin esperar confirmacion desde un solo cliente. Se retiro en agosto de
-2026 y no debe volver. El motivo: esa ventana era un artificio para que UN
-cliente hiciera el trabajo de 652, y `--clients` consigue lo mismo sin inventar
-nada, porque 652 conexiones con un mensaje en vuelo cada una dan 652 mensajes en
-vuelo por la via realista. Todo lo que mide y orquesta vive en `tools/`.
 
 Uso:
     python mqtt_simulator.py --acelerar 2000
-    python mqtt_simulator.py --acelerar 2000 --max-sensors 100      # peldano del Objetivo 5
     python mqtt_simulator.py --acelerar 500 --ultimas-semanas 6     # demostracion en vivo
     python mqtt_simulator.py --acelerar 2000 --clients 1            # una sola conexion
 """
@@ -197,13 +189,7 @@ async def cliente_mqtt(indice: int, trabajo: list, args, contadores: Contadores,
 
     RECONECTA Y REINTIENTA LO NO CONFIRMADO, que es lo que hace un medidor real:
     los medidores inteligentes guardan el perfil de carga y lo vuelcan cuando
-    recuperan el enlace. Sin esto, el comportamiento medido al tumbar el broker
-    era el peor posible: `aiomqtt` no reconecta por su cuenta, asi que cada
-    `publish` lanzaba MqttError, se contaba como fallo y se pasaba al evento
-    siguiente. El simulador quemaba su agenda entera a velocidad de CPU —12.814
-    publicados frente a 35.597 fallidos en 40 s— sin volver a publicar nada y sin
-    recuperarse aunque el broker volviera.
-
+    recuperan el enlace.
     El evento que no llega a confirmarse se guarda en `pendiente` y es el primero
     que sale tras reconectar. Su `sim_publish_ts` se sella entonces, no antes:
     la marca dice cuando se EMITIO de verdad, que es lo que mide el KPI.
@@ -306,7 +292,7 @@ async def simular(args, df) -> Contadores:
 
 
 def run(args: argparse.Namespace) -> int:
-    df = preparar(args.telemetry, args.max_sensors, args.limit, args.ultimas_semanas)
+    df = preparar(args.telemetry, args.limit, args.ultimas_semanas)
     contadores = asyncio.run(simular(args, df))
 
     r = contadores.resumen()

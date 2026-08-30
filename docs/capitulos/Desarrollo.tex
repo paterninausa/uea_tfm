@@ -153,15 +153,8 @@ Para la preparación de los datos usados en este proyecto, el script \texttt{pre
     \item \textbf{Decodificación del tipo de medidor}: traduce el código numérico original (\texttt{0}, \texttt{1} y \texttt{3}) a su nombre (\texttt{electricity}, \texttt{chilledwater}, \texttt{hotwater}) usando la correspondencia declarada en la documentación de la competición.
     \item \textbf{Separación en tres tablas}: divide el resultado en la tabla de hechos, la tabla de dimensión y hace el cálculo de la tabla de cuartiles por sensor descritas en la sección~\ref{sec:fuente-datos} (Tablas~\ref{tab:variables-hechos}, \ref{tab:variables-dimension} y \ref{tab:variables-baseline}), cada una almacenada en un fichero Parquet independiente.
     \item \textbf{Verificación de la clave natural}: comprueba, en cada ejecución, que \texttt{(building\_id, meter\_type, timestamp)} identifica de forma única cada fila de la tabla de hechos; esta unicidad es la que garantiza la idempotencia del reprocesamiento de la arquitectura Kappa.
+    \item \textbf{Reubicación temporal}: desplaza todos los timestamps del dataset original usando un único offset (\texttt{-{}-fecha-final AAAA-MM-DD}) en el script Python, para que la última lectura caiga en la fecha indicada simplificando el análisis de los datos. Al ser un offset constante se conserva la cadencia y los ciclos diarios y estacionales del dataset original, y se exige una fecha presente o anterior para que ningún evento quede situado en el futuro.
 \end{itemize}
-
-Una decisión de diseño relevante en el script es que \texttt{building\_id} se trata como texto en el pipeline, pese a ser en el dateset de origen un identificador numérico:
-
-\begin{verbatim}
-telemetria["building_id"] = telemetria["building_id"].astype(str)
-\end{verbatim}
-
-Esta misma decisión se refuerza aguas abajo en el simulador de telemetría: el payload que emite cada medidor por MQTT se publica como JSON en texto plano.
 
 \subsection{Simulador de telemetría}
 
@@ -180,7 +173,7 @@ El script \texttt{mqtt\_simulator.py} ocupa el lugar de los 652 medidores reales
   \label{tab:acelerar-simulador}
 \end{table}
 
-La decisión de diseño más relevante es publicar cada evento con un formato JSON en texto plano. El protocolo MQTT lo permite, ya que es agnóstico al formato del payload: no impone ninguna estructura ni codificación, y transporta indistintamente JSON, texto plano o binario.
+Una decisión de diseño relevante es publicar cada evento con un formato JSON en texto plano. El protocolo MQTT lo permite, ya que es agnóstico al formato del payload: no impone ninguna estructura ni codificación, y transporta indistintamente JSON, texto plano o binario.
 
 {\footnotesize
 \begin{verbatim}

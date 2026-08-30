@@ -11,7 +11,7 @@ aqui no hay una sola linea de protocolo, y alli no hay ninguna decision sobre lo
 datos.
 
 Vive en un fichero aparte del simulador porque el orden en que se aplican el
-filtrado de sensores y el recorte de ventana es una decision con consecuencias
+ordenado cronologico y el recorte de ventana es una decision con consecuencias
 medidas, y merece un sitio donde este documentada y no mezclada con el codigo de
 publicacion. Estuvo en `common/replay.py` mientras habia dos productores; al
 quedar uno solo, se movio aqui.
@@ -60,30 +60,6 @@ def cargar(telemetry_path: Path) -> pd.DataFrame:
     return df
 
 
-def filtrar_sensores(df: pd.DataFrame, max_sensores: int | None) -> pd.DataFrame:
-    """Se queda con los primeros N sensores en orden determinista.
-
-    El orden fijo importa para el Objetivo 5: hace que la seleccion de 100
-    sensores sea un SUBCONJUNTO de la de 250, esta de la de 500, y asi. La
-    degradacion de throughput se mide entonces sobre los mismos sensores mas
-    otros, y no comparando dos muestras aleatorias distintas, que no serian
-    comparables entre si.
-    """
-    if not max_sensores:
-        return df
-
-    sensores = (df[["building_id", "meter_type"]].drop_duplicates()
-                .sort_values(["building_id", "meter_type"]).reset_index(drop=True))
-    if max_sensores >= len(sensores):
-        logger.info("Se pidieron %d sensores y solo hay %d: se usan todos",
-                    max_sensores, len(sensores))
-        return df
-
-    df = df.merge(sensores.head(max_sensores), on=["building_id", "meter_type"], how="inner")
-    logger.info("Filtrado a %d sensores -> %s eventos", max_sensores, f"{len(df):,}")
-    return df
-
-
 def filtrar_ultimas_semanas(df: pd.DataFrame, semanas: int) -> pd.DataFrame:
     """Se queda con las ULTIMAS `semanas` de datos, medidas desde la marca mas
     reciente del conjunto.
@@ -103,7 +79,7 @@ def filtrar_ultimas_semanas(df: pd.DataFrame, semanas: int) -> pd.DataFrame:
     return recorte
 
 
-def preparar(telemetry_path: Path | None = None, max_sensores: int | None = None,
+def preparar(telemetry_path: Path | None = None,
              limite: int | None = None, ultimas_semanas: int | None = None,
              df: pd.DataFrame | None = None) -> pd.DataFrame:
     """Aplica los pasos EN EL ORDEN QUE IMPORTA y devuelve lo publicable.
@@ -111,29 +87,24 @@ def preparar(telemetry_path: Path | None = None, max_sensores: int | None = None
     El orden no es arbitrario y por eso esta encapsulado aqui en vez de repetido
     en cada productor:
 
-    1. Filtrar sensores antes que nada, para que el recorte posterior caiga sobre
-       el subconjunto de sensores pedido y no sobre el dataset entero.
-    2. Ordenar cronologicamente: el watermark de Spark asume que el tiempo de
+    1. Ordenar cronologicamente: el watermark de Spark asume que el tiempo de
        evento avanza, y un flujo desordenado haria que se descartaran lecturas
        como tardias.
-    3. Recortar la ventana DESPUES de ordenar. Dos selecciones, para dos usos
+    2. Recortar la ventana DESPUES de ordenar. Dos selecciones, para dos usos
        distintos y NO combinables:
          - `ultimas_semanas`: la COLA de N semanas -> la demo, cuya ventana debe
            terminar en el presente (el Parquet ya viene reubicado a fecha reciente).
-         - `limite`: el PREFIJO de N eventos -> la escalera de carga, que solo
-           necesita publicar un numero fijo por peldano.
+         - `limite`: el PREFIJO de N eventos.
 
     Las marcas de tiempo se publican TAL CUAL vienen del Parquet: la reubicacion
     al presente la hace `prepare_ashrae.py --fecha-final`, de una vez y fijada en
     disco. No hay desplazamiento en tiempo de ejecucion.
 
-    Se admite un DataFrame ya cargado (`df`) para la escalera de carga: son
-    5,68 millones de filas y releer el Parquet en cada peldano anadiria a la
-    medicion un tiempo de arranque que no tiene nada que ver con el pipeline.
+    Se admite un DataFrame ya cargado (`df`) para evitar releer 5,68 millones de
+    filas del Parquet en invocaciones repetidas.
     """
     if df is None:
         df = cargar(telemetry_path)
-    df = filtrar_sensores(df, max_sensores)
     df = df.sort_values("timestamp").reset_index(drop=True)
     if ultimas_semanas:
         df = filtrar_ultimas_semanas(df, ultimas_semanas)
@@ -147,12 +118,8 @@ def anadir_argumentos_dataset(p: argparse.ArgumentParser) -> None:
     p.add_argument("--telemetry", type=Path, default=RUTA_TELEMETRIA,
                    help="Tabla de hechos generada por prepare_ashrae.py")
     p.add_argument("--limite", dest="limit", metavar="N", type=int, default=None,
-                   help="Numero maximo de eventos a publicar (PREFIJO temporal). Para la "
-                        "escalera de carga: un numero fijo de eventos por peldano")
+                   help="Numero maximo de eventos a publicar (PREFIJO temporal)")
     p.add_argument("--ultimas-semanas", dest="ultimas_semanas", metavar="N", type=int, default=None,
                    help="Publica solo la COLA de las ultimas N semanas del historico. Para la "
                         "demo en vivo: con el Parquet ya reubicado por prepare_ashrae.py "
                         "--fecha-final, la ventana termina en el presente")
-    p.add_argument("--max-sensors", type=int, default=None,
-                   help="Publica solo los primeros N sensores, en orden determinista. "
-                        "Para la escalera de carga del Objetivo 5: 100, 250, 500, 652")
