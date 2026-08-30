@@ -231,7 +231,7 @@ services:
       - "5432:5432"
     environment:
       POSTGRES_DB: tfm_metrics
-      POSTGRES_USER: tfm
+      POSTGRES_USER: ${TIMESCALE_USER:-tfm}
       POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-tfm_dev_password}
     volumes:
       - timescaledb-data:/var/lib/postgresql/data
@@ -240,7 +240,7 @@ services:
       # volumen (docker compose down -v) para que se vuelvan a aplicar.
       - ./docker/timescaledb/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tfm -d tfm_metrics"]
+      test: ["CMD-SHELL", "pg_isready -U ${TIMESCALE_USER:-tfm} -d tfm_metrics"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -260,13 +260,13 @@ services:
       - "5433:5432"
     environment:
       POSTGRES_DB: tfm_analytics
-      POSTGRES_USER: tfm
+      POSTGRES_USER: ${POSTGRES_USER:-tfm}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tfm_dev_password}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tfm -d tfm_analytics"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tfm} -d tfm_analytics"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -298,7 +298,9 @@ services:
       # obliga a reintroducir admin/admin.
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      POSTGRES_USER: ${POSTGRES_USER:-tfm}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tfm_dev_password}
+      TIMESCALE_USER: ${TIMESCALE_USER:-tfm}
       TIMESCALE_PASSWORD: ${TIMESCALE_PASSWORD:-tfm_dev_password}
     volumes:
       - grafana-data:/var/lib/grafana

@@ -10,16 +10,10 @@ vacio.
 
 Los valores por defecto vienen de pipeline/.env (via python-dotenv), el mismo
 archivo que lee Docker Compose para las variables ${...} de docker-compose.yml
--un solo sitio donde cambiar una contraseña, no dos que puedan desincronizarse.
+-un solo sitio donde cambiar una credencial, no dos que puedan desincronizarse.
 Si no existe .env, se cae a los valores de pipeline/.env.example. Son
 credenciales de desarrollo local, no secretos: el stack no se expone fuera de
 la maquina.
-
-Las contraseñas de las dos bases son variables SEPARADAS a proposito: hasta el
-29-08-2026 compartian un unico --db-password, y eso hacia que cambiar la
-credencial de una base (p.ej. Postgres, para Power BI) rompiera en silencio la
-conexion de las herramientas a la otra (TimescaleDB, para Grafana) si no se
-recordaba pasar el valor explicito en cada invocacion.
 """
 
 import argparse
@@ -44,28 +38,31 @@ def anadir_argumentos_bd(p: argparse.ArgumentParser) -> None:
     p.add_argument("--timescale-host", default="localhost")
     p.add_argument("--timescale-port", type=int, default=5432)
     p.add_argument("--timescale-db", default="tfm_metrics")
+    p.add_argument("--timescale-user",
+                    default=os.environ.get("TIMESCALE_USER", "tfm"))
     p.add_argument("--timescale-password",
                     default=os.environ.get("TIMESCALE_PASSWORD", "tfm_dev_password"))
     p.add_argument("--postgres-host", default="localhost")
     p.add_argument("--postgres-port", type=int, default=5433)
     p.add_argument("--postgres-db", default="tfm_analytics")
+    p.add_argument("--postgres-user",
+                    default=os.environ.get("POSTGRES_USER", "tfm"))
     p.add_argument("--postgres-password",
                     default=os.environ.get("POSTGRES_PASSWORD", "tfm_dev_password"))
-    p.add_argument("--db-user", default="tfm")
 
 
 def props_bd(args: argparse.Namespace, cual: str) -> dict:
     """Devuelve los parametros con las claves que espera `psycopg2.connect`."""
     if cual == TIMESCALE:
         host, port, db = args.timescale_host, args.timescale_port, args.timescale_db
-        password = args.timescale_password
+        user, password = args.timescale_user, args.timescale_password
     elif cual == POSTGRES:
         host, port, db = args.postgres_host, args.postgres_port, args.postgres_db
-        password = args.postgres_password
+        user, password = args.postgres_user, args.postgres_password
     else:
         raise ValueError(f"Base de datos desconocida: {cual!r}")
     return {"host": host, "port": port, "dbname": db,
-            "user": args.db_user, "password": password}
+            "user": user, "password": password}
 
 
 def anadir_argumentos_kafka(p: argparse.ArgumentParser) -> None:

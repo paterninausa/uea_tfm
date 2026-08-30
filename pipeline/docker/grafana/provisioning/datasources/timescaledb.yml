@@ -16,7 +16,7 @@ datasources:
     # corre dentro de tfm-net, no en el host, asi que no aplica el 5432
     # publicado hacia fuera.
     url: timescaledb:5432
-    user: tfm
+    user: $__env{TIMESCALE_USER}
     secureJsonData:
       password: $__env{TIMESCALE_PASSWORD}
     jsonData:
