@@ -113,7 +113,7 @@
       "title": "Consumo kWh por Emplazamiento",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "gridPos": {"h": 9, "w": 24, "x": 0, "y": 14},
-      "fieldConfig": {"defaults": {"unit": "kwatth", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 20, "stacking": {"mode": "normal"}}}},
+      "fieldConfig": {"defaults": {"unit": "kwatth", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15, "stacking": {"mode": "none"}}}},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
       "targets": [{
         "refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code",
