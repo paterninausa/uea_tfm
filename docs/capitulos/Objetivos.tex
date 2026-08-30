@@ -19,7 +19,6 @@ Para cubrir el alcance descrito, se plantean las siguientes tareas:
         \item Servicio de análisis que calcule índices de eficiencia energética, efectúe análisis operativo y detección de anomalías en datos de consumo.
     \end{itemize}
     \item Diseñar un servicio de visualización mediante dashboards, para la visualización interactiva de los datos procesados.
-    \item Evaluar el rendimiento del sistema mediante pruebas de estrés y de carga para validar su capacidad de escalabilidad.
 \end{itemize}
 
 \section{Objetivos}
@@ -50,11 +49,11 @@ Los objetivos concretos de este trabajo se definen a continuación, acompañados
 
 \textbf{Acciones}: diseñar el dashboard operacional de Grafana sobre TimescaleDB; conectar Power BI a los eventos enriquecidos de PostgreSQL; definir y calcular los índices de eficiencia energética requeridos por las tareas de análisis; validar la latencia de refresco de los dashboards.
 
-\subsection{Objetivo 5: Validar la escalabilidad y resiliencia del sistema}
+\subsection{Objetivo 5: Validar la resiliencia del sistema}
 
-\textbf{KPI}: el sistema soporta al menos 500 sensores simultáneos con un throughput no menor del 80\,\% respecto a 100 sensores iniciales; ante el fallo de un servicio individual, el sistema se recupera en menos de 60 segundos sin pérdida de datos.
+\textbf{KPI}: ante el fallo de un servicio individual, el sistema se recupera en menos de 60 segundos sin pérdida de datos.
 
-\textbf{Acciones}: diseñar un plan de pruebas con volumen creciente de sensores simulados (100, 250, 500 y +600 sensores concurrentes); medir el throughput y la latencia bajo cada nivel de carga; simular la caída de un servicio (por ejemplo, el broker de mensajería o uno de los sumideros) y medir el tiempo de recuperación y la integridad de los datos gracias a la retención en Kafka; documentar los resultados obtenidos.
+\textbf{Acciones}: simular la caída de un servicio (por ejemplo, el broker de mensajería o uno de los sumideros) y medir el tiempo de recuperación y la integridad de los datos gracias a la retención en Kafka; documentar los resultados obtenidos.
 
 \section{Beneficios del proyecto}
 

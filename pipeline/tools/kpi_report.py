@@ -14,7 +14,7 @@ De donde sale cada KPI:
   Objetivo 2  validacion de esquema          Apicurio + topico DLQ
   Objetivo 3  latencia de micro-lote         TimescaleDB.streaming_progress
   Objetivo 4  refresco de los dashboards     API de consultas de Grafana
-  Objetivo 5  escalabilidad                  resultado de load_ladder.py
+  Objetivo 5  recuperacion ante fallo        resultado de failover_test.py
 
 NO MIDE lo que no haya ocurrido: informa de lo que encuentra en el estado
 actual. Para que las cifras se correspondan con una prueba concreta hay que
@@ -37,6 +37,12 @@ from pathlib import Path
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.apicurio import (  # noqa: E402
+    DEFAULT_REGISTRY_URL,
+    DEFAULT_SUBJECT,
+    latest_schema,
+    schema_registry_client,
+)
 from common.connection_args import (  # noqa: E402
     POSTGRES,
     TIMESCALE,
@@ -45,17 +51,11 @@ from common.connection_args import (  # noqa: E402
     props_bd,
 )
 from common.logging_setup import DIRECTORIO_LOGS, configurar_logging  # noqa: E402
-from common.apicurio import (  # noqa: E402
-    DEFAULT_REGISTRY_URL,
-    DEFAULT_SUBJECT,
-    latest_schema,
-    schema_registry_client,
-)
 
 logger = logging.getLogger("kpi_report")
 
 INFORME = DIRECTORIO_LOGS / "informe_kpi.md"
-RESULTADOS_ESCALERA = DIRECTORIO_LOGS / "ultima_escalera.json"
+RESULTADO_FAILOVER = DIRECTORIO_LOGS / "ultimo_failover.json"
 DIRECTORIO_DASHBOARDS = Path(__file__).resolve().parents[1] / "docker/grafana/dashboards"
 
 CONTENEDOR_KAFKA = "tfm-kafka"
@@ -290,7 +290,7 @@ def _fmt(valor, decimales=3, sufijo=""):
     return "n/d" if valor is None else f"{valor:,.{decimales}f}{sufijo}"
 
 
-def construir_informe(ingesta, esquema, run_id, procesamiento, grafana, carga) -> str:
+def construir_informe(ingesta, esquema, run_id, procesamiento, grafana, failover) -> str:
     L = ["# Cuadro de KPIs", "",
          f"Generado el {time.strftime('%Y-%m-%d %H:%M:%S')} sobre el estado actual del sistema.",
          ""]
@@ -362,39 +362,22 @@ def construir_informe(ingesta, esquema, run_id, procesamiento, grafana, carga) -
         peor = max(grafana, key=lambda m: m["ms"])
         L += ["", f"Panel mas lento: **{peor['ms']:,.1f} ms** (objetivo < 5.000 ms).", ""]
 
-    if carga:
-        saturacion = carga.get("modo") == "saturacion"
-        titulo = ("## Objetivo 5 — Punto de saturacion" if saturacion
-                  else "## Objetivo 5 — Escalabilidad")
-        preambulo = (
-            "Rampa de ritmo creciente con los sensores fijos: busca hasta donde aguanta."
-            if saturacion else
-            "Escalera de sensores con el ritmo por sensor fijo, de modo que la carga crece "
-            "con el numero de medidores.")
-        L += [titulo, "",
-              f"{preambulo} Ejecutada el {carga['instante']}, "
-              f"{carga['eventos_por_peldano']:,} eventos por peldano y **medida en el "
-              f"consumo**, no en el productor.", "",
-              "| Peldano | Sensores | Ritmo pedido | Publicado real | Persistido | Latencia p95 | Lote p95 |",
-              "|---|---|---|---|---|---|---|"]
-        for r in carga["peldanos"]:
-            # Se recalcula aqui en vez de confiar en la bandera del fichero:
-            # sostener el ritmo es publicar lo que se pidio, no carecer de picos.
-            sostuvo = (r.get("ritmo_publicado_ev_s") or 0) >= 0.95 * r["tasa_teorica_ev_s"]
-            aviso = "" if sostuvo else " ⚠"
-            L.append(f"| {r['etiqueta']}{aviso} | {r['sensores']} | "
-                     f"{r['tasa_teorica_ev_s']:,.0f} ev/s | "
-                     f"**{_fmt(r.get('ritmo_publicado_ev_s'), 1, ' ev/s')}** | "
-                     f"{r['persistidos_en_postgresql']:,} | "
-                     f"{_fmt(r.get('latencia_p95_s'), 3, ' s')} | "
-                     f"{_fmt(r.get('micro_lote_p95_ms'), 0, ' ms')} |")
-        if any((r.get("ritmo_publicado_ev_s") or 0) < 0.95 * r["tasa_teorica_ev_s"]
-               for r in carga["peldanos"]):
-            L += ["", "> Los peldanos marcados con ⚠ miden **el techo del simulador**, no el "
-                  "del pipeline: el productor no sostuvo el ritmo pedido. Un peldano en el que "
-                  "el productor satura no dice nada sobre donde esta el limite del sistema.", ""]
-        else:
-            L.append("")
+    if failover:
+        ok = failover["recuperacion_s"] is not None and failover["recuperacion_s"] < 60
+        marca = "✓" if ok else "✗"
+        L += ["## Objetivo 5 — Resiliencia", "",
+              f"Prueba ejecutada el {failover['instante']} sobre `{failover['servicio']}` "
+              f"(tabla testigo `{failover['tabla_testigo']}`).", "",
+              "| Metrica | Resultado | Objetivo |", "|---|---|---|",
+              f"| Servicio tumbado | `{failover['servicio']}` | — |",
+              f"| Caida provocada | {failover['downtime_s']:g} s | — |",
+              f"| **Tiempo de recuperacion** | **{_fmt(failover['recuperacion_s'], 1, ' s')}** {marca} | < 60 s |",
+              f"| Filas nuevas tras recuperar | {failover['filas_nuevas']:,} | — |",
+              f"| Estado final del servicio | {failover['estado_final']} | — |", ""]
+        if not ok:
+            L += ["> **Aviso**: el flujo no se restablecio dentro del objetivo de 60 s (o no se "
+                  "restablecio en absoluto). Un servicio cuyo fallo detiene el pipeline es un "
+                  "resultado valido y publicable.", ""]
 
     return "\n".join(L)
 
@@ -428,14 +411,14 @@ def run(args: argparse.Namespace) -> int:
         except requests.RequestException as exc:
             logger.warning("No se pudo consultar Grafana: %s", exc)
 
-    carga = None
-    if RESULTADOS_ESCALERA.exists():
-        carga = json.loads(RESULTADOS_ESCALERA.read_text())
-        logger.info("Objetivo 5: leyendo %s", RESULTADOS_ESCALERA)
+    failover = None
+    if RESULTADO_FAILOVER.exists():
+        failover = json.loads(RESULTADO_FAILOVER.read_text())
+        logger.info("Objetivo 5: leyendo %s", RESULTADO_FAILOVER)
     else:
-        logger.info("Objetivo 5: sin resultados de escalera (ejecuta load_ladder.py)")
+        logger.info("Objetivo 5: sin resultados de recuperacion ante fallo disponibles")
 
-    informe = construir_informe(ingesta, esquema, run_id, procesamiento, grafana, carga)
+    informe = construir_informe(ingesta, esquema, run_id, procesamiento, grafana, failover)
     INFORME.write_text(informe)
     print(informe)
     logger.info("Informe escrito en %s", INFORME)

@@ -13,7 +13,7 @@ El proyecto se desarrolló a lo largo de tres meses, entre junio y agosto de 202
     Búsqueda y adaptación de la fuente de datos; establecimiento de objetivos & Jun. 2026 & 5 & \texttt{prepare\_ashrae.py}, objetivos y KPIs \\ \hline
     Selección de herramientas y diseño de la arquitectura & Jun. 2026 & 5 & Documento de diseño \\ \hline
     Desarrollo técnico y pruebas iniciales de la sección de procesamiento & Jun.--Jul. 2026 & 80 & Artefactos en \texttt{bridge/}, \texttt{common/}, \texttt{docker/}, \texttt{schemas/}, \texttt{simulator/} y \texttt{spark/} \\ \hline
-    Validación, pruebas y ajustes de la sección de procesamiento & Jul. 2026 & 100 & Informe de resultados: pérdida de mensajes (0,0000\,\%), latencia de ingesta p50/p95 (0,766 / 1,277 s), throughput bajo carga y degradación (652 sensores concurrentes, degradación real 0,6\,\%), tiempo de recuperación ante fallo (4,1 s TimescaleDB / 5,1 s PostgreSQL) \\ \hline
+    Validación, pruebas y ajustes de la sección de procesamiento & Jul. 2026 & 100 & Informe de resultados: pérdida de mensajes (0,0000\,\%), latencia de ingesta p50/p95 (0,766 / 1,277 s), soporte de carga (652 sensores concurrentes, sin pérdida de mensajes), tiempo de recuperación ante fallo (4,1 s TimescaleDB / 5,1 s PostgreSQL) \\ \hline
     Creación, pruebas y ajustes de la sección de visualización & Jul.--Ago. 2026 & 30 & Artefactos en \texttt{grafana/} y \texttt{powerbi/} \\ \hline
     Creación y prueba de scripts auxiliares & Ago. 2026 & 5 & Artefactos en \texttt{tools/} y \texttt{setup.sh} \\ \hline
     Redacción de la memoria & Jun.--Ago. 2026 & 75 & Este documento \\ \hline
@@ -155,13 +155,58 @@ Para la preparación de los datos usados en este proyecto, el script \texttt{pre
     \item \textbf{Verificación de la clave natural}: comprueba, en cada ejecución, que \texttt{(building\_id, meter\_type, timestamp)} identifica de forma única cada fila de la tabla de hechos; esta unicidad es la que garantiza la idempotencia del reprocesamiento de la arquitectura Kappa.
 \end{itemize}
 
-Una decisión de implementación relevante en el script es que \texttt{building\_id} se trata como texto en el pipeline, pese a ser en el dateset de origen un identificador numérico:
+Una decisión de diseño relevante en el script es que \texttt{building\_id} se trata como texto en el pipeline, pese a ser en el dateset de origen un identificador numérico:
 
 \begin{verbatim}
 telemetria["building_id"] = telemetria["building_id"].astype(str)
 \end{verbatim}
 
 Esta misma decisión se refuerza aguas abajo en el simulador de telemetría: el payload que emite cada medidor por MQTT se publica como JSON en texto plano.
+
+\subsection{Simulador de telemetría}
+
+El script \texttt{mqtt\_simulator.py} ocupa el lugar de los 652 medidores reales representados en el subconjunto del dataset. Cada medidor publica una vez por hora, lo que supone 0,18 eventos por segundo considerando el total de medidores. Debido a lo anterior, el script usa el argumento \texttt{-{}-acelerar} para incrementar el ritmo de publicación de los datos durante las pruebas de carga (en eventos por segundo), tal y como recoge la Tabla~\ref{tab:acelerar-simulador}.
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{|r|r|}
+    \hline
+    \textbf{\texttt{-{}-acelerar}} & \textbf{Cálculo eventos/segundo} \\ \hline
+    2000 & 362 \\ \hline
+    8000 & 1.448 \\ \hline
+    40000 & 7.244 \\ \hline
+  \end{tabular}
+  \caption{Relación entre el factor de aceleración y el ritmo de publicación.}
+  \label{tab:acelerar-simulador}
+\end{table}
+
+La decisión de diseño más relevante es publicar cada evento con un formato JSON en texto plano. El protocolo MQTT lo permite, ya que es agnóstico al formato del payload: no impone ninguna estructura ni codificación, y transporta indistintamente JSON, texto plano o binario.
+
+{\footnotesize
+\begin{verbatim}
+{"building_id": "346", "meter_type": "electricity", "timestamp": "2026-02-13T17:00:00",
+"meter_reading": 40.99, "sim_publish_ts": 1788145201234}
+\end{verbatim}
+}
+
+La estructura de los campos de cada mensaje en formato JSON es la siguiente:
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{|l|p{9cm}|}
+    \hline
+    \textbf{Campo} & \textbf{Significado} \\ \hline
+    \texttt{building\_id} & Identificador del edificio (texto) \\ \hline
+    \texttt{meter\_type} & Tipo de medidor (\texttt{electricity}, \texttt{chilledwater} o \texttt{hotwater}) \\ \hline
+    \texttt{timestamp} & Timestamp al momento de tomar la lectura, sin zona horaria \\ \hline
+    \texttt{meter\_reading} & Medición de consumo del medidor (decimal) \\ \hline
+    \texttt{sim\_publish\_ts} & Timestamp al momento de la publicación del dato, en formato epoch en milisegundos \\ \hline
+  \end{tabular}
+  \caption{Campos del mensaje JSON publicado por el simulador.}
+  \label{tab:payload-simulador}
+\end{table}
+
+En el terreno industrial/IIoT el formato más cercano al estándar es Sparkplug B, siendo entre un 50 y un 80\,\% más pequeño que el JSON equivalente al ser puramente binario. Por tanto se decide seguir la práctica recomendada: empezar con JSON en desarrollo, y migrar a un formato binario en producción cuando el ancho de banda lo exija.
 
 \section{Recursos requeridos}
 En este apartado debes enumerar los recursos que has utilizado para la ejecución del proyecto (recursos técnicos, dispositivos, material de laboratorio, asistencia de expertos, etc.). Si bien, en la sección donde se describe Metodología y Herramientas empleadas, se describen en detalle las mismas, en esta sección, únicamente debes enumerarlas.
