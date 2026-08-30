@@ -1,10 +1,7 @@
 """
-Interpretacion del dataset historico de ASHRAE.
+Interpretacion del dataset
 
-Aqui vive todo lo que significa "convertir el Parquet de ASHRAE en trafico de
-sensores": que subconjunto se reproduce y con que marcas de tiempo lo hace.
-
-AQUI NO SE SABE QUE EXISTE MQTT. Este modulo decide QUE filas se reproducen y
+Este modulo decide QUE filas se reproducen y
 con que marcas de tiempo; el topico, el payload y la conexion son cosa del
 productor, en `mqtt_simulator.py`. La frontera se nota en que
 aqui no hay una sola linea de protocolo, y alli no hay ninguna decision sobre los
@@ -13,16 +10,14 @@ datos.
 Vive en un fichero aparte del simulador porque el orden en que se aplican el
 ordenado cronologico y el recorte de ventana es una decision con consecuencias
 medidas, y merece un sitio donde este documentada y no mezclada con el codigo de
-publicacion. Estuvo en `common/replay.py` mientras habia dos productores; al
-quedar uno solo, se movio aqui.
+publicacion.
 
 Las marcas de tiempo NO se tocan aqui: vienen ya datadas en el presente desde
 `prepare_ashrae.py --fecha-final`. No hay ningun desplazamiento en tiempo de
 ejecucion.
 
 UN SENSOR ES EL PAR (edificio, tipo de medidor). Un mismo edificio con medidor
-de electricidad y de agua fria son dos sensores con series independientes; el
-subconjunto en uso tiene 652.
+de electricidad y de agua fria son dos sensores con series independientes.
 """
 
 import argparse

@@ -59,7 +59,7 @@ import aiomqtt
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.logging_setup import configurar_logging  # noqa: E402
 from common.stop_event import evento_de_parada_async  # noqa: E402
-from telemetry_dataset import anadir_argumentos_dataset, preparar  # noqa: E402
+from simulator_helper import anadir_argumentos_dataset, preparar  # noqa: E402
 
 logger = logging.getLogger("mqtt_simulator")
 

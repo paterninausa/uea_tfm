@@ -49,15 +49,14 @@ depurar con `mosquitto_sub`.
 ## Uso
 
 ```bash
-python pipeline/simulator/mqtt_simulator.py --speedup 2000
+python pipeline/simulator/mqtt_simulator.py --acelerar 2000
 ```
 
 | Opcion | Para que |
 |---|---|
-| `--speedup` | Cuantas veces mas rapido avanza el reloj simulado |
+| `--acelerar` | Cuantas veces mas rapido avanza el reloj simulado |
 | `--clients` | Conexiones MQTT simultaneas (0 = una por sensor) |
-| `--max-sensors` | Publica solo los primeros N sensores (Objetivo 5) |
-| `--limite` | Techo de eventos publicados (prefijo, para la escalera de carga) |
+| `--limite` | Techo de eventos publicados (prefijo temporal) |
 | `--ultimas-semanas` | Publica la cola de N semanas (demostracion en vivo) |
 | `--max-lag` | Retraso tolerado antes de invalidar la ejecucion |
 
@@ -76,19 +75,17 @@ son menos de dos decimas de evento por segundo.**
 
 Por eso el simulador acelera el reloj:
 
-    tasa agregada = n_sensores x speedup / 3600
+    tasa agregada = n_sensores x acelerar / 3600
 
-| `--speedup` | Cadencia por sensor | Con 652 sensores | Ano completo en |
+| `--acelerar` | Cadencia por sensor | Con 652 sensores | Ano completo en |
 |---|---|---|---|
 | 1 | 1 h | 0,18 ev/s | 8.784 h |
 | 2.000 | 1,8 s | 359 ev/s | 4,4 h |
 | 7.145 | 0,5 s | 1.294 ev/s | 74 min |
 
-**Es un factor POR SENSOR, no una tasa global**, y esa diferencia decide si la
-escalera del Objetivo 5 significa algo: con una tasa global fija, pasar de 100 a
-652 sensores reparte los mismos eventos entre mas identidades y la carga total no
-cambia. Con `--speedup`, cada medidor mantiene su cadencia y la carga crece con
-el numero de medidores, que es lo que quiere decir "sensores concurrentes".
+**Es un factor POR SENSOR, no una tasa global**: cada medidor mantiene su propia
+cadencia, y la tasa agregada del sistema es la suma de las 652 cadencias
+individuales, no el reparto de una tasa fija entre identidades.
 
 Si el simulador no consigue sostener el ritmo pedido, **la ejecucion se marca
 como no valida** (codigo de salida 1) en lugar de recuperar el tiempo perdido
@@ -99,7 +96,7 @@ publicando a rafagas: sus cifras medirian entonces esta maquina y no el pipeline
 Los medidores reales miden en la hora en punto, asi que un replay literal
 publicaria los 652 de golpe y luego callaria durante todo el intervalo. No se
 hace, y el motivo es cuantitativo: con un drenaje del bridge de unos 4.000 ev/s,
-el replay fiel se sostiene hasta **x22.000** —de `652 / (3600/speedup) <= 4.000`—
+el replay fiel se sostiene hasta **x22.000** —de `652 / (3600/acelerar) <= 4.000`—
 y por encima la cola de Mosquitto, 10.000 mensajes segun `mosquitto.conf`, se
 llena en menos de tres segundos y el broker **descarta en silencio**.
 
@@ -172,17 +169,17 @@ nada, y se retiro. **El consumidor tardon era la causa, no el productor rapido.*
 
 ## De donde sale lo que publica
 
-La frontera con `pipeline/simulator/telemetry_dataset.py` es esta:
+La frontera con `pipeline/simulator/simulator_helper.py` es esta:
 
-| Aqui, en el simulador | En `telemetry_dataset.py` |
+| Aqui, en el simulador | En `simulator_helper.py` |
 |---|---|
 | `build_topic()`, `build_payload()` — como se serializa un mensaje | `preparar()` — que filas se reproducen y con que marcas |
-| `repartir()` — que sensores van en cada conexion | `filtrar_sensores()` — cuales entran, en orden determinista |
-| `_programa()` — cuando publica cada sensor | `filtrar_ultimas_semanas()` — que ventana temporal se publica |
-| Los argumentos del broker: host, puerto, QoS | Los argumentos del dataset: fichero, limite, sensores |
+| `repartir()`, `_programa()` — que sensores van en cada conexion y cuando publica cada uno | `filtrar_ultimas_semanas()` — que ventana temporal se publica |
+| Los argumentos del broker: host, puerto, QoS | Los argumentos del dataset: fichero, limite, ventana temporal |
 
-Dicho corto: **`telemetry_dataset` es el guion —que se dice y en que orden— y el simulador son
-los actores y el reloj —quien lo dice, por que canal y en que instante—**.
+`simulator_helper.py` decide QUE se publica y con QUE marcas de tiempo, sin saber
+que existe MQTT; el simulador decide COMO se publica -por que topico, en que
+payload, en que instante concreto- sin decidir nunca que filas reproducir.
 
 `build_payload` esta aqui y no alli por una razon concreta: sella
 `sim_publish_ts` con el instante REAL de emision, que es el origen de tiempo del
@@ -194,13 +191,12 @@ KPI de latencia. Lo que hace no es leer una fila, es emitirla.
   (`iot/156/electricity/telemetry`) y payload de cinco campos.
 - Filtrado jerarquico por tipo de medidor: una suscripcion a
   `iot/+/chilledwater/telemetry` recibe solo las lecturas de agua fria.
-- Escalera de sensores anidada: 100 ⊂ 250 ⊂ 500 ⊂ 652.
 - La cola de N semanas (`--ultimas-semanas`) sobre el Parquet ya reubicado al
   presente por `prepare_ashrae.py --fecha-final` termina en fecha reciente, sin
   ningun desplazamiento en tiempo de ejecucion.
 - **646 conexiones MQTT simultaneas** publicando 20.000 eventos con 0 fallos y 0
   conexiones caidas, a 357,7 ev/s efectivos frente a los 358,9 teoricos de
-  `--speedup 2000`, con un retraso maximo sobre la agenda de 0,47 s (18 de agosto
+  `--acelerar 2000`, con un retraso maximo sobre la agenda de 0,47 s (18 de agosto
   de 2026, recorrido completo hasta ambos sumideros).
 - Reparto por particiones de Kafka determinista y desigual —6.144 / 7.468 /
   6.388 sobre 20.000 eventos—, que es lo que produce el hash de la clave de
