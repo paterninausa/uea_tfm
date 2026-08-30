@@ -217,6 +217,25 @@ La configuración (\texttt{docker/mosquitto/mosquitto.conf}) fija cuatro aspecto
 
 El archivo \texttt{docker-compose.yml} comprueba el estado del contenedor con \texttt{mosquitto\_sub} en lugar de solo verificar que el puerto responde, confirmando que el broker acepta conexiones antes de considerarlo saludable.
 
+\subsection{Bridge MQTT \(\to\) Kafka}
+
+El bridge (\texttt{mqtt\_kafka\_bridge.py}) se suscribe a los mensajes \texttt{iot/\#} en Mosquitto, valida cada mensaje contra el esquema Avro vigente en Apicurio Registry, lo serializa a una cadena de bytes y lo publica en Kafka. Los mensajes que no superen la validación no se descartan: se desvían al tópico de mensajes inválidos de Kafka (\texttt{iot.telemetry.dlq}) junto con el motivo del rechazo, el tópico MQTT de origen y un timestamp del bridge.
+
+Un mensaje es enviado a la DLQ por dos vías distintas: si no encaja en el esquema Avro (por un campo ausente, tipo de dato incorrecto, o un tipo de medidor que no esté entre los declarados en el esquema), o si no supera una validación adicional que Avro no puede expresar (como una fecha futura que dañaría el watermark de Spark, o una lectura negativa o no finita). El mensaje que se guarda en la DLQ está en su formato original para su posterior análisis o reprocesamiento.
+
+Del lado de Kafka, el bridge se configura con \texttt{acks=`all'}, el nivel de confirmación más estricto disponible. Cada vez que el bridge publica un mensaje, Kafka le devuelve una confirmación de escritura antes de que el bridge lo dé por entregado; el valor de \texttt{acks} decide qué tiene que ocurrir en Kafka antes de que esa confirmación salga hacia el bridge.
+
+\begin{itemize}
+  \item Con \texttt{acks=0}, Kafka no envía ninguna confirmación: el bridge da el mensaje por entregado en el momento de enviarlo, sin manera de saber si realmente llegó.
+  \item Con \texttt{acks=1}, Kafka confirma en cuanto el líder de la partición escribe el mensaje en su propio registro, antes de que las réplicas lo copien.
+  \item Con \texttt{acks=`all'}, Kafka espera a que todas las réplicas en sincronía tengan también el mensaje, y solo entonces envía la confirmación al bridge.
+\end{itemize}
+
+La clave con la que el bridge publica cada mensaje en Kafka es el propio sensor (\texttt{building\_id:
+meter\_type}), tal y como ya se describió en la Tabla~\ref{tab:variables-hechos}.
+
+Para asegurar la futura escalabilidad del bridge, está disponible el argumento \texttt{-{}-shared-group} que hace pedirle al broker Mosquitto que reparta los mensajes entre varias instancias del bridge en vez de duplicarlos para cada instancia por separado, por lo que este argumento permite escalar el bridge horizontalmente. Esto está pensado específicamente para su despliegue como contenedor en \texttt{docker-compose.yml}.
+
 \section{Recursos requeridos}
 En este apartado debes enumerar los recursos que has utilizado para la ejecución del proyecto (recursos técnicos, dispositivos, material de laboratorio, asistencia de expertos, etc.). Si bien, en la sección donde se describe Metodología y Herramientas empleadas, se describen en detalle las mismas, en esta sección, únicamente debes enumerarlas.
 
