@@ -28,13 +28,15 @@ python pipeline/tools/demo.py --semanas 10    # 10 semanas
 python pipeline/tools/demo.py --stop          # cierra procesos y baja el stack
 ```
 
-`--semanas N` publica **las ultimas N semanas terminando en "ahora"**: calcula
-`--limite = 652 x 168 x N` y le pasa `--traer-a now` al simulador, de modo que
-el bloque de datos reales de ASHRAE queda anclado al presente. El replay tarda
-en llenarse `N x 604.800 / acelerar` segundos (a `--acelerar 8000`: ~7,5 min para
-6 semanas), rellenando el dashboard de izquierda a derecha. Al terminar, Grafana
-en `http://localhost:3000` (admin/admin); en los dashboards 2 y 3 hay que poner
-el rango a `now-Nw` para ver el bloque completo.
+`--semanas N` publica **la cola de las ultimas N semanas del historico**: pasa
+`--ultimas-semanas N` al simulador. Como el Parquet ya viene reubicado al presente
+por `prepare_ashrae.py --fecha-final`, esa cola termina en fecha reciente sin
+ningun desplazamiento en tiempo de ejecucion. El replay tarda en llenarse
+`N x 604.800 / acelerar` segundos (a `--acelerar 8000`: ~7,5 min para 6 semanas),
+rellenando el dashboard de izquierda a derecha. Al terminar, Grafana en
+`http://localhost:3000` (admin/admin); en los dashboards 2 y 3 hay que poner el
+rango a `now-Nw` para ver el bloque completo (asume que el Parquet se preparo con
+`--fecha-final` reciente, idealmente el mismo dia).
 
 Es para **demostrar**, no para medir: las cifras de KPI se toman con el ciclo de
 abajo, no con este script.
@@ -78,7 +80,7 @@ primer arranque resuelve los conectores de Maven y tarda bastante mas.
 el punto de saturacion, sin limite.
 
 ```bash
-python pipeline/simulator/mqtt_simulator.py --acelerar 2000 --limite 50000 --traer-a now
+python pipeline/simulator/mqtt_simulator.py --acelerar 2000 --limite 50000
 ```
 
 **4. Emitir el cuadro.** Deja el informe en `pipeline/logs/informe_kpi.md`.

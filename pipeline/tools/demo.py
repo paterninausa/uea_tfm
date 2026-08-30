@@ -6,11 +6,15 @@ que ya existen en el orden correcto para una demostracion. Levanta el stack,
 deja las bases limpias, arranca bridge + Spark + simulador y te deja Grafana
 listo con datos recientes.
 
-Los datos son las medidas reales de ASHRAE (2016) TRAIDAS AL PRESENTE con
-`--traer-a now`: el bloque de `--semanas` semanas termina en "ahora" y se rellena
-de izquierda a derecha segun avanza el replay. En un despliegue real esto no
-haria falta —los medidores reportan en directo y el historico se acumula solo—;
-aqui se comprime el tiempo porque no se dispone de meses de operacion.
+Los datos son las medidas reales de ASHRAE, REUBICADAS AL PRESENTE de una vez por
+`prepare_ashrae.py --fecha-final`: el Parquet ya viene datado en fechas recientes,
+asi que aqui basta con reproducir su COLA de `--semanas` semanas
+(`--ultimas-semanas`), que termina en el presente y se rellena de izquierda a
+derecha segun avanza el replay. Ya no hay ningun desplazamiento en tiempo de
+ejecucion (`--traer-a` quedo como herramienta exclusiva de load_ladder). En un
+despliegue real esto no haria falta —los medidores reportan en directo y el
+historico se acumula solo—; aqui se comprime el tiempo porque no se dispone de
+meses de operacion.
 
 Uso:
     python pipeline/tools/demo.py                      # 6 semanas, acelerar 8000
@@ -45,13 +49,10 @@ BRIDGE = RAIZ / "bridge" / "mqtt_kafka_bridge.py"
 SPARK = RAIZ / "spark" / "stream_processing.py"
 REGISTER = RAIZ / "schemas" / "register_schema.py"
 RESET = RAIZ / "tools" / "reset_state.py"
-BASELINE = RAIZ / "data" / "ashrae_sensor_baseline.parquet"
 SPARK_LOG = RAIZ / "logs" / "spark_job.log"
 ESTADO = Path(DIRECTORIO_LOGS) / "demo_estado.json"  # PIDs de los procesos en marcha
 
 # --- Constantes -----------------------------------------------------------
-HORAS_POR_SEMANA = 168
-SENSORES_FALLBACK = 652  # si no se puede leer el baseline
 APICURIO_INFO = "http://localhost:8080/apis/registry/v3/system/info"
 GRAFANA_URL = "http://localhost:3000"
 SUMIDEROS = [("tfm-postgres", "tfm_analytics"), ("tfm-timescaledb", "tfm_metrics")]
@@ -101,16 +102,6 @@ def contar_postgres() -> int:
         return int(r.stdout.strip())
     except (ValueError, AttributeError):
         return -1
-
-
-def contar_sensores() -> int:
-    """Numero de sensores del subconjunto, para dimensionar --limite."""
-    try:
-        import pandas as pd
-        return len(pd.read_parquet(BASELINE))
-    except Exception:
-        logger.warning("No se pudo leer el baseline; uso %d sensores", SENSORES_FALLBACK)
-        return SENSORES_FALLBACK
 
 
 def lanzar_fondo(nombre: str, orden: list[str]) -> subprocess.Popen:
@@ -203,14 +194,12 @@ def run_start(args: argparse.Namespace) -> int:
     esperar_spark(spark, offset)
     logger.info("    Spark en marcha con las dos consultas activas")
 
-    sensores = contar_sensores()
-    limite = sensores * HORAS_POR_SEMANA * args.semanas
     eta_min = args.semanas * 7 * 24 * 3600 / args.acelerar / 60
-    logger.info("6/6 Arrancando el simulador: %d semanas -> --limite %d (%d sensores), "
-                "--acelerar %g, --traer-a now", args.semanas, limite, sensores, args.acelerar)
+    logger.info("6/6 Arrancando el simulador: cola de %d semanas (--ultimas-semanas), "
+                "--acelerar %g", args.semanas, args.acelerar)
     sim = lanzar_fondo("simulador", [
         str(SIMULADOR), "--acelerar", str(args.acelerar),
-        "--limite", str(limite), "--traer-a", "now"])
+        "--ultimas-semanas", str(args.semanas)])
 
     guardar_estado({"bridge": bridge.pid, "spark": spark.pid, "simulador": sim.pid})
 

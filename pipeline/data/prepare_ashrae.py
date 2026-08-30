@@ -46,8 +46,17 @@ Spark ya los tienen cableados como valores por defecto, asi que un nombre
 distinto no lo seguiria nadie. Ademas, al no derivarse unas rutas de otras, dos
 salidas no pueden colisionar y sobra la comprobacion que antes hacia falta.
 
+REUBICACION TEMPORAL: los datos de ASHRAE son de 2016. Con `--fecha-final` se
+desplaza toda la serie para que la ULTIMA lectura caiga en la fecha indicada, de
+modo que el Parquet ya queda datado en el presente. Asi desaparece la disparidad
+entre lo que dice esta tabla y lo que muestran Grafana y Power BI, sin ningun
+desplazamiento en tiempo de ejecucion que explicar. Es un unico offset constante:
+conserva la cadencia horaria exacta y los ciclos diario y estacional, y la clave
+natural sigue siendo unica (se comprueba igualmente). Sin el flag, los datos
+quedan en 2016 y la demo en vivo saldria vacia.
+
 Uso:
-    python prepare_ashrae.py
+    python prepare_ashrae.py --fecha-final 2026-08-30
     python prepare_ashrae.py --train ./raw/train.csv --metadata ./raw/building_metadata.csv
     python prepare_ashrae.py --sites 2 3 5
 """
@@ -55,6 +64,7 @@ Uso:
 import argparse
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -86,7 +96,38 @@ def read_any(path: Path) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
-def prepare(train_path: Path, meta_path: Path, sites: tuple) -> None:
+def desplazar_a_fecha_final(tel: pd.DataFrame, fecha_final: str) -> pd.DataFrame:
+    """Reubica la serie para que la ULTIMA lectura caiga en `fecha_final`.
+
+    Un UNICO offset constante a todas las marcas, asi que las distancias relativas
+    entre eventos —y con ellas la cadencia horaria exacta (mediana y p95 del
+    intervalo siguen siendo 3.600 s) y los ciclos diario y estacional— quedan
+    intactas. Como es una biyeccion, la clave natural (building_id, meter_type,
+    timestamp) sigue siendo unica; resumen() lo comprueba igual sobre lo desplazado.
+
+    Se ancla la ULTIMA marca y no la primera para que todo el historico quede en
+    el PASADO respecto a `fecha_final`. Mientras `fecha_final` sea <= el instante de
+    cualquier ejecucion en vivo, ningun evento cae en el futuro y no se envenena el
+    watermark de Spark; por eso conviene usar la fecha de hoy o anterior.
+
+    Sustituye al viejo `--traer-a now` del simulador EN EL CAMINO DE DATOS: al
+    quedar las marcas fijas en el Parquet, el mismo evento reprocesado desde Kafka
+    conserva su clave natural entre ejecuciones y la idempotencia del log se
+    sostiene, cosa que el rebase en tiempo de ejecucion rompia al reanclar a un
+    "ahora" distinto cada vez.
+    """
+    destino = pd.Timestamp(datetime.fromisoformat(fecha_final))
+    offset = destino - tel["timestamp"].max()
+    tel = tel.copy()
+    tel["timestamp"] = tel["timestamp"] + offset
+    logger.info("Reubicacion temporal: marcas desplazadas %+.1f dias -> la ultima cae "
+                "en %s (rango %s -> %s)", offset.total_seconds() / 86400, destino,
+                tel["timestamp"].min(), tel["timestamp"].max())
+    return tel
+
+
+def prepare(train_path: Path, meta_path: Path, sites: tuple,
+            fecha_final: str | None = None) -> None:
     logger.info(f"Leyendo metadatos de edificio: {meta_path}")
     meta = read_any(meta_path)
     meta_sub = meta[meta["site_id"].isin(sites)]
@@ -142,6 +183,17 @@ def prepare(train_path: Path, meta_path: Path, sites: tuple) -> None:
     # watermark de Spark asume que el tiempo de evento avanza. Un fichero
     # desordenado haria que se descartaran lecturas como tardias.
     telemetria = telemetria.sort_values("timestamp").reset_index(drop=True)
+
+    # Reubicacion temporal opcional: deja el Parquet datado en el presente para
+    # que no haya disparidad con lo que muestran Grafana y Power BI. Se hace
+    # ANTES de calcular la linea base y el resumen, para que la comprobacion de
+    # unicidad de la clave natural caiga sobre lo que de verdad se escribe.
+    if fecha_final:
+        telemetria = desplazar_a_fecha_final(telemetria, fecha_final)
+    else:
+        logger.warning("Sin --fecha-final: los datos quedan en 2016. La demo en vivo "
+                       "saldria vacia (los paneles miran a fechas recientes). Pasa una "
+                       "fecha reciente, idealmente hoy, para reubicar la serie.")
 
     # ---- TABLA DE DIMENSION: caracteristicas estaticas del edificio ----------
     # No viajan en cada evento: son atributos del edificio, no medidas del
@@ -238,10 +290,14 @@ def parse_args() -> argparse.Namespace:
                    help="Metadatos de edificio (building_metadata.csv o Parquet)")
     p.add_argument("--sites", type=int, nargs="+", default=list(DEFAULT_SITES),
                    help="Emplazamientos a incluir (por defecto 2 3 5)")
+    p.add_argument("--fecha-final", dest="fecha_final", default=None, metavar="AAAA-MM-DD",
+                   help="Reubica la serie para que la ULTIMA lectura caiga en esta fecha "
+                        "(p.ej. 2026-08-30). Sin el flag los datos quedan en 2016 y la demo "
+                        "en vivo saldria vacia: pasa una fecha reciente, idealmente hoy")
     return p.parse_args()
 
 
 if __name__ == "__main__":
     configurar_logging("prepare_ashrae")
     a = parse_args()
-    prepare(a.train, a.metadata, tuple(a.sites))
+    prepare(a.train, a.metadata, tuple(a.sites), a.fecha_final)

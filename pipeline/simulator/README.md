@@ -57,8 +57,9 @@ python pipeline/simulator/mqtt_simulator.py --speedup 2000
 | `--speedup` | Cuantas veces mas rapido avanza el reloj simulado |
 | `--clients` | Conexiones MQTT simultaneas (0 = una por sensor) |
 | `--max-sensors` | Publica solo los primeros N sensores (Objetivo 5) |
-| `--limit` | Techo de eventos publicados |
-| `--rebase-end` | Desplaza las marcas de tiempo (demostracion en vivo) |
+| `--limite` | Techo de eventos publicados (prefijo, para la escalera de carga) |
+| `--ultimas-semanas` | Publica la cola de N semanas (demostracion en vivo) |
+| `--traer-a` | Reancla las marcas al presente. SOLO medicion (load_ladder); la reubicacion del camino de datos la hace `prepare_ashrae.py --fecha-final` |
 | `--max-lag` | Retraso tolerado antes de invalidar la ejecucion |
 
 Son tres grupos —seleccion de datos, ritmo y conexiones— y **ninguno es un
@@ -192,8 +193,9 @@ KPI de latencia. Lo que hace no es leer una fila, es emitirla.
 - Filtrado jerarquico por tipo de medidor: una suscripcion a
   `iot/+/chilledwater/telemetry` recibe solo las lecturas de agua fria.
 - Escalera de sensores anidada: 100 ⊂ 250 ⊂ 500 ⊂ 652.
-- `--rebase-end now` desplaza el rango completo conservando las distancias
-  relativas entre eventos.
+- `--traer-a now` desplaza el rango completo conservando las distancias
+  relativas entre eventos (herramienta de medicion de load_ladder; la demo usa
+  `--ultimas-semanas` sobre el Parquet ya reubicado por `--fecha-final`).
 - **646 conexiones MQTT simultaneas** publicando 20.000 eventos con 0 fallos y 0
   conexiones caidas, a 357,7 ev/s efectivos frente a los 358,9 teoricos de
   `--speedup 2000`, con un retraso maximo sobre la agenda de 0,47 s (18 de agosto

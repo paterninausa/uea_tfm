@@ -47,9 +47,9 @@ vuelo por la via realista. Todo lo que mide y orquesta vive en `tools/`.
 
 Uso:
     python mqtt_simulator.py --acelerar 2000
-    python mqtt_simulator.py --acelerar 2000 --max-sensors 100   # peldano del Objetivo 5
-    python mqtt_simulator.py --acelerar 500 --traer-a now        # demostracion en vivo
-    python mqtt_simulator.py --acelerar 2000 --clients 1         # una sola conexion
+    python mqtt_simulator.py --acelerar 2000 --max-sensors 100      # peldano del Objetivo 5
+    python mqtt_simulator.py --acelerar 500 --ultimas-semanas 6     # demostracion en vivo
+    python mqtt_simulator.py --acelerar 2000 --clients 1            # una sola conexion
 """
 
 import argparse
@@ -306,7 +306,8 @@ async def simular(args, df) -> Contadores:
 
 
 def run(args: argparse.Namespace) -> int:
-    df = preparar(args.telemetry, args.max_sensors, args.limit, args.rebase_end)
+    df = preparar(args.telemetry, args.max_sensors, args.limit,
+                  args.ultimas_semanas, args.rebase_end)
     contadores = asyncio.run(simular(args, df))
 
     r = contadores.resumen()

@@ -78,12 +78,31 @@ dependencias.
 ## 4. Generar el subconjunto de datos
 
 ```bash
-python prepare_ashrae.py --train ./raw/train.csv --metadata ./raw/building_metadata.csv
+python prepare_ashrae.py --train ./raw/train.csv --metadata ./raw/building_metadata.csv --fecha-final 2026-08-30
 ```
 
 Los valores por defecto de `--train`/`--metadata` apuntan a Parquet
 (`./raw/train.parquet`), no a los CSV que se acaban de descargar, asi que hay
 que pasarlos explicitos aqui.
+
+### Reubicacion temporal (`--fecha-final`)
+
+Los datos de ASHRAE son de **2016**. `--fecha-final AAAA-MM-DD` desplaza toda la
+serie con un unico offset constante para que la **ultima lectura caiga en esa
+fecha**, dejando el Parquet datado en el presente. Asi no hay disparidad entre lo
+que dice esta tabla y lo que muestran Grafana y Power BI, y no queda ningun
+desplazamiento en tiempo de ejecucion que explicar (antes lo hacia `--traer-a now`
+en el simulador; ahora eso solo lo usa `load_ladder` como herramienta de medicion).
+
+Por ser un offset constante conserva **la cadencia horaria exacta** (mediana y p95
+del intervalo siguen siendo 3.600 s) y los ciclos diario y estacional, y la clave
+natural `(building_id, meter_type, timestamp)` sigue siendo unica —`prepare_ashrae`
+lo comprueba en cada ejecucion—. Se ancla la ultima marca para que todo el
+historico quede en el pasado: usa una fecha **de hoy o anterior**, o algun evento
+caeria en el futuro y envenenaria el watermark de Spark. `setup.sh` pasa la fecha
+del dia automaticamente; regenera con una fecha mas cercana al dia de la defensa
+si hace falta. **Sin el flag los datos quedan en 2016 y la demo en vivo sale
+vacia.**
 
 Produce tres ficheros, que no se versionan por estar en `.gitignore`:
 

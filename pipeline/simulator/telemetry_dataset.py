@@ -81,21 +81,48 @@ def filtrar_sensores(df: pd.DataFrame, max_sensores: int | None) -> pd.DataFrame
     return df
 
 
+def filtrar_ultimas_semanas(df: pd.DataFrame, semanas: int) -> pd.DataFrame:
+    """Se queda con las ULTIMAS `semanas` de datos, medidas desde la marca mas
+    reciente del conjunto.
+
+    Es la seleccion de ventana de la demo. Con el Parquet ya reubicado por
+    `prepare_ashrae.py --fecha-final`, la ultima marca cae en fecha reciente, asi
+    que la cola de N semanas termina en el presente y los paneles de Grafana
+    configurados a "ultimas N semanas" se llenan de izquierda a derecha segun
+    avanza el replay. Sustituye al viejo `--limite` (que tomaba el PREFIJO —las
+    primeras N semanas de 2016— y dependia de `--traer-a now` para reanclarlo).
+    """
+    corte = df["timestamp"].max() - pd.Timedelta(weeks=semanas)
+    recorte = df[df["timestamp"] >= corte].reset_index(drop=True)
+    logger.info("Ultimas %d semanas: %s -> %s (%s eventos de %s)", semanas,
+                recorte["timestamp"].min(), recorte["timestamp"].max(),
+                f"{len(recorte):,}", f"{len(df):,}")
+    return recorte
+
+
 def rebasar(df: pd.DataFrame, destino: str) -> pd.DataFrame:
     """Desplaza las marcas de tiempo para que la ULTIMA caiga en `destino`.
 
-    Los datos son de 2016. Sin desplazarlos, un panel de Grafana configurado a
-    "ultimas 6 horas" sale vacio y la demostracion en vivo pierde el efecto de
-    tiempo real. Se aplica un unico offset constante a todo el conjunto, de modo
-    que las distancias relativas entre eventos —y por tanto los ciclos diario y
+    HERRAMIENTA DE MEDICION, NO DEL CAMINO DE DATOS. La reubicacion al presente
+    del Parquet que ven Grafana y Power BI la hace ahora `prepare_ashrae.py
+    --fecha-final`, de una vez y fijada en disco. Aqui se conserva por un motivo
+    distinto: `load_ladder.py` lo usa para que cada peldano reciba marcas nuevas
+    —y por tanto claves naturales nuevas— de forma que el recuento de filas
+    persistidas por peldano y la deteccion de drenaje por `count(*)` funcionen.
+    Sin ese reanclaje, un peldano que republica los mismos eventos (el base
+    repetido en caliente, o el solape entre 100/250/500 sensores) haria UPSERT
+    idempotente, `count(*)` no creceria y la herramienta reportaria una perdida
+    falsa. La demo NO debe usarlo: para acotar su ventana esta `--ultimas-semanas`.
+
+    Se aplica un unico offset constante a todo el conjunto, de modo que las
+    distancias relativas entre eventos —y por tanto los ciclos diario y
     estacional— se conservan intactas.
 
     Se ancla la ULTIMA marca y no la primera para que todo el historico quede en
-    el pasado respecto al instante indicado, que es lo que esperan los paneles.
-    Anclando la primera, el replay acelerado generaria marcas en el futuro, y un
-    evento con fecha futura envenena el watermark de Spark: adelanta el reloj de
-    evento y hace que los eventos ordenados posteriores se descarten en silencio
-    por tardios.
+    el pasado respecto al instante indicado. Anclando la primera, el replay
+    acelerado generaria marcas en el futuro, y un evento con fecha futura envenena
+    el watermark de Spark: adelanta el reloj de evento y hace que los eventos
+    ordenados posteriores se descarten en silencio por tardios.
     """
     instante = datetime.now(timezone.utc) if destino == "now" else datetime.fromisoformat(destino)
     if instante.tzinfo is None:
@@ -110,24 +137,26 @@ def rebasar(df: pd.DataFrame, destino: str) -> pd.DataFrame:
 
 
 def preparar(telemetry_path: Path | None = None, max_sensores: int | None = None,
-             limite: int | None = None, rebase_end: str | None = None,
-             df: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Aplica los cuatro pasos EN EL ORDEN QUE IMPORTA y devuelve lo publicable.
+             limite: int | None = None, ultimas_semanas: int | None = None,
+             rebase_end: str | None = None, df: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Aplica los pasos EN EL ORDEN QUE IMPORTA y devuelve lo publicable.
 
     El orden no es arbitrario y por eso esta encapsulado aqui en vez de repetido
     en cada productor:
 
-    1. Filtrar sensores antes que nada, para que el recorte por `limite` caiga
-       sobre el subconjunto de sensores pedido y no sobre el dataset entero.
+    1. Filtrar sensores antes que nada, para que el recorte posterior caiga sobre
+       el subconjunto de sensores pedido y no sobre el dataset entero.
     2. Ordenar cronologicamente: el watermark de Spark asume que el tiempo de
        evento avanza, y un flujo desordenado haria que se descartaran lecturas
        como tardias.
-    3. Recortar a `limite` DESPUES de ordenar, para publicar el prefijo temporal
-       y no una muestra arbitraria.
-    4. Rebasar al final, sobre lo que realmente se va a publicar. Al reves, el
-       offset se calculaba sobre el dataset completo y un prefijo corto acababa
-       cayendo casi un ano atras, con lo que los paneles de "ultimas 24 horas"
-       salian vacios igualmente.
+    3. Recortar la ventana DESPUES de ordenar. Dos selecciones, para dos usos
+       distintos y NO combinables:
+         - `ultimas_semanas`: la COLA de N semanas -> la demo, cuya ventana debe
+           terminar en el presente (el Parquet ya viene reubicado a fecha reciente).
+         - `limite`: el PREFIJO de N eventos -> la escalera de carga, que solo
+           necesita publicar un numero fijo por peldano.
+    4. Rebasar al final, sobre lo que realmente se va a publicar. SOLO lo usa la
+       escalera de carga (ver `rebasar`); la demo no lo toca.
 
     Se admite un DataFrame ya cargado (`df`) para la escalera de carga: son
     5,68 millones de filas y releer el Parquet en cada peldano anadiria a la
@@ -137,6 +166,8 @@ def preparar(telemetry_path: Path | None = None, max_sensores: int | None = None
         df = cargar(telemetry_path)
     df = filtrar_sensores(df, max_sensores)
     df = df.sort_values("timestamp").reset_index(drop=True)
+    if ultimas_semanas:
+        df = filtrar_ultimas_semanas(df, ultimas_semanas)
     if limite:
         df = df.head(limite)
     if rebase_end:
@@ -149,11 +180,17 @@ def anadir_argumentos_dataset(p: argparse.ArgumentParser) -> None:
     p.add_argument("--telemetry", type=Path, default=RUTA_TELEMETRIA,
                    help="Tabla de hechos generada por prepare_ashrae.py")
     p.add_argument("--limite", dest="limit", metavar="N", type=int, default=None,
-                   help="Numero maximo de eventos a publicar")
+                   help="Numero maximo de eventos a publicar (PREFIJO temporal). Para la "
+                        "escalera de carga: un numero fijo de eventos por peldano")
+    p.add_argument("--ultimas-semanas", dest="ultimas_semanas", metavar="N", type=int, default=None,
+                   help="Publica solo la COLA de las ultimas N semanas del historico. Para la "
+                        "demo en vivo: con el Parquet ya reubicado por prepare_ashrae.py "
+                        "--fecha-final, la ventana termina en el presente")
     p.add_argument("--max-sensors", type=int, default=None,
                    help="Publica solo los primeros N sensores, en orden determinista. "
                         "Para la escalera de carga del Objetivo 5: 100, 250, 500, 652")
     p.add_argument("--traer-a", dest="rebase_end", metavar="ISO|now", default=None,
-                   help="Trae las marcas de tiempo al presente desplazandolas para que la "
-                        "ultima caiga en este instante. Para la demostracion en vivo: los "
-                        "datos son de 2016 y los paneles miran a fechas recientes")
+                   help="HERRAMIENTA DE MEDICION (load_ladder), no para la demo. Desplaza las "
+                        "marcas para que la ultima caiga en este instante, dando a cada peldano "
+                        "claves naturales nuevas. La reubicacion del camino de datos la hace "
+                        "prepare_ashrae.py --fecha-final")

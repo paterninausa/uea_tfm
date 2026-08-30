@@ -198,9 +198,13 @@ else
     mkdir -p "$RAW_DIR"
     if descargar_si_falta "train.csv" && descargar_si_falta "building_metadata.csv"; then
       echo "  Generando los tres Parquet (prepare_ashrae.py)..."
+      # --fecha-final = hoy: reubica la serie de 2016 al presente para que la demo
+      # en vivo tenga datos recientes. Regenera con una fecha mas cercana al dia
+      # de la defensa si hace falta.
       python "$DATA_DIR/prepare_ashrae.py" \
         --train "$RAW_DIR/train.csv" \
-        --metadata "$RAW_DIR/building_metadata.csv"
+        --metadata "$RAW_DIR/building_metadata.csv" \
+        --fecha-final "$(date +%F)"
     else
       DATASET_OK=0
       echo "  PENDIENTE: la descarga fallo. Motivo habitual: no se aceptaron"
