@@ -240,7 +240,71 @@ meter\_type}), tal como se describió en la Tabla~\ref{tab:variables-hechos}.
 
 Para asegurar la futura escalabilidad del bridge, está disponible el argumento \texttt{-{}-shared-group} que hace pedirle al broker Mosquitto que reparta los mensajes entre varias instancias del bridge en vez de duplicarlos para cada instancia por separado, por lo que este argumento permite escalar el bridge horizontalmente. Esto está pensado específicamente para su despliegue como contenedor en \texttt{docker-compose.yml}.
 
+\subsection{Registro de esquemas (Apicurio Registry)}
 
+Apicurio Registry gobierna el contrato de datos del proyecto. Se despliega mediante la imagen oficial de Docker \texttt{apicurio/apicurio-registry:3.3.1}, con una imagen aparte para la interfaz web (\texttt{apicurio/apicurio-registry-ui:3.3.1}).
+
+Para que Apicurio pueda gobernar el esquema de validación de los datos, es necesario registrarlo antes del arranque del pipeline: se ejecuta manualmente la utilidad \texttt{register\_schema.py}, que toma el contrato ya definido en \texttt{pipeline/schemas/telemetry\_event\_v1.avsc} y lo publica en Apicurio, estableciendo así, en un arranque desde cero, la primera versión del esquema en el registro.
+
+\texttt{telemetry\_event\_v1.avsc} declara los cinco campos usados por el simulador de telemetría de la Tabla~\ref{tab:payload-simulador}; por tanto la estructura de campos del esquema es la siguiente (se omitieron los valores de `doc' en este ejemplo):
+
+{\footnotesize
+\begin{verbatim}
+{
+  "type": "record",
+  "name": "TelemetryEvent",
+  "namespace": "es.uea.tfm.iot",
+  "doc": "...",
+  "fields": [
+    {
+      "name": "building_id",
+      "type": "string",
+      "doc": "..."
+    },
+    {
+      "name": "meter_type",
+      "type": {
+        "type": "enum",
+        "name": "MeterType",
+        "symbols": ["electricity", "chilledwater", "steam", "hotwater", "unknown"],
+        "default": "unknown",
+        "doc": "..."
+      },
+      "doc": "..."
+    },
+    {
+      "name": "timestamp",
+      "type": {"type": "long", "logicalType": "timestamp-millis"},
+      "doc": "..."
+    },
+    {
+      "name": "meter_reading",
+      "type": "double",
+      "doc": "..."
+    },
+    {
+      "name": "sim_publish_ts",
+      "type": {"type": "long", "logicalType": "timestamp-millis"},
+      "doc": "..."
+    }
+  ]
+}
+\end{verbatim}
+}
+
+El que se registre el esquema como un paso manual e independiente sigue una práctica recomendada en la industria para entornos de producción. Dejar que cada productor registre automáticamente su propio esquema en Apicurio es cómodo en principio, pero delega el control de la evolución del contrato en vez de ser un proceso supervisado. Por tanto, la práctica recomendada es publicar los esquemas mediante un mecanismo controlado y externo a la aplicación \cite{yokota2024}.
+
+Los aspectos más importantes del funcionamiento de Apicurio dentro del pipeline son los siguientes:
+
+\begin{itemize}
+  \item Apicurio comprueba que cada esquema que se le envía para registrar sea sintácticamente válido como Avro. Adicionalmente comprueba que cada esquema nuevo sea compatible con todas las versiones de esquemas anteriores, no solo con el último. Si el esquema nuevo no pasa estas comprobaciones, se rechaza el registro.
+  \item El bridge arranca y le pide el esquema más reciente a Apicurio: hace una llamada por HTTP a la API (\texttt{get\_latest\_version} sobre el subject \texttt{iot.telemetry.raw-value}) y recibe de vuelta dos cosas: el \texttt{schema\_id} y el contenido del esquema Avro. Esto ocurre una sola vez, al arrancar el proceso, antes de leer ningún mensaje de Mosquitto.
+  \item Spark hace su propia llamada por HTTP a Apicurio, para obtener copia de todos los \texttt{schema\_id} existentes. El bridge y Spark no se coordinan entre sí para estas llamadas; cada uno le pregunta a Apicurio por su cuenta.
+  \item A partir de ahí, ninguno de los dos vuelve a llamar a Apicurio por cada mensaje. Tanto el bridge como Spark guardan los esquemas en memoria y los reutilizan durante toda la ejecución.
+  \item El bridge usa su copia del esquema más reciente para serializar cada evento válido en Avro, y le antepone la cabecera de cinco bytes (un byte mágico más el \texttt{schema\_id}) antes de publicarlo en Kafka.
+  \item Spark usa su copia de todos los esquemas para deserializar cada mensaje en Avro que lee de Kafka, comparando el \texttt{schema\_id} que trae la cabecera de cada mensaje contra el de los esquemas disponibles; si no encuentra el esquema, detiene el job en vez de deserializar un mensaje con errores.
+  \item Apicurio, por su parte, no guarda esquemas en memoria ni en una base de datos externa. Todos los esquemas registrados son almacenados en un tópico interno de Kafka (almacenamiento \texttt{kafkasql}), así que estos siguen disponibles aunque se reinicie el contenedor de Apicurio.
+\end{itemize}
 
 \section{Recursos requeridos}
 En este apartado debes enumerar los recursos que has utilizado para la ejecución del proyecto (recursos técnicos, dispositivos, material de laboratorio, asistencia de expertos, etc.). Si bien, en la sección donde se describe Metodología y Herramientas empleadas, se describen en detalle las mismas, en esta sección, únicamente debes enumerarlas.
