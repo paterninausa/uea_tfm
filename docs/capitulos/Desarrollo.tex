@@ -391,6 +391,36 @@ Además de \texttt{telemetry\_metrics}, TimescaleDB también contiene \texttt{st
   \label{tab:columnas-streaming-progress}
 \end{table}
 
+\subsection{PostgreSQL}
+
+PostgreSQL se despliega con la imagen \texttt{postgres:17-alpine}, en el puerto \texttt{5433} del host en vez del \texttt{5432} habitual, porque ese ya lo ocupa TimescaleDB (que también es un PostgreSQL). Sus credenciales, igual que las de TimescaleDB, se leen de \texttt{pipeline/.env}.
+
+Contiene tres tablas:
+
+\begin{itemize}
+  \item \texttt{buildings}: la tabla de dimensión de edificios descrita en la sección~\ref{sec:fuente-datos} (Tabla~\ref{tab:variables-dimension}), cargada desde el fichero Parquet correspondiente.
+  \item \texttt{sensor\_baseline}: la tabla de cuartiles por sensor, también descrita en la sección~\ref{sec:fuente-datos} (Tabla~\ref{tab:variables-baseline}).
+  \item \texttt{telemetry\_events}: la tabla de eventos individuales 
+\end{itemize}
+
+Las columnas de \texttt{telemetry\_events} no son agregaciones; conforman prácticamente el mismo esquema Avro usado por el bridge y por Spark, sin ningún campo calculado:
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{|l|p{9cm}|}
+    \hline
+    \textbf{Columna} & \textbf{Descripción} \\ \hline
+    \texttt{building\_id} & Identificador del edificio; primer componente de la clave del evento \\ \hline
+    \texttt{meter\_type} & Tipo de medidor; segundo componente de la clave del evento \\ \hline
+    \texttt{event\_time} & Instante de la lectura; tercer componente de la clave del evento \\ \hline
+    \texttt{meter\_reading} & La medición de consumo \\ \hline
+    \texttt{sim\_publish\_ts} & Instante de publicación del evento para del KPI de latencia \\ \hline
+    \texttt{ingested\_at} & Instante en que la fila se escribió o actualizó en la base de datos, asignado por la propia base de datos \\ \hline
+  \end{tabular}
+  \caption{Columnas de \texttt{telemetry\_events}.}
+  \label{tab:columnas-telemetry-events}
+\end{table}
+
 \section{Recursos requeridos}
 En este apartado debes enumerar los recursos que has utilizado para la ejecución del proyecto (recursos técnicos, dispositivos, material de laboratorio, asistencia de expertos, etc.). Si bien, en la sección donde se describe Metodología y Herramientas empleadas, se describen en detalle las mismas, en esta sección, únicamente debes enumerarlas.
 
