@@ -2,12 +2,12 @@
   "type": "record",
   "name": "TelemetryEvent",
   "namespace": "es.uea.tfm.iot",
-  "doc": "Lectura de un contador de energia de edificio. Reproduce lo que emitiria el propio contador: quien es, cuando y cuanto midio. Los atributos del edificio (emplazamiento, uso, superficie, ano de construccion, plantas) NO viajan en el evento: son estaticos y viven en la tabla de dimension, que Spark incorpora con un broadcast join. La clave natural del evento es la terna (building_id, meter_type, timestamp), verificada unica sobre las 5.682.185 lecturas del subconjunto; es lo que hace idempotente el reprocesamiento del log de Kafka.",
+  "doc": "Lectura de un contador de energia de edificio. Reproduce lo que emitiria el contador. La clave natural del evento es la terna (building_id, meter_type, timestamp).",
   "fields": [
     {
       "name": "building_id",
       "type": "string",
-      "doc": "Identificador del edificio que aloja el contador. ES TEXTO, NO UN NUMERO: nadie suma identificadores, y declararlo como int abria una via de corrupcion silenciosa. Avro no valida, convierte: un productor que enviara 156.9 —normal desde JavaScript o numpy, donde no hay enteros de verdad— veia su evento truncado a 156 y atribuido a OTRO edificio, sin error ni rastro; un booleano se volvia el edificio 1 y un valor fuera del rango de int32 se escribia igual. Como texto no hay conversion posible y un identificador mal formado no coincide con ningun edificio, asi que lo detecta el mecanismo de eventos sin dimension. Junto con meter_type forma la identidad del sensor, y es tambien la clave del mensaje en Kafka: mantiene en la misma particion y en orden todas las lecturas de un contador, que es lo que necesitan las ventanas de agregacion de Spark."
+      "doc": "Identificador del edificio que aloja el contador. ES TEXTO, NO UN NUMERO: declararlo como int abria una via de corrupcion silenciosa. Junto con meter_type forma la identidad del sensor, y es tambien la clave del mensaje en Kafka: mantiene en la misma particion y en orden todas las lecturas de un contador."
     },
     {
       "name": "meter_type",
@@ -16,24 +16,24 @@
         "name": "MeterType",
         "symbols": ["electricity", "chilledwater", "steam", "hotwater", "unknown"],
         "default": "unknown",
-        "doc": "Medio que mide el contador. EL ORDEN DE LOS SIMBOLOS ES EL FORMATO DE CABLE: Avro serializa un enum como el indice del simbolo dentro de este array, de modo que 'electricity' viaja como 0, 'chilledwater' como 1, etc. Ese orden coincide a proposito con los codigos 0..3 del dataset de origen. REORDENAR ESTE ARRAY CORROMPE EN SILENCIO TODOS LOS DATOS YA ESCRITOS: una lectura de electricidad pasaria a interpretarse como agua fria, sin ningun error. Anadir simbolos AL FINAL es seguro. 'unknown' no aparece en los datos: es el simbolo por defecto que permite a un consumidor con este esquema leer eventos escritos con una version futura que anada medios nuevos, en lugar de fallar la deserializacion (Objetivo 2)."
+        "doc": "Medio que mide el contador. REORDENAR ESTE ARRAY CORROMPE EN SILENCIO TODOS LOS DATOS YA ESCRITOS: una lectura de electricidad pasaria a interpretarse como agua fria, sin ningun error. Anadir simbolos AL FINAL es seguro: 'unknown' es el simbolo por defecto que permite a un consumidor con este esquema leer eventos escritos con una version futura que anada medios nuevos."
       },
-      "doc": "Tipo de contador. Se declaran los cuatro medios del dominio aunque el subconjunto en uso (emplazamientos 2, 3 y 5) solo contenga electricity, chilledwater y hotwater: el contrato describe el dominio, no la muestra."
+      "doc": "Tipo de contador. Se declaran los cuatro medios originales aunque el subconjunto en uso (emplazamientos 2, 3 y 5) solo contenga electricity, chilledwater y hotwater."
     },
     {
       "name": "timestamp",
       "type": {"type": "long", "logicalType": "timestamp-millis"},
-      "doc": "Instante de la medicion (event time). Es la columna sobre la que Spark aplica las ventanas temporales y el watermarking. Se interpreta como HORA LOCAL del emplazamiento: se comprobo que los emplazamientos del subconjunto estan en hora local y son mutuamente comparables sin conversion. Consecuencia a tener presente: dos eventos de emplazamientos distintos con la misma marca no son el mismo instante fisico. NO sirve para medir la latencia del pipeline, porque es una marca historica de 2016 y el replay ocurre hoy: para eso esta sim_publish_ts."
+      "doc": "Instante de la medicion (event time). Es la columna sobre la que Spark aplica las ventanas temporales y el watermarking. Se interpreta como HORA LOCAL del emplazamiento."
     },
     {
       "name": "meter_reading",
       "type": "double",
-      "doc": "Valor medido por el contador. ATENCION - LA UNIDAD DEPENDE DE meter_type: la documentacion del dataset la describe como 'kWh o equivalente', lo que significa que electricidad, agua fria, vapor y agua caliente NO son directamente comparables ni sumables entre si. Se observa en los datos: la mediana es 43,6 en electricity, 146,0 en chilledwater y 8,8 en hotwater. Toda agregacion debe incluir meter_type en la clave de agrupacion; promediar o sumar a traves de tipos distintos produce una cifra sin significado fisico. El precedente del dominio (BACnet, ANSI/ASHRAE 135) separa por eso el tipo de objeto de su propiedad Units."
+      "doc": "Valor medido por el contador. La documentacion del dataset la describe como 'kWh o equivalente', lo que significa que electricidad, agua fria, vapor y agua caliente NO son directamente comparables ni sumables entre si."
     },
     {
       "name": "sim_publish_ts",
       "type": {"type": "long", "logicalType": "timestamp-millis"},
-      "doc": "Epoch en milisegundos del instante del publish() en MQTT. Lo anade el simulador, no procede del dataset: es INSTRUMENTACION para medir la latencia extremo a extremo del Objetivo 1, calculada como hora_de_persistencia - sim_publish_ts. Es el segundo reloj del evento y esta a unos 9,6 anos de distancia de `timestamp`, porque los datos son de 2016 y se reproducen hoy. Con replay acelerado NO representa una cadencia de transmision realista: a 740 ev/s dos eventos consecutivos reciben marcas separadas por 1,35 ms aunque sus tiempos de evento disten una hora, y varios eventos pueden compartir el mismo milisegundo. No debe usarse para ordenar ni para desempatar."
+      "doc": "Epoch en milisegundos del instante del publish() en MQTT. Lo anade el simulador, no procede del dataset."
     }
   ]
 }
