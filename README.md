@@ -129,7 +129,7 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
        python pipeline/schemas/register_schema.py
        python pipeline/bridge/mqtt_kafka_bridge.py
        python pipeline/spark/stream_processing.py --trigger "1 second"
-       python pipeline/simulator/mqtt_simulator.py --acelerar 2000 --limite 50000 --traer-a now
+       python pipeline/simulator/mqtt_simulator.py --acelerar 2000 --limite 50000
 
    El ciclo completo de medicion de KPIs (estado limpio, carga, informe) esta
    en [`pipeline/tools/README.md`](pipeline/tools/README.md).
