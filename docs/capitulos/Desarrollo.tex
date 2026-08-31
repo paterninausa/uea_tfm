@@ -26,6 +26,7 @@ El proyecto se desarrolló a lo largo de tres meses, entre junio y agosto de 202
 \section{Descripción de la solución, metodologías y herramientas \mbox{empleadas}}
 
 \subsection{Visión general de la arquitectura}
+\label{sec:vision-general-arquitectura}
 
 El sistema implementa una arquitectura Kappa de flujo único con una bifurcación final hacia dos sumideros, tal y como muestra la Figura~\ref{fig:arquitectura-tfm}. Los componentes son servicios independientes, desacoplados mediante contenedores Docker, y la comunicación entre productores y consumidores de datos se ejecuta usando Kafka como log reproducible, mientras que la gobernanza de esquemas se resuelve a través del registro Apicurio.
 
@@ -38,7 +39,7 @@ El sistema implementa una arquitectura Kappa de flujo único con una bifurcació
 
 El simulador (\texttt{mqtt\_simulator.py}) publica telemetría hacia Eclipse Mosquitto, que actúa únicamente como broker de ingesta MQTT. El bridge, un microservicio de diseño propio, se suscribe a los mensajes desde Mosquitto, los serializa contra Apicurio Registry conforme al esquema Avro vigente y los publica en Kafka. 
 
-La naturaleza de Kafka es de un log persistente de bytes crudos, ajeno a la estructura interna de los mensajes almacenados y distribuidos. Es por ello que el bridge, en la escritura, y Spark Structured Streaming, en la lectura, son quienes dialogan directamente con Apicurio para serializar y deserializar los bytes almacenados y distribuidos por Kafka.
+La naturaleza de Kafka es de un log persistente de bytes crudos, ajeno a la estructura interna de los mensajes almacenados y distribuidos. Es por ello que el bridge, en la escritura, y Spark Structured Streaming, en la lectura, son quienes dialogan directamente con Apicurio para serializar y deserializar las cadenas de bytes almacenadas y distribuidas por Kafka.
 
 Spark Structured Streaming consume cada mensaje mediante dos consultas independientes sobre el mismo flujo de Kafka; en una de ellas enriquece los mensajes y agrega métricas por ventana temporal hacia TimescaleDB para el consumo operacional en Grafana, y en la otra consulta guarda los mensajes hacia PostgreSQL para el consumo analítico con Power BI. Al tratarse de consultas independientes, cada una mantiene su propio \textit{checkpoint} y su propia tolerancia a fallos, de modo que la caída de una consulta no interrumpe a la otra (sección~\ref{sec:validacion-procesamiento}).
 
@@ -218,6 +219,7 @@ La configuración (\texttt{docker/mosquitto/mosquitto.conf}) fija cuatro aspecto
 El archivo \texttt{docker-compose.yml} comprueba el estado del contenedor con \texttt{mosquitto\_sub} en lugar de solo verificar que el puerto responde, confirmando que el broker acepta conexiones antes de considerarlo saludable.
 
 \subsection{Bridge MQTT \(\to\) Kafka}
+\label{sec:bridge-mqtt-kafka}
 
 El bridge (\texttt{mqtt\_kafka\_bridge.py}) se suscribe a los mensajes \texttt{iot/\#} en Mosquitto, valida cada mensaje contra el esquema Avro vigente en Apicurio Registry, lo serializa a una cadena de bytes y lo publica en Kafka. Los mensajes que no superen la validación no se descartan: se desvían al tópico de mensajes inválidos de Kafka (\texttt{iot.telemetry.dlq}) junto con el motivo del rechazo, el tópico MQTT de origen (por ejemplo \texttt{iot/346/electricity/telemetry}), y un timestamp de cuando fue procesado por el bridge.
 
@@ -231,7 +233,7 @@ Del lado de Kafka, el bridge se configura con \texttt{acks=`all'}, el nivel de c
   \item Con \texttt{acks=`all'}, Kafka espera a que todas las réplicas en sincronía también tengan el mensaje, y solo entonces envía la confirmación al bridge.
 \end{itemize}
 
-De esta forma garantizamos que los mensajes publicados por el bridge no se dan por confirmados hasta que ya están almacenados en todas las réplicas, evitando una potencial pérdida de mensajes ante una caída de un broker de Kafka.
+De esta forma se garantiza que los mensajes publicados por el bridge no se dan por confirmados hasta que ya están almacenados en todas las réplicas, evitando una potencial pérdida de mensajes ante una caída de un broker de Kafka.
 
 Ante el posible escenario de una caída del microservicio de bridge, la sesión persistente de Mosquitto con QoS 1 y \texttt{max\_queued\_messages 10000} retiene los mensajes hasta la reconexión del microservicio para continuar con la validación, serialización y publicación en Kafka.
 
@@ -292,19 +294,34 @@ Para que Apicurio pueda gobernar el esquema de validación de los datos, es nece
 \end{verbatim}
 }
 
-El que se registre el esquema como un paso manual e independiente sigue una práctica recomendada en la industria para entornos de producción. Dejar que cada productor registre automáticamente su propio esquema en Apicurio es cómodo en principio, pero delega el control de la evolución del contrato en vez de ser un proceso supervisado. Por tanto, la práctica recomendada es publicar los esquemas mediante un mecanismo controlado y externo a la aplicación \cite{yokota2024}.
+El que se registre el esquema como un paso manual e independiente sigue una práctica recomendada en la industria para entornos de producción. Dejar que cada productor de mensajes registre automáticamente su propio esquema en Apicurio es cómodo en principio, pero delega el control de la evolución de esquemas en vez de ser un proceso supervisado. Por tanto, la práctica recomendada es publicar los esquemas mediante un mecanismo controlado y externo a la aplicación \cite{yokota2024}.
 
 Los aspectos más importantes del funcionamiento de Apicurio dentro del pipeline son los siguientes:
 
 \begin{itemize}
-  \item Apicurio comprueba que cada esquema que se le envía para registrar sea sintácticamente válido como Avro. Adicionalmente comprueba que cada esquema nuevo sea compatible con todas las versiones de esquemas anteriores, no solo con el último. Si el esquema nuevo no pasa estas comprobaciones, se rechaza el registro.
-  \item El bridge arranca y le pide el esquema más reciente a Apicurio: hace una llamada por HTTP a la API (\texttt{get\_latest\_version} sobre el subject \texttt{iot.telemetry.raw-value}) y recibe de vuelta dos cosas: el \texttt{schema\_id} y el contenido del esquema Avro. Esto ocurre una sola vez, al arrancar el proceso, antes de leer ningún mensaje de Mosquitto.
+  \item Apicurio comprueba que cada esquema que se le envía para su registro sea sintácticamente válido para serializar los mensajes a Avro. Adicionalmente comprueba que cada esquema nuevo sea compatible con todas las versiones de esquemas anteriores, no solo con el último. Si el esquema nuevo no pasa estas comprobaciones, se rechaza el registro.
+  \item El bridge arranca y le pide el esquema más reciente a Apicurio: hace una llamada por HTTP a la API (\texttt{get\_latest\_version} sobre el subject \texttt{iot.telemetry.raw-value}) y recibe de vuelta dos cosas: el \texttt{schema\_id} y el contenido del esquema. Esto ocurre una sola vez, al arrancar el proceso, antes de leer el primer mensaje de Mosquitto.
   \item Spark hace su propia llamada por HTTP a Apicurio, para obtener copia de todos los \texttt{schema\_id} existentes. El bridge y Spark no se coordinan entre sí para estas llamadas; cada uno le pregunta a Apicurio por su cuenta.
   \item A partir de ahí, ninguno de los dos vuelve a llamar a Apicurio por cada mensaje. Tanto el bridge como Spark guardan los esquemas en memoria y los reutilizan durante toda la ejecución.
-  \item El bridge usa su copia del esquema más reciente para serializar cada evento válido en Avro, y le antepone la cabecera de cinco bytes (un byte mágico más el \texttt{schema\_id}) antes de publicarlo en Kafka.
-  \item Spark usa su copia de todos los esquemas para deserializar cada mensaje en Avro que lee de Kafka, comparando el \texttt{schema\_id} que trae la cabecera de cada mensaje contra el de los esquemas disponibles; si no encuentra el esquema, detiene el job en vez de deserializar un mensaje con errores.
+  \item El bridge usa su copia del esquema más reciente dado por Apicurio para serializar cada mensaje válido en Avro, y le antepone la cabecera de cinco bytes (un byte mágico más el \texttt{schema\_id}) antes de publicarlo en Kafka como cadena de bytes.
+  \item Spark usa su copia de todos los esquemas para deserializar cada mensaje (cadena de bytes) que lee de Kafka, comparando el \texttt{schema\_id} que trae la cabecera de cada mensaje contra el de los esquemas disponibles; si no encuentra el esquema, detiene el job en vez de deserializar con errores la cadena de bytes.
   \item Apicurio, por su parte, no guarda esquemas en memoria ni en una base de datos externa. Todos los esquemas registrados son almacenados en un tópico interno de Kafka (almacenamiento \texttt{kafkasql}), así que estos siguen disponibles aunque se reinicie el contenedor de Apicurio.
 \end{itemize}
+
+\subsection{Apache Kafka}
+
+Kafka es el broker de mensajería sobre el que se apoya la arquitectura Kappa de flujo único descrita en la visión general (sección~\ref{sec:vision-general-arquitectura}): su naturaleza es la de un log persistente de bytes crudos, ajeno a la estructura interna de los datos almacenados y distribuidos. Se despliega en modo KRaft con la imagen oficial de Docker \texttt{apache/kafka:4.3.1} como un solo nodo para este proyecto, con lo cual el mismo nodo combina los roles de \textit{broker} y \textit{controller}. Al tratarse de un solo nodo, el factor de replicación de los mensajes es necesariamente uno: no hay ninguna réplica adicional a la que Kafka pueda esperar, ni a la que recurrir si el nodo cae. Es la topología adecuada para el desarrollo y las pruebas de este trabajo, pero un despliegue real exigiría más de un broker para tener tolerancia real a fallos.
+
+Cada mensaje recibido por Kafka desde el bridge es almacenado en su propia partición mediante la clave de partición compuesta de \texttt{building\_id:meter\_type}, que identifica de forma única a cada medidor, garantizando que todas sus lecturas se almacenen en la misma partición y se procesen en el orden en que se publicaron, tal como lo necesitan las ventanas de agregación de Spark.
+
+Se utilizan dos tópicos para el enrutamiento de los mensajes: el tópico \texttt{iot.telemetry.raw} contiene los mensajes válidos publicados por el bridge, y el tópico \texttt{iot.telemetry.dlq} contiene los mensajes rechazados, descritos en la sección~\ref{sec:bridge-mqtt-kafka}. Estos tópicos se crean de forma automática; tanto sus nombres como el número de particiones y el factor de replicación se configuran con los valores establecidos en el archivo \texttt{pipeline/.env}.
+
+Tanto el tópico \texttt{iot.telemetry.raw} como \texttt{iot.telemetry.dlq} retienen los mensajes durante siete días. Esa ventana es la que sostiene la recuperación sin pérdida de datos: un consumidor de datos de Kafka que se detiene puede reiniciarse sin perder eventos dentro de ese margen de tiempo.
+
+En la configuración de despliegue para Kafka en \texttt{docker-compose.yml} se establecen dos conexiones distintas con los otros servicios del sistema: \texttt{INTERNAL} (\texttt{kafka:9092}), que es usada por la imagen del bridge, y \texttt{EXTERNAL} (\texttt{localhost:29092}), que es usada por Spark. Esto es necesario porque el job de Spark no se ejecuta en un contenedor, como se explicará en la sección~\ref{sec:spark-structured-streaming}.
+
+\subsection{Apache Spark Structured Streaming}
+\label{sec:spark-structured-streaming}
 
 \section{Recursos requeridos}
 En este apartado debes enumerar los recursos que has utilizado para la ejecución del proyecto (recursos técnicos, dispositivos, material de laboratorio, asistencia de expertos, etc.). Si bien, en la sección donde se describe Metodología y Herramientas empleadas, se describen en detalle las mismas, en esta sección, únicamente debes enumerarlas.
