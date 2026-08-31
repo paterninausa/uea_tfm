@@ -155,46 +155,51 @@ descartaron **en silencio** como tardios. No es un fallo del codigo sino
 semantica de watermark, pero es un riesgo real: una sola fecha mal puesta
 silencia datos validos posteriores sin dar ningun error.
 
-## Evolucion de esquema: drenar y conmutar
+## Evolucion de esquema: resolucion por mensaje (cadena `when`)
 
-El job deserializa todo el flujo con **un unico esquema**, el vigente al
-arrancar, porque `from_avro` recibe uno solo. No sabe consumir dos versiones a
-la vez. En lugar de anadir resolucion de esquema por mensaje, se adopta un
-procedimiento operativo que hace que **la coexistencia no llegue a ocurrir**:
+El job **decodifica cada mensaje con el esquema de su `schema_id`**, el mismo id
+que el `AvroSerializer` del bridge escribe en la cabecera de cable. Es el
+comportamiento del deserializador estandar de Confluent: varias versiones del
+contrato pueden convivir en el topico, y el productor y el consumidor se
+despliegan sin coordinar una ventana comun.
 
-1. **Parar el simulador.** Deja de entrar telemetria nueva.
-2. **Esperar unos segundos.** El bridge vacia su buffer y el job alcanza el
-   final del topico.
-3. **Registrar la version nueva** con `register_schema.py`.
-4. **Reiniciar el bridge.** Pasa a producir con el esquema nuevo.
-5. **Reiniciar el job.** Pasa a leer con el esquema nuevo.
-6. **Reanudar el simulador.**
+Como se hace, sin libreria JVM:
 
-La interrupcion son segundos y **no se pierde ningun evento**: Kafka retiene 7
-dias, el job reanuda desde su checkpoint y el bridge desde su sesion MQTT
-persistente. Ambas recuperaciones estan verificadas por separado.
+1. `common/apicurio.py::all_schemas()` lee del registro `{schema_id: esquema}`
+   de **todas** las versiones del subject, una vez al arrancar el job.
+2. `decode_events()` construye una **cadena `F.when()` en runtime**, una rama por
+   `schema_id`. Cada rama hace `from_avro` con SU esquema —el del escritor de
+   esos bytes, asi que el indice de los enums y los campos casan exactos— y
+   proyecta a los cinco campos del contrato comunes a toda version
+   (`_proyeccion_contrato`). Spark evalua el valor de una rama `when` solo si su
+   condicion se cumple, asi que un mensaje v1 nunca se intenta decodificar con
+   otro esquema.
 
-Es la opcion mas sencilla de explicar y de defender, y no requiere codigo
-adicional. La alternativa —resolver el esquema de cada mensaje por su id
-contra el registro— se descarto a proposito: el cliente del registro ya
-tiene la cache necesaria, pero anade complejidad que este trabajo no necesita.
+No se uso **ABRiS** (`za.co.absa:abris`, la libreria al uso para esto): no tiene
+release para Spark 4.x (la rama 6.x va de Spark 3.2 a 3.5). La cadena `when` se
+queda en la API declarativa y no anade dependencias.
 
-### Si el procedimiento se ejecuta mal, el job se detiene
+### Limitacion consciente y orden de despliegue
 
-`guard_schema_version` comprueba el id de esquema de cada evento y **detiene el
-job** si no es el esperado. Antes lo *filtraba*, y esa era la ultima via de
-perdida silenciosa del pipeline: los eventos de una version inesperada
-desaparecian sin medidor ni traza, justo en el momento en que mas importa.
+El conjunto de esquemas se fija al arrancar el job; una version registrada
+DESPUES no se reconoce hasta reiniciar. No es el acoplamiento del antiguo
+procedimiento de "drenar y conmutar" —parar el simulador, drenar bridge y job,
+reiniciar los dos—: es un reinicio de **un** servicio, sin drenar. El bridge
+tambien resuelve su esquema al arrancar (`latest_schema`), asi que **desplegar
+el consumidor antes que el productor** garantiza que nunca haya en Kafka bytes
+de una version que el job no conozca. v1, v2, v3... conviven indefinidamente.
+
+### Un `schema_id` no registrado detiene el job
+
+Antes lo hacia `guard_schema_version`; ahora es el `otherwise` de la cadena, un
+`F.raise_error` evaluado sobre `meter_reading` —columna que el resto del job usa
+siempre, para que el optimizador no pueda eliminarla—.
 
 Detenerse es preferible a descartar, y no por purismo: con 7 dias de retencion
-en Kafka, **parar es recuperable** —se corrige y se reanuda desde el checkpoint
-sin perder un evento— mientras que descartar es irreversible.
-
-La comprobacion se aplica sobre la columna `meter_reading` y no como columna
-aparte, para que el optimizador no pueda eliminarla. Verificado: inyectando un
-evento con id de esquema 99 en un flujo donde `meter_reading` solo se usa dentro
-de una agregacion, el job aborta con el mensaje completo, y la traza muestra
-que la comprobacion se evaluo dentro del propio `hashAgg`.
+en Kafka, **parar es recuperable** —se registra el esquema que falta, se
+reinicia el job y se reanuda desde el checkpoint sin perder un evento— mientras
+que decodificar esos bytes con otro esquema daria campos corruptos en silencio,
+porque Avro es posicional.
 
 ## Resiliencia: el proceso ya no es un punto unico de fallo
 

@@ -22,7 +22,7 @@ sirve tambien de comprobacion.
 
 Uso:
     python register_schema.py
-    python register_schema.py --schema telemetry_event_v2.avsc
+    python register_schema.py --schema ruta/al/esquema_nuevo.avsc
 """
 
 import argparse

@@ -25,7 +25,7 @@ procesamiento streaming").
 
 El pipeline corre de extremo a extremo sobre el dataset real de ASHRAE:
 
-- [x] Simulador MQTT (asyncio, una conexion por sensor) con escalera de carga y rebase temporal
+- [x] Simulador MQTT (asyncio, una conexion por sensor) con reubicacion temporal del historico al presente
 - [x] Stack completo en Docker: Mosquitto, Kafka (KRaft), Apicurio, TimescaleDB, PostgreSQL, Grafana
 - [x] Microservicio bridge MQTT-Kafka, con validacion de dominio y cola de mensajes muertos (DLQ)
 - [x] Esquema Avro v1 registrado y gobernado (validez, y compatibilidad hacia atras y hacia adelante)

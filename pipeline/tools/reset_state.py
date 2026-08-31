@@ -58,7 +58,7 @@ TOPICO_DLQ = "iot.telemetry.dlq"
 # Procesos que deben estar parados: recrear un topico o borrar un checkpoint
 # mientras el job corre lo deja leyendo de algo que ya no existe.
 PROCESOS_INCOMPATIBLES = ("stream_processing.py", "mqtt_kafka_bridge.py",
-                          "mqtt_simulator.py", "load_ladder.py")
+                          "mqtt_simulator.py")
 
 TABLAS_MEDICION = {
     TIMESCALE: ["telemetry_metrics", "streaming_progress"],

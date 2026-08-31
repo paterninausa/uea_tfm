@@ -348,10 +348,6 @@ python pipeline/tools/failover_test.py --target mosquitto
 ```
 
 ```bash
-python pipeline/tools/load_ladder.py --speedups 5000,10000,20000,40000
-```
-
-```bash
 python pipeline/tools/watermark_poison_test.py
 ```
 

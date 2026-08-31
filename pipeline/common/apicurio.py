@@ -60,8 +60,11 @@ def latest_schema(client: SchemaRegistryClient,
                   subject: str = DEFAULT_SUBJECT) -> tuple[int, str]:
     """Devuelve (schema_id, schema_str) de la ultima version del subject.
 
-    `schema_id` es el que viaja en la cabecera de cada mensaje y con el que el
-    consumidor comprueba que todo el flujo se escribio con el esquema esperado.
+    Lo usa el PRODUCTOR (bridge), que serializa siempre con la version vigente,
+    y las herramientas que inyectan un evento suelto. El CONSUMIDOR usa
+    `all_schemas`: necesita reconocer cualquier version que pueda haber en el
+    topico, no solo la ultima.
+
     Se resuelve UNA vez al arrancar: adoptar una version nueva se hace
     reiniciando el servicio, no en caliente.
     """
@@ -73,6 +76,40 @@ def latest_schema(client: SchemaRegistryClient,
             "Registralo antes: python pipeline/schemas/register_schema.py"
         ) from exc
     return rs.schema_id, rs.schema.schema_str
+
+
+def all_schemas(client: SchemaRegistryClient,
+                subject: str = DEFAULT_SUBJECT) -> dict[int, str]:
+    """Devuelve {schema_id: schema_str} de TODAS las versiones registradas del subject.
+
+    El consumidor (Spark) decodifica cada mensaje con el esquema con el que se
+    escribio: la cabecera de cable lleva el schema_id, y con este mapa el job
+    elige el `from_avro` correcto por fila. Asi varias versiones del contrato
+    pueden convivir en el topico y el productor y el consumidor se despliegan
+    sin coordinar una ventana comun.
+
+    Se resuelve UNA vez al arrancar. Una version registrada DESPUES no se
+    reconoce hasta reiniciar el proceso; el orden de despliegue —consumidor
+    antes que productor— garantiza que nunca haya en Kafka bytes de una version
+    que el job todavia no conozca (el productor tambien resuelve su esquema al
+    arrancar, con `latest_schema`).
+    """
+    try:
+        versiones = client.get_versions(subject)
+    except Exception as exc:
+        raise SchemaRegistryError(
+            f"No se pudieron listar las versiones del subject '{subject}' en el registro. "
+            "Registralo antes: python pipeline/schemas/register_schema.py"
+        ) from exc
+    if not versiones:
+        raise SchemaRegistryError(
+            f"El subject '{subject}' no tiene ninguna version registrada. "
+            "Registralo antes: python pipeline/schemas/register_schema.py")
+    esquemas: dict[int, str] = {}
+    for v in versiones:
+        rv = client.get_version(subject, v)
+        esquemas[rv.schema_id] = rv.schema.schema_str
+    return esquemas
 
 
 def encode_header(schema_id: int) -> bytes:

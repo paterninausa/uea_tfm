@@ -8,7 +8,6 @@ extremo al otro y no opciones que unicamente se usan al preparar una prueba.
 | Script | Para que | Objetivo del TFM |
 |---|---|---|
 | `reset_state.py` | Dejar el sistema en estado limpio antes de medir | precondicion de todos |
-| `load_ladder.py` | Escalera de sensores concurrentes | 5 |
 | `kpi_report.py` | Emitir el cuadro de KPIs en Markdown | 1, 2, 3, 4 y 5 |
 | `failover_test.py` | Tumbar un servicio y cronometrar la recuperacion | 5 |
 | `watermark_poison_test.py` | Demostrar que un evento con fecha futura detiene la agregacion de todos los sensores | 1 y 5 |
@@ -125,80 +124,9 @@ recrear un topico bajo los pies de un consumidor lo deja leyendo de algo que ya
 no existe. Con `--all` trunca ademas `buildings` y `sensor_baseline`, que no
 hace falta para aislar una medicion porque el job las recarga al arrancar.
 
-## load_ladder.py
-
-Ejecuta la escalera del Objetivo 5 invocando al simulador una vez por peldano,
-con el MISMO `--acelerar` y distinto `--max-sensors`.
-
-```bash
-python pipeline/tools/load_ladder.py --ladder 100,250,500,652 --acelerar 2000
-```
-
-**Por que el speedup se mantiene y la tasa no.** Con una tasa global fija, 100 y
-652 sensores publican los mismos eventos por segundo: se reparte la misma carga
-entre mas identidades y no se escala nada —de ahi salia aquella degradacion del
-0,6% que no significaba gran cosa—. `--acelerar` fija la cadencia por sensor, asi
-que la carga total crece con el numero de medidores, que es lo que dice el
-objetivo.
-
-**Por que se mide en el consumo y no en el productor.** El PUBACK de Mosquitto
-significa "aceptado", no "entregado al pipeline": se midio al broker confirmando
-a 7.324 ev/s mientras el bridge llevaba consumidos 8.230 de 40.000, con el resto
-encolado y la latencia MQTT→Kafka disparada de 2 ms a 683 ms. Cada peldano se
-mide por tanto con lo que llega al final del recorrido —mensajes en Kafka, filas
-en PostgreSQL, duracion de micro-lote de Spark— y no con lo que el productor
-consigue soltar.
-
-Entre peldanos espera a que las filas dejen de crecer: si no, los mensajes
-todavia en vuelo al terminar un peldano se contarian en el siguiente.
-
-Si el simulador no sostuvo su propia agenda, el peldano se marca como no valido
-en lugar de publicar una cifra que mide la maquina del productor.
-
-**Se repite el primer peldano al final, en caliente**, y no es opcional: la
-primera version de esta escalera, ejecutada solo en orden creciente, concluyo que
-el throughput MEJORA al anadir sensores (1.062 → 1.332 ev/s). El sesgo era de
-calentamiento y solo se ve repitiendo el peldano base cuando el sistema ya lleva
-rato en marcha.
-
-### La rampa de saturacion
-
-`--aceleraciones` en lugar de `--ladder` mantiene los sensores fijos y sube el ritmo.
-Responde a otra pregunta: no "cuanto se degrada al crecer", sino "hasta donde
-aguanta".
-
-```bash
-python pipeline/tools/load_ladder.py --aceleraciones 5000,10000,20000,40000 --events-per-step 40000
-```
-
-Medido el 19 de agosto de 2026 con los 652 sensores:
-
-| Ritmo pedido | Publicado real | Persistido | Latencia p95 | Lote p95 |
-|---|---|---|---|---|
-| 906 ev/s | 896,5 (99%) | 40.000 | 1,28 s | 629 ms |
-| 1.811 ev/s | **1.798,6** (99,3%) | 40.000 | 1,97 s | 906 ms |
-| 3.622 ev/s | 2.550,5 (70%) | 40.000 | 3,02 s | 1.108 ms |
-| 7.244 ev/s | 2.297,0 (32%) | 39.316 | 6,44 s | 1.192 ms |
-
-**El pipeline sostiene 1.800 ev/s con todo dentro de objetivo**, que son 10.000
-veces el caso de uso real de 0,1797 ev/s.
-
-**El techo de ~2.900 ev/s es del simulador, no del pipeline**: a partir de ahi
-publica MENOS cuanto mas se le pide (2.920 -> 2.686 -> 2.421), la curva
-descendente tipica de saturacion. El pipeline persistio el 100% de lo que le
-llego en todos los peldanos.
-
-**Y por encima de ese punto, Mosquitto descarta en silencio.** En el peldano mas
-alto el simulador registro 40.000 publicados y 0 fallidos —recibio su PUBACK de
-cada uno— pero al bridge solo llegaron 38.221. El broker habia tirado 1.779 al
-llenarse su cola de salida. Nadie da error: ni el productor, ni el bridge, ni la
-DLQ, ni los logs del broker. Es un 4,4% de perdida invisible con todos los
-indicadores en verde, y por eso `kpi_report.py` lee ahora
-`$SYS/broker/publish/messages/dropped`.
-
 ## kpi_report.py
 
-Interroga las cuatro fuentes donde el pipeline deja constancia:
+Interroga las fuentes donde el pipeline deja constancia:
 
 | Objetivo | Metrica | Fuente |
 |---|---|---|
@@ -206,7 +134,7 @@ Interroga las cuatro fuentes donde el pipeline deja constancia:
 | 2 | % validados, esquema vigente | Apicurio + topico DLQ |
 | 3 | duracion de micro-lote, ritmo | `streaming_progress` de TimescaleDB |
 | 4 | tiempo de respuesta de cada panel | API de consultas de Grafana |
-| 5 | escalabilidad | `ultima_escalera.json` |
+| 5 | recuperacion ante fallo | `ultimo_failover.json` (de `failover_test.py`) |
 
 El Objetivo 4 se mide **a traves de Grafana** (`/api/ds/query`) y no lanzando el
 SQL contra la base. Dos razones: los `rawSql` de los paneles llevan macros
@@ -273,8 +201,8 @@ configuracion concreta ni reproducir. Los ficheros rotan a los 3 MB y se
 conservan tres copias, de modo que una sesion de medicion entera cabe sin
 vigilar el disco.
 
-No se versionan. Los artefactos de datos —`informe_kpi.md`,
-`ultima_escalera.json`, `ultimo_failover.json`— viven en el mismo directorio.
+No se versionan. Los artefactos de datos —`informe_kpi.md` y
+`ultimo_failover.json`— viven en el mismo directorio.
 
 ## watermark_poison_test.py
 

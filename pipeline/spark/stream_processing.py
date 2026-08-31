@@ -58,7 +58,7 @@ from common.apicurio import (  # noqa: E402
     DEFAULT_SUBJECT,
     HEADER_SIZE,
     SchemaRegistryError,
-    latest_schema,
+    all_schemas,
     schema_registry_client,
 )
 from common.connection_args import (  # noqa: E402
@@ -132,28 +132,58 @@ def read_kafka(spark: SparkSession, args: argparse.Namespace) -> DataFrame:
     )
 
 
-def decode_events(raw: DataFrame, schema_json: str) -> DataFrame:
-    """Quita la cabecera de cable de Confluent y deserializa el payload Avro.
+def _proyeccion_contrato(evento):
+    """Reduce un struct decodificado al subconjunto de campos comun a todas las
+    versiones del contrato.
+
+    La regla FULL_TRANSITIVE mas `check_enum_order` solo dejan anadir campos
+    opcionales al final, asi que estos cinco existen en cualquier version
+    registrada, con el mismo tipo. Proyectar a una forma comun es lo que permite
+    que las ramas de la cadena `when` de `decode_events` tengan un tipo
+    identico. Un campo opcional nuevo de una version posterior no se arrastra
+    hasta que el pipeline lo necesite.
+    """
+    return F.struct(
+        evento["building_id"].alias("building_id"),
+        evento["meter_type"].alias("meter_type"),
+        evento["timestamp"].alias("timestamp"),
+        evento["meter_reading"].alias("meter_reading"),
+        evento["sim_publish_ts"].alias("sim_publish_ts"),
+    )
+
+
+def decode_events(raw: DataFrame, esquemas_por_id: dict[int, str]) -> DataFrame:
+    """Quita la cabecera de cable de Confluent y decodifica el payload Avro
+    eligiendo el esquema por el id que viaja en cada mensaje.
 
     La cabecera son 5 bytes: [byte magico 0x00][id de esquema de 4 bytes
-    big-endian]. El id se extrae a una columna para poder comprobar que todos
-    los mensajes se escribieron con el esquema que este job espera. Es el
-    formato que escribe el AvroSerializer del bridge (ver `common/apicurio.py`).
+    big-endian]. Ese id selecciona con que esquema registrado se decodifica el
+    payload: `esquemas_por_id` mapea cada schema_id del registro a su esquema
+    Avro, resuelto al arrancar con `all_schemas`. Es el formato que escribe el
+    AvroSerializer del bridge (ver `common/apicurio.py`).
 
-    LIMITACION CONOCIDA: se deserializa todo el flujo con un unico esquema, el
-    vigente al arrancar. Avro es un formato posicional, de modo que leer bytes
-    escritos con otra version usando este esquema produciria campos corruptos,
-    no un error limpio. Por eso los mensajes con un globalId distinto se
-    detienen el job (ver `guard_schema_version`) en lugar de deserializarlos a
-    ciegas. Soportar varias versiones a la vez exigiria resolver el esquema por
-    fila contra el registro; se descarto a proposito en favor del procedimiento
-    de drenar y conmutar, que hace que la coexistencia no llegue a ocurrir.
+    Asi el job lee CADA mensaje con el esquema con el que se escribio, y varias
+    versiones del contrato pueden convivir en el topico: el productor y el
+    consumidor se despliegan sin coordinar una ventana comun. Es el
+    comportamiento del deserializador estandar de Confluent.
+
+    RESOLUCION POR MENSAJE, NO POR FILA CONTRA EL REGISTRO. El conjunto de
+    esquemas se fija al arrancar; una version registrada despues no se reconoce
+    hasta reiniciar el job. Como el productor tambien resuelve su esquema al
+    arrancar, desplegar el consumidor antes que el productor garantiza que nunca
+    haya en Kafka bytes de una version que el job no conozca.
+
+    UN schema_id NO REGISTRADO DETIENE EL JOB. Avro es posicional: decodificar
+    esos bytes con otro esquema daria campos corruptos, no un error. Parar es
+    recuperable —el evento sigue en Kafka, se registra el esquema, se reinicia y
+    se reanuda desde el checkpoint sin perder nada—; descartar es irreversible.
+    La guarda se evalua sobre `meter_reading`, columna que el resto del job usa
+    siempre, para que el optimizador no pueda eliminarla.
     """
     con_cabecera = raw.select(
         F.col("key").cast("string").alias("kafka_key"),
         F.col("partition").alias("kafka_partition"),
         F.col("offset").alias("kafka_offset"),
-        F.col("value").alias("raw_value"),
         # El id son los 4 bytes que siguen al byte magico (offset 2, longitud
         # HEADER_SIZE-1). conv(hex(...), 16, 10) los interpreta como entero
         # big-endian.
@@ -162,55 +192,48 @@ def decode_events(raw: DataFrame, schema_json: str) -> DataFrame:
         F.expr(f"substring(value, {HEADER_SIZE + 1}, length(value) - {HEADER_SIZE})")
             .alias("avro_payload"),
     )
-    return con_cabecera.withColumn(
-        "evento",
-        # mode=FAILFAST: un payload que no encaje debe romper el micro-lote en
-        # lugar de propagar una fila de nulos silenciosa aguas abajo. El bridge
-        # ya garantiza que todo lo que entra en el topico valida contra el
-        # esquema, asi que un fallo aqui senala un problema real de formato.
-        from_avro(F.col("avro_payload"), schema_json, {"mode": "FAILFAST"}),
-    )
 
+    # Cadena `when`: una rama por schema_id registrado. Cada rama decodifica con
+    # SU esquema —el del escritor de esos bytes, asi que la lectura es exacta,
+    # incluido el indice de los enums— y proyecta a la forma comun del contrato.
+    #
+    # mode=FAILFAST: un payload que no encaje rompe el micro-lote en vez de
+    # propagar una fila de nulos. Spark evalua el valor de una rama `when` solo
+    # cuando su condicion se cumple (corto-circuito), asi que un mensaje v1
+    # nunca se intenta decodificar con el esquema de otra version.
+    #
+    # El otherwise final es el primer esquema, y solo fija el tipo de la
+    # expresion: un schema_id que no case ninguna rama lo corta la guarda de
+    # abajo antes de que ese valor llegue a usarse.
+    ids = sorted(esquemas_por_id)
+    items = list(esquemas_por_id.items())
+    decodificado = _proyeccion_contrato(
+        from_avro(F.col("avro_payload"), items[0][1], {"mode": "FAILFAST"}))
+    for sid, sjson in items[1:]:
+        decodificado = F.when(
+            F.col("schema_id") == F.lit(int(sid)),
+            _proyeccion_contrato(
+                from_avro(F.col("avro_payload"), sjson, {"mode": "FAILFAST"})),
+        ).otherwise(decodificado)
 
-def guard_schema_version(df: DataFrame, expected_schema_id: int) -> DataFrame:
-    """Detiene el job si aparece un evento escrito con otro esquema.
+    con_evento = con_cabecera.withColumn("evento", decodificado)
 
-    La version anterior FILTRABA esos eventos, y era la ultima via de perdida
-    silenciosa que quedaba en el pipeline: los mensajes de una version de
-    esquema inesperada desaparecian sin dejar rastro ni medidor, lo que
-    chocaria con el objetivo de perdida < 0,1% justo cuando mas importa.
-
-    Detenerse es preferible a descartar, y no por purismo: en una arquitectura
-    Kappa el log de Kafka conserva 7 dias, asi que parar es RECUPERABLE —se
-    corrige la configuracion y se reanuda desde el checkpoint sin perder un
-    evento—, mientras que descartar es irreversible.
-
-    La comprobacion se aplica sobre `meter_reading`, no como columna aparte,
-    para que el optimizador de Spark no pueda eliminarla: esa columna se usa
-    siempre aguas abajo, de modo que la condicion se evalua necesariamente en
-    cada fila.
-
-    El procedimiento operativo que evita llegar aqui es el de "drenar y
-    conmutar" descrito en el README: no se permite que dos versiones de
-    esquema convivan en el topico.
-    """
     lectura_validada = F.when(
-        F.col("schema_id") == F.lit(expected_schema_id),
+        F.col("schema_id").isin(ids),
         F.col("evento.meter_reading"),
     ).otherwise(
         F.raise_error(
             F.concat(
-                F.lit("Evento con id de esquema inesperado: se esperaba "),
-                F.lit(str(expected_schema_id)),
-                F.lit(" y llego "),
+                F.lit("Evento con id de esquema no registrado: llego "),
                 F.col("schema_id").cast("string"),
-                F.lit(". El job se detiene en lugar de descartarlo; el evento sigue en Kafka. "),
-                F.lit("Revisa el procedimiento de drenar y conmutar del README."),
+                F.lit(f"; registrados {ids}. El job se detiene en lugar de descartarlo; "),
+                F.lit("el evento sigue en Kafka. Registra el esquema y reinicia el job "),
+                F.lit("(consumidor antes que productor)."),
             )
         )
     )
 
-    return df.select(
+    return con_evento.select(
         "kafka_key", "kafka_partition", "kafka_offset", "schema_id",
         F.col("evento.building_id").alias("building_id"),
         F.col("evento.meter_type").alias("meter_type"),
@@ -424,18 +447,17 @@ def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str,
 # Escritura
 # --------------------------------------------------------------------------
 def run(args: argparse.Namespace) -> int:
-    # latest_schema devuelve el esquema ya como cadena JSON, lista para from_avro.
+    # all_schemas devuelve {schema_id: schema_str} de TODAS las versiones
+    # registradas: el job decodifica cada mensaje con el esquema de su id.
     sr_client = schema_registry_client(args.registry_url)
-    schema_id, schema_json = latest_schema(sr_client, args.subject)
+    esquemas = all_schemas(sr_client, args.subject)
 
     spark = build_spark(args)
     spark.sparkContext.setLogLevel(args.spark_log_level)
-    logger.info("Spark %s | esquema id=%d | ventana=%s watermark=%s margen_futuro=%.0fs",
-                spark.version, schema_id, args.window, args.watermark, args.margen_futuro)
+    logger.info("Spark %s | esquemas registrados id=%s | ventana=%s watermark=%s margen_futuro=%.0fs",
+                spark.version, sorted(esquemas), args.window, args.watermark, args.margen_futuro)
 
-    eventos = guard_schema_version(
-        decode_events(read_kafka(spark, args), schema_json), schema_id
-    )
+    eventos = decode_events(read_kafka(spark, args), esquemas)
 
     # El enriquecimiento se aplica UNA vez y lo comparten los dos sumideros: el
     # de metricas necesita site_id y primary_use para agrupar, y el de eventos

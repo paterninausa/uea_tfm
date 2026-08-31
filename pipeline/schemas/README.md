@@ -33,8 +33,7 @@ existe en la cabeza de quien escribio el productor.
 
 | Fichero | Papel |
 |---|---|
-| `telemetry_event_v1.avsc` | Esquema en produccion. 5 campos. |
-| `telemetry_event_v2.avsc` | Evolucion de prueba: anade `reading_quality` opcional. **No se registra en el uso normal**, existe para demostrar el Objetivo 2. |
+| `telemetry_event_v1.avsc` | Esquema en produccion. 5 campos. Unica version registrada. |
 | `register_schema.py` | Registra un `.avsc` en Apicurio y aplica las reglas de gobernanza. |
 
 ## El evento
@@ -132,18 +131,19 @@ Registrar el esquema (idempotente):
 python pipeline/schemas/register_schema.py --schema pipeline/schemas/telemetry_event_v1.avsc
 ```
 
-Probar una evolucion:
-
-```bash
-python pipeline/schemas/register_schema.py --schema pipeline/schemas/telemetry_event_v2.avsc
-```
-
-Si es aceptada queda registrada como version nueva. Para volver al estado
-anterior hay que borrarla, algo que el compose habilita expresamente:
+Registrar una evolucion (cuando exista): se escribe el `.avsc` nuevo y se pasa
+por `--schema`. Si es aceptada queda como version nueva y el job de Spark la
+reconoce al reiniciarse (decodifica cada mensaje con el esquema de su id, ver
+[`../spark/README.md`](../spark/README.md)). Para volver atras hay que borrar la
+version, algo que el compose habilita expresamente:
 
 ```bash
 curl -X DELETE http://localhost:8080/apis/registry/v3/groups/iot/artifacts/iot.telemetry.raw-value/versions/2
 ```
+
+No hay ningun `.avsc` de evolucion en el repo: el que valga para la demo del
+Objetivo 2 (v1 + un campo opcional con `default: null`) se redacta en su
+momento.
 
 Codigo de salida 0 si el esquema es valido y aceptado, 1 si es rechazado, si el
 `.avsc` esta mal formado o si el registro no responde.
@@ -166,11 +166,11 @@ Contra Apicurio 3.3.1 con almacenamiento KafkaSQL:
 | Caso probado | Resultado | Quien lo rechaza |
 |---|---|---|
 | v1 registrado de nuevo, sin cambios | Aceptado, sigue en version 1 | — |
-| v2: campo opcional con `default: null` | **Aceptado** | — |
+| Campo opcional nuevo con `default: null` | **Aceptado** | — |
 | Simbolo de enum anadido al final | **Aceptado** | — |
 | Enum reordenado alfabeticamente | **Rechazado** | `register_schema.py` |
 | Simbolo insertado en medio del enum | **Rechazado** | `register_schema.py` |
-| v2 sin `default` | **Rechazado** | Apicurio |
+| Campo opcional nuevo sin `default` | **Rechazado** | Apicurio |
 | `.avsc` con un tipo inexistente | Rechazado en local, sin llegar al registro | `fastavro` |
 | Registro no accesible | Error explicito con la orden para levantar el stack | — |
 
