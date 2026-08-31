@@ -33,6 +33,19 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 TIMESCALE = "timescale"
 POSTGRES = "postgres"
 
+# Nombres de los topicos de Kafka. Misma fuente que las credenciales:
+# pipeline/.env (via load_dotenv de arriba), el mismo archivo que lee Docker
+# Compose para inyectarlos en el contenedor del bridge. Un solo sitio donde
+# cambiarlos: el broker los auto-crea con el nombre que reciba.
+TOPIC_RAW = os.environ.get("KAFKA_TOPIC_RAW", "iot.telemetry.raw")
+TOPIC_DLQ = os.environ.get("KAFKA_TOPIC_DLQ", "iot.telemetry.dlq")
+
+# Particiones y factor de replica al (re)crear un topico. Mismo .env, los
+# mismos valores que el broker aplica como default al auto-crear. Solo los usa
+# reset_state.py; el bridge y Spark no crean topicos.
+NUM_PARTITIONS = int(os.environ.get("KAFKA_NUM_PARTITIONS", "3"))
+REPLICATION_FACTOR = int(os.environ.get("KAFKA_DEFAULT_REPLICATION_FACTOR", "1"))
+
 
 def anadir_argumentos_bd(p: argparse.ArgumentParser) -> None:
     p.add_argument("--timescale-host", default="localhost")
@@ -69,5 +82,5 @@ def anadir_argumentos_kafka(p: argparse.ArgumentParser) -> None:
     p.add_argument("--bootstrap-servers", default="localhost:29092",
                    help="Listener EXTERNO de Kafka: el interno (kafka:9092) solo "
                         "resuelve desde dentro de la red de contenedores")
-    p.add_argument("--topic", default="iot.telemetry.raw")
-    p.add_argument("--dlq-topic", default="iot.telemetry.dlq")
+    p.add_argument("--topic", default=TOPIC_RAW)
+    p.add_argument("--dlq-topic", default=TOPIC_DLQ)

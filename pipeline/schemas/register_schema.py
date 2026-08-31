@@ -34,6 +34,7 @@ from pathlib import Path
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.apicurio import DEFAULT_SUBJECT as SUBJECT  # noqa: E402
 from common.logging_setup import configurar_logging  # noqa: E402
 from fastavro import parse_schema
 
@@ -43,11 +44,10 @@ logger = logging.getLogger("register_schema")
 # protocolo, no la API nativa v3 de Apicurio.
 CCOMPAT_URL = "http://localhost:8080/apis/ccompat/v7"
 
-# El subject sigue la convencion TopicNameStrategy de Confluent: {topic}-value,
-# porque el esquema describe el VALOR de los mensajes del topico
-# iot.telemetry.raw. En el protocolo de Confluent no hay grupos: los subjects
-# viven en un namespace plano.
-SUBJECT = "iot.telemetry.raw-value"
+# SUBJECT se importa de common.apicurio, donde se deriva de KAFKA_TOPIC_RAW con
+# la convencion TopicNameStrategy ({topic}-value). Una sola fuente para el
+# productor, el consumidor y este registrador. En el protocolo de Confluent no
+# hay grupos: los subjects viven en un namespace plano.
 
 # FULL_TRANSITIVE: toda version nueva debe ser compatible hacia atras Y hacia
 # adelante, y no solo con la version anterior sino con todas las anteriores. Es

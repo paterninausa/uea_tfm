@@ -35,7 +35,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.connection_args import (  # noqa: E402
+    NUM_PARTITIONS,
     POSTGRES,
+    REPLICATION_FACTOR,
     TIMESCALE,
     anadir_argumentos_bd,
     anadir_argumentos_kafka,
@@ -50,10 +52,6 @@ KAFKA_TOPICS = "/opt/kafka/bin/kafka-topics.sh"
 BOOTSTRAP_INTERNO = "kafka:9092"
 
 DIRECTORIO_CHECKPOINTS = Path(__file__).resolve().parents[1] / "spark" / "checkpoints"
-
-# Se compara por nombre para no perder la configuracion propia de la DLQ al
-# recrearla: `kafka-topics.sh --create` no hereda nada del topico que se borro.
-TOPICO_DLQ = "iot.telemetry.dlq"
 
 # Procesos que deben estar parados: recrear un topico o borrar un checkpoint
 # mientras el job corre lo deja leyendo de algo que ya no existe.
@@ -84,10 +82,11 @@ def procesos_en_marcha() -> list[str]:
 def kafka_topics(*argumentos: str) -> str:
     """Ejecuta kafka-topics.sh dentro del contenedor del broker.
 
-    Se usa la misma herramienta que crea los topicos en el arranque del stack
-    (el servicio `kafka-init` del compose) en lugar de un cliente Python: no
-    anade una dependencia mas que mantener al dia con la version del broker, y
-    lo que hace es literalmente lo mismo que ya esta documentado en el README.
+    Se usa la herramienta del propio broker en lugar de un cliente Python: no
+    anade una dependencia mas que mantener al dia con la version de Kafka. En el
+    arranque normal los topicos se auto-crean; aqui se borran y se recrean para
+    dejar el estado limpio que exige una medicion, y la DLQ se vuelve a crear
+    con retencion infinita (ver `recrear_topico`).
     """
     r = subprocess.run(
         ["docker", "exec", CONTENEDOR_KAFKA, KAFKA_TOPICS,
@@ -102,12 +101,22 @@ def kafka_topics(*argumentos: str) -> str:
 def descripcion_topico(topico: str) -> tuple[int, int] | None:
     """Particiones y factor de replica actuales, o None si el topico no existe.
 
-    Se leen antes de borrar para recrearlo EXACTAMENTE igual. Fijar aqui un 3
-    escrito a mano crearia una segunda fuente de verdad frente al compose, y una
+    Se leen antes de borrar para recrearlo EXACTAMENTE igual. El respaldo,
+    cuando el topico no existe, sale de `.env` (`KAFKA_NUM_PARTITIONS` /
+    `KAFKA_DEFAULT_REPLICATION_FACTOR`), la misma fuente que usa el broker: una
     prueba de carga sobre un numero de particiones distinto del habitual mide
     otro sistema.
+
+    `kafka-topics.sh --describe` sale con error si el topico no existe, algo
+    normal ahora que se auto-crean al primer uso y no hay un servicio que los
+    prepare en el arranque; ese caso se traduce a None.
     """
-    salida = kafka_topics("--describe", "--topic", topico)
+    try:
+        salida = kafka_topics("--describe", "--topic", topico)
+    except RuntimeError as exc:
+        if "does not exist" in str(exc):
+            return None
+        raise
     for linea in salida.splitlines():
         if "PartitionCount:" in linea:
             partes = linea.replace("\t", " ").split()
@@ -117,16 +126,16 @@ def descripcion_topico(topico: str) -> tuple[int, int] | None:
     return None
 
 
-def recrear_topico(topico: str, particiones_defecto: int) -> None:
+def recrear_topico(topico: str, retencion_infinita: bool = False) -> None:
     actual = descripcion_topico(topico)
     if actual:
         particiones, replicas = actual
         logger.info("Borrando %s (%d particiones, replica %d)", topico, particiones, replicas)
         kafka_topics("--delete", "--topic", topico)
     else:
-        particiones, replicas = particiones_defecto, 1
-        logger.info("El topico %s no existia; se creara con %d particiones",
-                    topico, particiones)
+        particiones, replicas = NUM_PARTITIONS, REPLICATION_FACTOR
+        logger.info("El topico %s no existia; se creara con %d particiones y replica %d",
+                    topico, particiones, replicas)
 
     # El borrado es asincrono: crear de inmediato falla con TopicExistsException.
     for _ in range(60):
@@ -137,10 +146,11 @@ def recrear_topico(topico: str, particiones_defecto: int) -> None:
         raise RuntimeError(f"El topico {topico} sigue existiendo 30 s despues de borrarlo")
 
     extra = []
-    if topico == TOPICO_DLQ:
-        # La DLQ conserva su contenido sin caducar: es la evidencia de por que se
-        # rechazo un evento, y con la retencion por defecto del broker (7 dias)
-        # un rechazo del viernes desaparecia antes de que nadie lo mirara.
+    if retencion_infinita:
+        # La ruta de medicion fija retencion infinita en la DLQ para que una
+        # prueba pueda inspeccionar todos sus rechazos sin ventana de caducidad;
+        # en el arranque normal la DLQ hereda el default del broker. Lo decide
+        # el llamador, no una comparacion por nombre.
         extra = ["--config", "retention.ms=-1"]
 
     kafka_topics("--create", "--topic", topico,
@@ -209,8 +219,8 @@ def run(args: argparse.Namespace) -> int:
             return 1
 
     borrar_checkpoints()
-    recrear_topico(args.topic, particiones_defecto=3)
-    recrear_topico(args.dlq_topic, particiones_defecto=1)
+    recrear_topico(args.topic)
+    recrear_topico(args.dlq_topic, retencion_infinita=True)
     for cual, lista in tablas.items():
         logger.info("Truncando en %s:", cual)
         truncar(props_bd(args, cual), lista)

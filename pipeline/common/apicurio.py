@@ -28,12 +28,15 @@ import struct
 
 from confluent_kafka.schema_registry import SchemaRegistryClient
 
+from common.connection_args import TOPIC_RAW
+
 DEFAULT_REGISTRY_URL = "http://localhost:8080"
 
-# Subject unico del proyecto. El sufijo "-value" sigue la convencion
-# TopicNameStrategy de Confluent: el esquema describe el VALOR de los mensajes
-# del topico iot.telemetry.raw.
-DEFAULT_SUBJECT = "iot.telemetry.raw-value"
+# Subject del proyecto. El sufijo "-value" sigue la convencion TopicNameStrategy
+# de Confluent (el esquema describe el VALOR de los mensajes del topico), asi que
+# se DERIVA del nombre del topico en lugar de repetir el literal: si cambia
+# KAFKA_TOPIC_RAW en .env, el subject lo sigue.
+DEFAULT_SUBJECT = f"{TOPIC_RAW}-value"
 
 # Formato de cable de Confluent: byte magico 0x00 + id de esquema de 4 bytes
 # big-endian, delante del payload Avro schemaless.

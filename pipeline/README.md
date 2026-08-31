@@ -50,18 +50,18 @@ Un unico listener no funciona: el nombre `kafka` no resuelve desde el host, y
 |----------------|---------------------------------------|---------------|----------|
 | `mosquitto`    | `eclipse-mosquitto:2.0.22`            | 1883, 9001    | Broker MQTT |
 | `kafka`        | `apache/kafka:4.3.1`                  | 29092         | Log Kappa (modo KRaft, sin Zookeeper) |
-| `kafka-init`   | `apache/kafka:4.3.1`                  | —             | Crea los topicos y termina |
 | `apicurio`     | `apicurio/apicurio-registry:3.3.1`    | 8080          | API REST del registro de esquemas |
 | `apicurio-ui`  | `apicurio/apicurio-registry-ui:3.3.1` | 8888          | UI del registro (contenedor aparte en 3.x) |
 
-Topicos creados por `kafka-init`:
+Topicos del pipeline:
 
-- `iot.telemetry.raw` — eventos Avro publicados por el bridge (3 particiones)
-- `iot.telemetry.dlq` — eventos que fallan la validacion de esquema (1 particion)
+- `iot.telemetry.raw` — eventos Avro publicados por el bridge
+- `iot.telemetry.dlq` — eventos que fallan la validacion de esquema
 
-La auto-creacion de topicos esta **deshabilitada** a proposito: con ella
-activada, una errata en un nombre de topico crearia un topico nuevo en silencio
-y el sintoma aparecería mucho despues como "no llegan datos".
+Se auto-crean al primer uso. Nombre, particiones y factor de replica salen de
+`pipeline/.env` (`KAFKA_TOPIC_RAW` / `KAFKA_TOPIC_DLQ`, `KAFKA_NUM_PARTITIONS`,
+`KAFKA_DEFAULT_REPLICATION_FACTOR`), la misma fuente que leen el bridge y los
+scripts del host; la retencion es la del broker, 7 dias.
 
 ## Almacenamiento de Apicurio
 
@@ -78,8 +78,7 @@ Levantar el stack:
 docker compose -f pipeline/docker-compose.yml up -d
 ```
 
-Ver el estado (los cuatro servicios de larga duracion deben quedar `healthy`;
-`tfm-kafka-init` debe quedar `Exited (0)`, es de un solo uso):
+Ver el estado (los cuatro servicios de larga duracion deben quedar `healthy`):
 
 ```bash
 docker compose -f pipeline/docker-compose.yml ps -a
@@ -129,7 +128,7 @@ Comprobado sobre este stack (Docker 29.7.2, Compose v5.4.0, Java 21 Temurin,
 Python 3.11 + PySpark 4.2.0):
 
 - Los cuatro servicios de larga duracion levantan y quedan `healthy`.
-- `kafka-init` crea `iot.telemetry.raw` y `iot.telemetry.dlq` y sale con codigo 0.
+- `iot.telemetry.raw` e `iot.telemetry.dlq` se auto-crean al primer uso.
 - Produccion y consumo en Kafka desde el host via `localhost:29092`.
 - Apicurio responde en `/apis/registry/v3/system/info` con almacenamiento
   `KafkaSQL`.

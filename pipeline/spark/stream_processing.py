@@ -64,6 +64,7 @@ from common.apicurio import (  # noqa: E402
 from common.connection_args import (  # noqa: E402
     POSTGRES,
     TIMESCALE,
+    TOPIC_RAW,
     anadir_argumentos_bd,
     props_bd,
 )
@@ -554,7 +555,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Job de Spark Structured Streaming (TFM)")
     p.add_argument("--master", default="local[*]")
     p.add_argument("--bootstrap-servers", default="localhost:29092")
-    p.add_argument("--topic", default="iot.telemetry.raw")
+    p.add_argument("--topic", default=TOPIC_RAW)
     p.add_argument("--starting-offsets", default="earliest", choices=["earliest", "latest"])
     p.add_argument("--no-fail-on-data-loss", dest="fail_on_data_loss", action="store_false",
                    help="Continuar aunque Kafka haya borrado por retencion offsets sin leer. "

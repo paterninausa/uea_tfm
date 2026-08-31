@@ -47,6 +47,7 @@ from common.apicurio import (  # noqa: E402
     latest_schema,
     schema_registry_client,
 )
+from common.connection_args import TOPIC_DLQ, TOPIC_RAW  # noqa: E402
 from common.logging_setup import configurar_logging  # noqa: E402
 
 logger = logging.getLogger("bridge")
@@ -461,8 +462,8 @@ def parse_args() -> argparse.Namespace:
                         "reparte los mensajes entre las instancias del grupo: es lo que "
                         "permite escalar el bridge horizontalmente")
     p.add_argument("--bootstrap-servers", default="localhost:29092")
-    p.add_argument("--topic", default="iot.telemetry.raw")
-    p.add_argument("--dlq-topic", default="iot.telemetry.dlq")
+    p.add_argument("--topic", default=TOPIC_RAW)
+    p.add_argument("--dlq-topic", default=TOPIC_DLQ)
     p.add_argument("--linger-ms", type=int, default=5,
                    help="Espera del productor para agrupar mensajes. Sube el throughput a "
                         "costa de latencia; 5ms es despreciable frente al KPI de 2s")

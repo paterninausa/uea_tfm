@@ -73,10 +73,15 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
 
-      # --- Retencion 7 dias ---
+      # --- Retencion 7 dias y auto-creacion de topicos ---
+      # Los topicos se auto-crean al primer uso con estos defaults del broker.
+      # Particiones y factor de replica salen de pipeline/.env, la misma fuente
+      # que usa connection_args.py; los nombres tambien (KAFKA_TOPIC_RAW /
+      # KAFKA_TOPIC_DLQ), que el bridge referencia y el broker crea.
       KAFKA_LOG_RETENTION_HOURS: 168
-      KAFKA_NUM_PARTITIONS: 3
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: ${KAFKA_NUM_PARTITIONS:-3}
+      KAFKA_DEFAULT_REPLICATION_FACTOR: ${KAFKA_DEFAULT_REPLICATION_FACTOR:-1}
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     volumes:
       - kafka-data:/var/lib/kafka/data
     healthcheck:
@@ -85,35 +90,6 @@ services:
       timeout: 10s
       retries: 10
       start_period: 20s
-    networks: [tfm-net]
-
-  # ---------------------------------------------------------------------------
-  # Creacion declarativa de topicos (servicio de un solo uso)
-  # ---------------------------------------------------------------------------
-  # Se crean aqui y no por auto-creacion (deshabilitada arriba a proposito):
-  # la auto-creacion aplicaria los valores por defecto y silenciaria erratas en
-  # los nombres de topico, que apareceria como "no llegan datos" mas adelante.
-  kafka-init:
-    image: apache/kafka:4.3.1
-    container_name: tfm-kafka-init
-    depends_on:
-      kafka:
-        condition: service_healthy
-    entrypoint: ["/bin/bash", "-c"]
-    # `command` en formato lista y cada invocacion en una sola linea: si se
-    # escribe como string multilinea, Compose aplica word-splitting tipo shell
-    # y se come las continuaciones de linea `\`, dejando comandos truncados.
-    command:
-      - |
-        set -e
-        echo '==> Creando topicos del pipeline'
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic iot.telemetry.raw --partitions 3 --replication-factor 1
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic iot.telemetry.dlq --partitions 1 --replication-factor 1 --config retention.ms=-1
-        echo '==> Fijando retencion infinita en la DLQ'
-        /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:9092 --entity-type topics --entity-name iot.telemetry.dlq --alter --add-config retention.ms=-1
-        echo '==> Topicos existentes:'
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
-    restart: "no"
     networks: [tfm-net]
 
   # ---------------------------------------------------------------------------
@@ -207,6 +183,12 @@ services:
         condition: service_healthy
       apicurio:
         condition: service_healthy
+    # Spark y tools/ corren desde el host y leen pipeline/.env via python-dotenv;
+    # el bridge corre en contenedor, asi que los nombres de topico se le inyectan
+    # explicitamente. Misma fuente (.env), mismos valores por defecto.
+    environment:
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-iot.telemetry.raw}
+      KAFKA_TOPIC_DLQ: ${KAFKA_TOPIC_DLQ:-iot.telemetry.dlq}
     command:
       - "--broker-host=mosquitto"
       - "--bootstrap-servers=kafka:9092"
