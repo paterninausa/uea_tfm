@@ -22,7 +22,6 @@ CREATE TABLE IF NOT EXISTS telemetry_metrics (
     event_count           BIGINT           NOT NULL,
     distinct_buildings    BIGINT           NOT NULL,
     avg_reading           DOUBLE PRECISION,
-    min_reading           DOUBLE PRECISION,
     max_reading           DOUBLE PRECISION,
     sum_reading           DOUBLE PRECISION,
 

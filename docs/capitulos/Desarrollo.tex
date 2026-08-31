@@ -333,6 +333,64 @@ La escritura en ambos sumideros se hace a través del script \texttt{database\_w
 Spark se ejecuta desde el entorno virtual del host y no como un servicio más del \texttt{docker-
 compose.yml} a diferencia del resto de componentes del pipeline. Una razón es que cada cambio en el código habría exigido reconstruir o volver a copiar la imagen del contenedor, mientras que ejecutándolo en local la depuración desde el editor es directa. Por otra parte, contenerizar el proceso de Spark exige requisitos de procesador y memoria que ya están comprometidos para los otros componentes del pipeline. Por tanto la contenerización queda como una tarea pendiente para una eventual puesta en producción.
 
+\subsection{TimescaleDB}
+
+TimescaleDB se despliega con la imagen de Docker \texttt{timescale/timescaledb:2.29.1-pg17-oss}. Contiene dos tablas, \texttt{telemetry\_metrics} y \texttt{streaming\_progress}, cuyas credenciales de acceso (usuario y contraseña) se leen de \texttt{pipeline/.env}, el mismo archivo usado por Kafka y PostgreSQL para sus configuraciones de funcionamiento.
+
+Cada fila de \texttt{telemetry\_metrics} corresponde a una ventana de una hora para un emplazamiento, un uso de edificio y un tipo de medidor; sus columnas son las siguientes:
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{|l|p{9cm}|}
+    \hline
+    \textbf{Columna} & \textbf{Descripción} \\ \hline
+    \texttt{window\_start}, \texttt{window\_end} & Inicio y fin de la ventana de una hora sobre el tiempo de evento (\texttt{timestamp}) \\ \hline
+    \texttt{site\_id} & Emplazamiento del edificio; clave de agrupación \\ \hline
+    \texttt{primary\_use} & Uso principal del edificio; clave de agrupación \\ \hline
+    \texttt{meter\_type} & Tipo de medidor; clave de agrupación \\ \hline
+    \texttt{event\_count} & Número de lecturas que caen dentro de la ventana \\ \hline
+    \texttt{distinct\_buildings} & Número de edificios distintos que reportaron en la ventana, contados de forma aproximada porque Spark no admite el conteo exacto en agregaciones de streaming \\ \hline
+    \texttt{avg\_reading} & Media de las lecturas de consumo de la ventana \\ \hline
+    \texttt{max\_reading} & Máximo de las lecturas de consumo de la ventana \\ \hline
+    \texttt{sum\_reading} & Suma de las lecturas de consumo de la ventana \\ \hline
+    \texttt{sum\_square\_feet} & Suma de la superficie construida de los edificios de la ventana \\ \hline
+    \texttt{avg\_energy\_intensity} & Se calcula dividiendo \texttt{sum\_reading} entre \texttt{sum\_square\_feet} \\ \hline
+    \texttt{zero\_count} & Cuántas lecturas de la ventana fueron cero \\ \hline
+    \texttt{anomaly\_count} & Cuántas lecturas de la ventana se marcaron como anómalas \\ \hline
+    \texttt{max\_sim\_publish\_ts} & La marca de publicación más reciente entre las lecturas de la ventana, para el KPI de latencia \\ \hline
+    \texttt{ingested\_at} & Instante en que la fila se escribió o actualizó en la base de datos, asignada por la propia base de datos \\ \hline
+  \end{tabular}
+  \caption{Columnas de \texttt{telemetry\_metrics}.}
+  \label{tab:columnas-telemetry-metrics}
+\end{table}
+
+Además de \texttt{telemetry\_metrics}, TimescaleDB también contiene \texttt{streaming\_progress}, la tabla que registra el progreso de cada microlote de las dos consultas de Spark y que sostiene el KPI de latencia. A diferencia de \texttt{telemetry\_metrics}, sus columnas no son agregaciones calculadas por el pipeline: son valores que la propia API de Spark Structured Streaming ya expone por cada microlote, y que el proceso se limita a extraer y guardar. Cada fila corresponde a un microlote concreto de una de las dos consultas; sus columnas son las siguientes:
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{|l|p{9cm}|}
+    \hline
+    \textbf{Columna} & \textbf{Descripción} \\ \hline
+    \texttt{trigger\_ts} & Instante en que Spark emitió el informe del microlote \\ \hline
+    \texttt{run\_id} & Identificador de la ejecución del proceso \\ \hline
+    \texttt{query\_name} & Nombre de la consulta que generó el informe (\texttt{metricas-timescaledb} o \texttt{eventos-postgresql}) \\ \hline
+    \texttt{batch\_id} & Número del microlote dentro de esa consulta \\ \hline
+    \texttt{num\_input\_rows} & Filas leídas de Kafka en este microlote \\ \hline
+    \texttt{input\_rows\_per\_second} & Ritmo de entrada de filas \\ \hline
+    \texttt{processed\_rows\_per\_second} & Ritmo al que la consulta procesó las filas \\ \hline
+    \texttt{duration\_ms} & Duración total del microlote \\ \hline
+    \texttt{add\_batch\_ms} & Parte de \texttt{duration\_ms} dedicada a la escritura del microlote \\ \hline
+    \texttt{query\_planning\_ms} & Parte de \texttt{duration\_ms} dedicada a planificar la consulta \\ \hline
+    \texttt{sink\_num\_output\_rows} & Filas escritas en el sumidero \\ \hline
+    \texttt{rows\_dropped\_by\_watermark} & Eventos descartados por llegar tarde respecto al \textit{watermark} \\ \hline
+    \texttt{offsets\_behind} & Mensajes en Kafka que la consulta no ha leído \\ \hline
+    \texttt{event\_time\_max} & Marca de tiempo de evento más reciente del microlote \\ \hline
+    \texttt{watermark} & Valor del \textit{watermark} del microlote \\ \hline
+  \end{tabular}
+  \caption{Columnas de \texttt{streaming\_progress}.}
+  \label{tab:columnas-streaming-progress}
+\end{table}
+
 \section{Recursos requeridos}
 En este apartado debes enumerar los recursos que has utilizado para la ejecución del proyecto (recursos técnicos, dispositivos, material de laboratorio, asistencia de expertos, etc.). Si bien, en la sección donde se describe Metodología y Herramientas empleadas, se describen en detalle las mismas, en esta sección, únicamente debes enumerarlas.
 
