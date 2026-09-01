@@ -536,11 +536,11 @@ Los recursos utilizados para la ejecución del proyecto fueron:
 
 \section{Presupuesto}
 
-La Tabla~\ref{tab:costes} es un estimado del coste económico del proyecto. El software es de código abierto o de uso gratuito para este proyecto, por lo que el mayor coste es el tiempo de trabajo.
+La Tabla~\ref{tab:costes} es un estimado del coste económico. El software es de código abierto o de uso gratuito para este proyecto, por lo que el mayor coste es el tiempo de trabajo.
 
 \begin{table}[ht!]
   \centering
-  \begin{tabular}{|l|c|p{6cm}|}
+  \begin{tabular}{|p{4cm}|p{3cm}|p{6cm}|}
     \hline
     \textbf{Tipo de coste} & \textbf{Valor} & \textbf{Comentarios} \\ \hline
     Horas de trabajo en el proyecto & 330 h × 25 €/h = 8.250 € & Estimación de mercado de un analista de datos junior; desglose de horas en la Tabla~\ref{tab:planificacion}. \\ \hline
@@ -555,7 +555,19 @@ La Tabla~\ref{tab:costes} es un estimado del coste económico del proyecto. El s
 \end{table}
 
 \section{Viabilidad}
-Este apartado es opcional, pero es interesante que incluyas un breve análisis de viabilidad económica del proyecto (relación coste / beneficio), y un análisis de sostenibilidad a futuro del resultado de tu proyecto.
+
+\subsection{Viabilidad técnica}
+
+El proyecto se ha desarrollado íntegramente con herramientas de código abierto ampliamente adoptadas en la industria (Kafka, Spark, PostgreSQL, Docker), sin dependencia de proveedores propietarios ni de infraestructura en la nube. El aprovisionamiento declarativo de cada componente permite reconstruir el sistema completo desde el repositorio en cualquier máquina con Docker y Java instalados, sin pasos de configuración manual. La arquitectura Kappa de flujo único, con los componentes desacoplados en microservicios independientes, facilita sustituir o escalar cualquier pieza concreta sin rediseñar el resto del sistema.
+
+\subsection{Viabilidad económica}
+
+El coste económico del proyecto ha sido mínimo, ya que no ha sido necesario adquirir software, licencias ni infraestructura en la nube: la Tabla~\ref{tab:costes} sitúa el coste total en 9.000\,€, dominado casi en su totalidad por el tiempo de trabajo (330 horas). Esta inversión se justifica por el valor académico y formativo del proyecto, más allá de un producto con fin comercial.
+
+\subsection{Sostenibilidad del proyecto}
+
+El diseño modular del sistema permite incorporar nuevos sumideros, consultas de enriquecimiento o dashboards sin modificar los componentes ya existentes. El uso de un conjunto de datos público (ASHRAE) y de herramientas open-source sin coste de licencia facilita también la reproducibilidad del proyecto y su adopción como punto de partida en trabajos de monitorización energética similares.
+
 \section{Resultados del proyecto}
 Conforme a los objetivos específicos, describe los resultados finales obtenidos.
 Para proyectos con un enfoque de desarrollo de producto, debes incluir el resultado de tu plan de pruebas.
