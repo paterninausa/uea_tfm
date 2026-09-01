@@ -50,16 +50,10 @@ Analisis situacional siguiendo las metricas habituales del sector:
 | **Consumo base** | El diagnostico clasico de consumo fantasma: lo que gasta el edificio cuando no hay nadie |
 | **Factor de carga** | Media entre pico. Mide si la potencia contratada se aprovecha o se paga por picos puntuales |
 | **Perfil de carga por hora** | El grafico canonico de gestion energetica |
-| **Intensidad energetica** | Consumo por pie cuadrado, la metrica normalizada para comparar edificios de tamanos distintos |
 
 El selector `medio` filtra por tipo de medidor. **No es un adorno**: las
 unidades de electricidad, agua fria y agua caliente no son comparables, asi que
 casi todos los paneles tienen que fijar uno solo.
-
-La intensidad se calcula como `sum(sum_reading) / sum(sum_square_feet)`, un
-cociente de sumas y no una media de cocientes. Con superficies de 801 a 850.354
-pies cuadrados, promediar cocientes daria un peso desproporcionado a los
-edificios pequenos. Por eso la tabla guarda tambien el denominador.
 
 ### 3. Calidad y anomalias
 
@@ -123,7 +117,6 @@ contenedor. Ejecutando las consultas de los paneles contra la API de Grafana con
 | Latencia p95 (KPI en vivo) | 4,60 s |
 | Demanda pico / base / factor de carga | 70.225 / 44.209 / **0,722** |
 | Perfil de carga por hora | 24 puntos |
-| Intensidad por uso de edificio | 14 categorias, Utility la mas alta |
 | Grupos con mas ceros | 15 filas |
 
 El factor de carga de 0,722 sobre cuatro dias es un perfil creible. Con muestras

@@ -421,6 +421,69 @@ Las columnas de \texttt{telemetry\_events} no son agregaciones; conforman práct
   \label{tab:columnas-telemetry-events}
 \end{table}
 
+\subsection{Grafana}
+\label{sec:grafana}
+
+Grafana se despliega con la imagen oficial de Docker \texttt{grafana/grafana:13.0.6}, en el puerto \texttt{3000}, con dependencia de arranque sobre TimescaleDB. Se habilita el acceso anónimo de solo lectura (\textit{Viewer}), pensado para la visualización directa en la pantalla del navegador sin necesidad de introducir credenciales.
+
+Grafana se conecta a \textbf{TimescaleDB}, cuya tabla \texttt{telemetry\_metrics} es la fuente de datos usada en todos los paneles de los dashboards, teniendo como única excepción los paneles que registran la latencia extremo a extremo, los cuales usan datos de \textbf{PostgreSQL}.
+
+En \texttt{http://localhost:3000/} se presentan tres dashboards, agrupados bajo la carpeta \texttt{TFM}:
+
+\textbf{1. Estado del pipeline.} Diseñado para vigilar la salud del sistema en tiempo real, con actualización por defecto de 5 segundos.
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{|p{4.5cm}|p{9cm}|}
+    \hline
+    \textbf{Panel} & \textbf{Descripción} \\ \hline
+    Latencia extremo a extremo (actual y evolución en el tiempo) & Percentiles de \texttt{ingested\_at - sim\_publish\_ts} de la tabla \texttt{telemetry\_events} \\ \hline
+    Antigüedad del último dato & Segundos desde el \texttt{ingested\_at} de la ventana más reciente \\ \hline
+    Eventos procesados & Suma de la columna \texttt{event\_count} en el rango visible del dashboard \\ \hline
+    Ventanas escritas & Conteo de filas en el rango visible del dashboard \\ \hline
+    Ritmo de escritura & Suma de \texttt{event\_count} y conteo de filas, agregados por intervalo de tiempo \\ \hline
+  \end{tabular}
+  \caption{Paneles del dashboard "Estado del pipeline".}
+  \label{tab:grafana-pipeline}
+\end{table}
+
+\textbf{2. Consumo energético.} Con actualización por defecto de 30 segundos y un selector de tipo de medidor para alternar entre electricidad, agua fría y agua caliente.
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{|p{4.5cm}|p{9cm}|}
+    \hline
+    \textbf{Panel} & \textbf{Descripción} \\ \hline
+    Demanda pico & Máximo del consumo horario agregado (\texttt{sum\_reading}) en el rango visible del dashboard \\ \hline
+    Consumo base & Mínimo del consumo horario agregado (\texttt{sum\_reading}) en el rango visible del dashboard \\ \hline
+    Factor de carga & Cociente entre la media y el máximo del consumo horario agregado (\texttt{sum\_reading}) en el rango visible del dashboard \\ \hline
+    Edificios reportando & Valor máximo de \texttt{distinct\_buildings} en el rango visible del dashboard \\ \hline
+    Consumo por tipo de medidor & Suma de \texttt{sum\_reading}, agregada por intervalo de tiempo y agrupada por \texttt{meter\_type} \\ \hline
+    Perfil de carga por hora del día & Suma de \texttt{sum\_reading} por hora del día (0 a 23) para todas las fechas del rango visible \\ \hline
+    Consumo por emplazamiento & Suma de \texttt{sum\_reading}, agregada por intervalo de tiempo y agrupada por \texttt{site\_id} \\ \hline
+  \end{tabular}
+  \caption{Paneles del dashboard "Consumo energético".}
+  \label{tab:grafana-consumo}
+\end{table}
+
+\textbf{3. Calidad y anomalías.} Centrado en la salud de los medidores, con actualización por defecto de 30 segundos.
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{|p{4.5cm}|p{9cm}|}
+    \hline
+    \textbf{Panel} & \textbf{Descripción} \\ \hline
+    Medidores con lecturas cero & Cociente entre la suma de \texttt{zero\_count} y la suma de \texttt{event\_count} en el rango visible del dashboard \\ \hline
+    Anomalías detectadas & Cociente entre la suma de \texttt{anomaly\_count} y la suma de \texttt{event\_count} en el rango visible del dashboard \\ \hline
+    Lecturas válidas & Cociente entre las lecturas que no son cero ni anómalas y el total de \texttt{event\_count} en el rango visible del dashboard \\ \hline
+    Ceros y anomalías en el tiempo & Suma de \texttt{zero\_count} y de \texttt{anomaly\_count}, agregada por intervalo de tiempo \\ \hline
+    Grupos con más lecturas a cero & Ranking de emplazamiento, uso de edificio y tipo de medidor con más \texttt{zero\_count} acumulado en el rango visible del dashboard \\ \hline
+    Ventanas con anomalías recientes & Detalle de las últimas ventanas con \texttt{anomaly\_count} mayor que cero, junto con la lectura máxima de cada una \\ \hline
+  \end{tabular}
+  \caption{Paneles del dashboard "Calidad y anomalías".}
+  \label{tab:grafana-calidad}
+\end{table}
+
 \section{Recursos requeridos}
 En este apartado debes enumerar los recursos que has utilizado para la ejecución del proyecto (recursos técnicos, dispositivos, material de laboratorio, asistencia de expertos, etc.). Si bien, en la sección donde se describe Metodología y Herramientas empleadas, se describen en detalle las mismas, en esta sección, únicamente debes enumerarlas.
 
