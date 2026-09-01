@@ -203,6 +203,7 @@ La estructura de los campos de cada mensaje en formato JSON es la siguiente:
 En el terreno industrial/IIoT el formato más cercano al estándar es Sparkplug B, siendo entre un 50 y un 80\,\% más pequeño que el JSON equivalente al ser puramente binario. Por tanto se decide seguir la práctica recomendada: empezar con JSON en desarrollo, y migrar a un formato binario en producción cuando el ancho de banda lo exija.
 
 \subsection{Broker MQTT (Eclipse Mosquitto)}
+\label{tab:mosquitto}
 
 Mosquitto actúa únicamente como broker de ingesta MQTT: recibe la telemetría publicada por el simulador y la deja disponible para que el bridge la consuma, sin ejecutar ninguna lógica o transformación. Se despliega mediante la imagen oficial de Docker \texttt{eclipse-mosquitto:2.0.22}, con el puerto \texttt{1883} (MQTT, el que usa el simulador) y el \texttt{9001} (solo para inspección manual del tráfico durante el desarrollo del proyecto).
 
@@ -564,11 +565,140 @@ El proyecto se ha desarrollado íntegramente con herramientas de código abierto
 
 El coste económico del proyecto ha sido mínimo, ya que no ha sido necesario adquirir software, licencias ni infraestructura en la nube: la Tabla~\ref{tab:costes} sitúa el coste total en 9.000\,€, dominado casi en su totalidad por el tiempo de trabajo (330 horas). Esta inversión se justifica por el valor académico y formativo del proyecto, más allá de un producto con fin comercial.
 
-\subsection{Sostenibilidad del proyecto}
+\subsection{Sostenibilidad}
 
 El diseño modular del sistema permite incorporar nuevos sumideros, consultas de enriquecimiento o dashboards sin modificar los componentes ya existentes. El uso de un conjunto de datos público (ASHRAE) y de herramientas open-source sin coste de licencia facilita también la reproducibilidad del proyecto y su adopción como punto de partida en trabajos de monitorización energética similares.
 
 \section{Resultados del proyecto}
-Conforme a los objetivos específicos, describe los resultados finales obtenidos.
-Para proyectos con un enfoque de desarrollo de producto, debes incluir el resultado de tu plan de pruebas.
-Puedes añadir una descripción de cambios durante el proyecto respecto a los objetivos iniciales, y comentarios que quieras incluir de cómo has desarrollado las distintas actividades.
+
+Esta sección contrasta cada KPI fijado en el Capítulo~\ref{chap:objetivos} con el resultado medido sobre el sistema completo, en estado limpio (tópicos recreados, tablas vacías, \textit{checkpoints} borrados) y bajo la misma carga: el simulador publicando a 357,6 eventos por segundo efectivos (\texttt{--acelerar 2000}), 50.000 eventos, sin retraso acumulado sobre la agenda.
+
+\subsection{Objetivo 1: Garantizar la ingesta fiable de telemetría en tiempo real}
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{|p{6cm}|c|c|}
+    \hline
+    \textbf{Indicador} & \textbf{Resultado} & \textbf{Objetivo} \\ \hline
+    Eventos persistidos / publicados & 50.000 / 50.000 & — \\ \hline
+    Latencia de ingesta (mediana) & 0,715 s & — \\ \hline
+    \textbf{Latencia de ingesta (p95)} & \textbf{1,173 s} & < 2 s \\ \hline
+    Latencia de ingesta (máxima) & 1,819 s & — \\ \hline
+    \textbf{Tasa de pérdida} & \textbf{0,0000\,\%} & < 0,1\,\% \\ \hline
+  \end{tabular}
+  \caption{Resultado del Objetivo 1: ingesta fiable.}
+  \label{tab:resultado-obj1}
+\end{table}
+
+Sin mensajes descartados por el broker (sección~\ref{sec:mosquitto}) y sin eventos huérfanos de edificio de referencia.
+
+\subsection{Objetivo 2: Garantizar la gobernanza del esquema de datos}
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{|p{6cm}|c|c|}
+    \hline
+    \textbf{Indicador} & \textbf{Resultado} & \textbf{Objetivo} \\ \hline
+    Eventos validados contra \texttt{es.uea.tfm.iot.TelemetryEvent} & 100,0000\,\% & 100\,\% \\ \hline
+    Eventos con error de validación (DLQ) & 0 & 0 \\ \hline
+  \end{tabular}
+  \caption{Resultado del Objetivo 2: gobernanza del esquema.}
+  \label{tab:resultado-obj2}
+\end{table}
+
+\subsection{Objetivo 3: Procesar y enriquecer los datos en streaming con baja latencia}
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{|p{3.5cm}|c|c|c|c|c|}
+    \hline
+    \textbf{Flujo} & \textbf{Lotes} & \textbf{Mediana} & \textbf{p95} & \textbf{Máxima} & \textbf{Objetivo} \\ \hline
+    Eventos individuales (sumidero analítico) & 142 & 262 ms & \textbf{385 ms} & 1.428 ms & < 3 s \\ \hline
+    Métricas agregadas (sumidero operacional) & 142 & 525 ms & \textbf{747 ms} & 1.887 ms & < 3 s \\ \hline
+  \end{tabular}
+  \caption{Resultado del Objetivo 3: latencia de micro-lote.}
+  \label{tab:resultado-obj3}
+\end{table}
+
+\subsection{Objetivo 4: Ofrecer visualización diferenciada operacional y analítica}
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{|p{5cm}|c|c|c|}
+    \hline
+    \textbf{Dashboard} & \textbf{Paneles} & \textbf{Refresco más lento} & \textbf{Objetivo} \\ \hline
+    1. Estado del pipeline & 6 & 78 ms & < 5 s \\ \hline
+    2. Consumo energético & 7 & 9 ms & < 5 s \\ \hline
+    3. Calidad y anomalías & 6 & 17 ms & < 5 s \\ \hline
+  \end{tabular}
+  \caption{Resultado del Objetivo 4: refresco de los dashboards de Grafana (sección~\ref{sec:grafana}).}
+  \label{tab:resultado-obj4-grafana}
+\end{table}
+
+% Figuras Grafana
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{imagenes/grafana_1.png}
+  \caption{Dashboard "Estado del pipeline".}
+  \label{fig:grafana-pipeline}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{imagenes/grafana_2.png}
+  \caption{Dashboard "Consumo energético".}
+  \label{fig:grafana-consumo}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{imagenes/grafana_3.png}
+  \caption{Dashboard "Calidad y anomalías".}
+  \label{fig:grafana-calidad}
+\end{figure}
+
+En cuanto a Power BI, el informe (sección~\ref{sec:powerbi}) cubre las tres áreas exigidas por el KPI: consumo energético, eficiencia operativa y detección de anomalías.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{imagenes/powerbi_consumo_de_energia.png}
+  \caption{Página "Consumo de Energía".}
+  \label{fig:powerbi-consumo}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{imagenes/powerbi_eficiencia_electrica.png}
+  \caption{Página "Eficiencia Eléctrica".}
+  \label{fig:powerbi-eficiencia}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{imagenes/powerbi_deteccion_de_anomalias.png}
+  \caption{Página "Detección de Anomalías".}
+  \label{fig:powerbi-anomalias}
+\end{figure}
+
+\subsection{Objetivo 5: Validar la resiliencia del sistema}
+\label{sec:validacion-procesamiento}
+
+Cada servicio se interrumpió por separado con \texttt{docker kill} durante 15 segundos, con el \textit{bridge} y el job de Spark en marcha durante las cuatro pruebas, y se cronometró cuánto tardaba en volver a persistir datos el camino que corta cada fallo.
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{|l|c|c|c|}
+    \hline
+    \textbf{Servicio interrumpido} & \textbf{Recuperación} & \textbf{Filas nuevas} & \textbf{Objetivo} \\ \hline
+    TimescaleDB & \textbf{4,1 s} & 322 & < 60 s \\ \hline
+    Mosquitto & \textbf{2,0 s} & 2.529 & < 60 s \\ \hline
+    Kafka & \textbf{15,2 s} & 1.027 & < 60 s \\ \hline
+    PostgreSQL & \textbf{2,0 s} & 3.588 & < 60 s \\ \hline
+  \end{tabular}
+  \caption{Resultado del Objetivo 5: recuperación ante fallo de un servicio individual.}
+  \label{tab:resultado-obj5}
+\end{table}
+
+En ninguna de las cuatro pruebas hizo falta reiniciar el job de Spark: solo se recuperó el camino afectado por el servicio caído, mientras el otro sumidero siguió operando sin intervención, evidencia práctica de que las dos consultas mantienen \textit{checkpoints} independientes (sección~\ref{sec:spark-structured-streaming}). La ausencia de pérdida de datos no se mide como una tasa explícita, sino que se sostiene en el diseño: cada consulta reanuda desde su propio \textit{checkpoint} y la clave natura de la tabla de eventos hace idempotente el reproceso, mientras que los eventos publicados durante la caída permanecen en el \textit{log} de Kafka hasta ser consumidos.
+
+Los cinco objetivos se cumplen.
