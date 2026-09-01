@@ -203,7 +203,7 @@ La estructura de los campos de cada mensaje en formato JSON es la siguiente:
 En el terreno industrial/IIoT el formato más cercano al estándar es Sparkplug B, siendo entre un 50 y un 80\,\% más pequeño que el JSON equivalente al ser puramente binario. Por tanto se decide seguir la práctica recomendada: empezar con JSON en desarrollo, y migrar a un formato binario en producción cuando el ancho de banda lo exija.
 
 \subsection{Broker MQTT (Eclipse Mosquitto)}
-\label{tab:mosquitto}
+\label{sec:mosquitto}
 
 Mosquitto actúa únicamente como broker de ingesta MQTT: recibe la telemetría publicada por el simulador y la deja disponible para que el bridge la consuma, sin ejecutar ninguna lógica o transformación. Se despliega mediante la imagen oficial de Docker \texttt{eclipse-mosquitto:2.0.22}, con el puerto \texttt{1883} (MQTT, el que usa el simulador) y el \texttt{9001} (solo para inspección manual del tráfico durante el desarrollo del proyecto).
 
@@ -444,7 +444,7 @@ En \texttt{http://localhost:3000/} se presentan tres dashboards, agrupados bajo 
     Ventanas escritas & Conteo de filas en el rango visible del dashboard \\ \hline
     Ritmo de escritura & Suma de \texttt{event\_count} y conteo de filas, agregados por intervalo de tiempo \\ \hline
   \end{tabular}
-  \caption{Paneles del dashboard "Estado del pipeline".}
+  \caption{Paneles del dashboard `Estado del pipeline'.}
   \label{tab:grafana-pipeline}
 \end{table}
 
@@ -463,7 +463,7 @@ En \texttt{http://localhost:3000/} se presentan tres dashboards, agrupados bajo 
     Perfil de carga por hora del día & Suma de \texttt{sum\_reading} por hora del día (0 a 23) para todas las fechas del rango visible \\ \hline
     Consumo por emplazamiento & Suma de \texttt{sum\_reading}, agregada por intervalo de tiempo y agrupada por \texttt{site\_id} \\ \hline
   \end{tabular}
-  \caption{Paneles del dashboard "Consumo energético".}
+  \caption{Paneles del dashboard `Consumo energético'.}
   \label{tab:grafana-consumo}
 \end{table}
 
@@ -481,7 +481,7 @@ En \texttt{http://localhost:3000/} se presentan tres dashboards, agrupados bajo 
     Grupos con más lecturas a cero & Ranking de emplazamiento, uso de edificio y tipo de medidor con más \texttt{zero\_count} acumulado en el rango visible del dashboard \\ \hline
     Ventanas con anomalías recientes & Detalle de las últimas ventanas con \texttt{anomaly\_count} mayor que cero, junto con la lectura máxima de cada una \\ \hline
   \end{tabular}
-  \caption{Paneles del dashboard "Calidad y anomalías".}
+  \caption{Paneles del dashboard `Calidad y anomalías'.}
   \label{tab:grafana-calidad}
 \end{table}
 
@@ -590,7 +590,7 @@ Esta sección contrasta cada KPI fijado en el Capítulo~\ref{chap:objetivos} con
   \label{tab:resultado-obj1}
 \end{table}
 
-Sin mensajes descartados por el broker (sección~\ref{sec:mosquitto}) y sin eventos huérfanos de edificio de referencia.
+Sin mensajes descartados por el broker Mosquitto (sección~\ref{sec:mosquitto}) y sin eventos huérfanos de edificio de referencia.
 
 \subsection{Objetivo 2: Garantizar la gobernanza del esquema de datos}
 
@@ -631,7 +631,7 @@ Sin mensajes descartados por el broker (sección~\ref{sec:mosquitto}) y sin even
     2. Consumo energético & 7 & 9 ms & < 5 s \\ \hline
     3. Calidad y anomalías & 6 & 17 ms & < 5 s \\ \hline
   \end{tabular}
-  \caption{Resultado del Objetivo 4: refresco de los dashboards de Grafana (sección~\ref{sec:grafana}).}
+  \caption{Resultado del Objetivo 4: dashboards de Grafana (sección~\ref{sec:grafana}).}
   \label{tab:resultado-obj4-grafana}
 \end{table}
 
@@ -639,44 +639,44 @@ Sin mensajes descartados por el broker (sección~\ref{sec:mosquitto}) y sin even
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.95\textwidth]{imagenes/grafana_1.png}
-  \caption{Dashboard "Estado del pipeline".}
+  \caption{Dashboard `Estado del pipeline'.}
   \label{fig:grafana-pipeline}
 \end{figure}
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.95\textwidth]{imagenes/grafana_2.png}
-  \caption{Dashboard "Consumo energético".}
+  \caption{Dashboard `Consumo energético'.}
   \label{fig:grafana-consumo}
 \end{figure}
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.95\textwidth]{imagenes/grafana_3.png}
-  \caption{Dashboard "Calidad y anomalías".}
+  \caption{Dashboard `Calidad y anomalías'.}
   \label{fig:grafana-calidad}
 \end{figure}
 
-En cuanto a Power BI, el informe (sección~\ref{sec:powerbi}) cubre las tres áreas exigidas por el KPI: consumo energético, eficiencia operativa y detección de anomalías.
+En cuanto a Power BI (sección~\ref{sec:powerbi}), el informe cubre las tres áreas exigidas por el KPI: consumo energético, eficiencia operativa y detección de anomalías.
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.95\textwidth]{imagenes/powerbi_consumo_de_energia.png}
-  \caption{Página "Consumo de Energía".}
+  \caption{Página `Consumo de Energía'.}
   \label{fig:powerbi-consumo}
 \end{figure}
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.95\textwidth]{imagenes/powerbi_eficiencia_electrica.png}
-  \caption{Página "Eficiencia Eléctrica".}
+  \caption{Página `Eficiencia Eléctrica'.}
   \label{fig:powerbi-eficiencia}
 \end{figure}
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.95\textwidth]{imagenes/powerbi_deteccion_de_anomalias.png}
-  \caption{Página "Detección de Anomalías".}
+  \caption{Página `Detección de Anomalías'.}
   \label{fig:powerbi-anomalias}
 \end{figure}
 
