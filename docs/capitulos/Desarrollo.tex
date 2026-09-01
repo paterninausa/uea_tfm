@@ -521,33 +521,38 @@ La página filtra únicamente mediciones anómalas:
 Filtro interactivo: Rango de fechas inicio-fin de medición.
 
 \section{Recursos requeridos}
-En este apartado debes enumerar los recursos que has utilizado para la ejecución del proyecto (recursos técnicos, dispositivos, material de laboratorio, asistencia de expertos, etc.). Si bien, en la sección donde se describe Metodología y Herramientas empleadas, se describen en detalle las mismas, en esta sección, únicamente debes enumerarlas.
+
+Los recursos utilizados para la ejecución del proyecto fueron:
+
+\begin{itemize}
+  \item Ordenador personal (Windows 11, procesador Intel Core i5 a 1,30 GHz, 16 GB de RAM), con WSL2 (Ubuntu 24.04 LTS) para el entorno de desarrollo.
+  \item Python con entorno virtual dedicado (\texttt{venv} + \texttt{pip}) y Java 21 LTS (Temurin), gestionado con SDKMAN.
+  \item Librerías de código abierto: PySpark 4.2.0, pandas 2.3.3, PyArrow 22.0.0, paho-mqtt 2.1.0, aiomqtt 2.5.1, psycopg2-binary 2.9.9, fastavro 1.9.7, confluent-kafka[avro] 2.15.0, requests 2.32.3 y kafka-python 2.0.2.
+  \item Docker con las imágenes oficiales de Eclipse Mosquitto 2.0.22, Apache Kafka 4.3.1, Apicurio Registry 3.3.1, TimescaleDB 2.29.1, PostgreSQL 17 (Alpine) y Grafana 13.0.6.
+  \item Conjunto de datos público ASHRAE -- Great Energy Predictor III (Kaggle) \cite{ashrae2019}.
+  \item Power BI Desktop.
+  \item Editor de código (VS Code), Git/GitHub y LaTeX (plantilla UEM) para la elaboración de esta memoria.
+\end{itemize}
 
 \section{Presupuesto}
-El Presupuesto supone la evaluación económica total del proyecto.
-No olvides que tu tiempo también vale dinero, no sólo hay que incluir el coste de los materiales empleados.
-A continuación, se muestra un ejemplo de resumen de presupuesto. Puedes añadir entradas a esta tabla si lo necesitas, conforme a la naturaleza de tu trabajo. Todos los recursos requeridos indicados en el apartado anterior deberían estar recogidos en la tabla de costes, aunque hayan tenido coste cero.
+
+La Tabla~\ref{tab:costes} es un estimado del coste económico del proyecto. El software es de código abierto o de uso gratuito para este proyecto, por lo que el mayor coste es el tiempo de trabajo.
+
 \begin{table}[ht!]
   \centering
-  \label{tab:costes}
   \begin{tabular}{|l|c|p{6cm}|}
     \hline
     \textbf{Tipo de coste} & \textbf{Valor} & \textbf{Comentarios} \\ \hline
-    Horas de trabajo en el proyecto & [Número de horas] & Añade entradas para otras personas que hayan participado en tu proyecto para contabilizar sus horas aproximadas. \\ \hline
-    Equipo técnico utilizado & € & Si el equipo no lo has tenido que adquirir, indica su valor aproximado en el mercado si lo tuvieras que adquirir nuevo. Utiliza una entrada en la tabla por cada equipo (desktop, servidor, etc.) \\ \hline
-    Software utilizado & € & Si el Software no lo has tenido que adquirir, indica su valor aproximado en el mercado si lo tuvieras que adquirir. Indica coste 0€ si es Software que no requiere pagar precio por licencia. Ejemplos: IDE de desarrollo, herramienta de análisis de datos, programa de diseño gráfico, etc. \\ \hline
-    Estudios e informes & € & Si has tenido que adquirir algún informe de consultora o de revista de investigación, indica el coste. \\ \hline
-    Materiales empleados & € & P. ej.: material de laboratorio, sensores, etc. \\ \hline
+    Horas de trabajo en el proyecto & 330 h × 25 €/h = 8.250 € & Estimación de mercado de un analista de datos junior; desglose de horas en la Tabla~\ref{tab:planificacion}. \\ \hline
+    Equipo técnico utilizado & 750 € & Ordenador portátil personal (valor de mercado si hubiera que adquirirlo nuevo). \\ \hline
+    Software utilizado & 0 € & VS Code, Git/GitHub, Power BI Desktop y las librerías (Python, PySpark, Mosquitto, Kafka, Apicurio, TimescaleDB, PostgreSQL, Grafana y Docker) son de uso libre. \\ \hline
+    Datos & 0 € & Conjunto de datos público ASHRAE, vía Kaggle. \\ \hline
+    Estudios e informes & 0 € & Literatura académica de libre acceso o a través de la universidad. \\ \hline
+    \textbf{Total} & \textbf{9.000 €} & \\ \hline
   \end{tabular}
-    \caption{Costes del proyecto}
+  \caption{Costes del proyecto.}
+  \label{tab:costes}
 \end{table}
-
-\begin{figure}[ht!]
-\centering
-\includegraphics[width=0.5\textwidth]{imagenes/logo_ue.png} % Ajusta el nombre y la ruta de tu imagen
-\caption{Esta es una imagen de ejemplo.} % Aquí va la leyenda de tu imagen
-\label{fig:miImagen} % Etiqueta para referenciar la figura en el texto
-\end{figure}
 
 \section{Viabilidad}
 Este apartado es opcional, pero es interesante que incluyas un breve análisis de viabilidad económica del proyecto (relación coste / beneficio), y un análisis de sostenibilidad a futuro del resultado de tu proyecto.
