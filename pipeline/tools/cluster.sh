@@ -21,14 +21,6 @@
 # nodos, que exigiría varias máquinas. Conviene no confundir ambas cosas al
 # describir los resultados.
 #
-# ESTE NO ES EL MODO DE MEDIR, Y ESTA MEDIDO POR QUE. Con la misma carga
-# (40.000 eventos a 358 ev/s) y el mismo estado limpio, el 21 de agosto de 2026:
-#
-#   Modo                     Latencia p95   Lote metricas p95   Simulador
-#   local[*] (12 nucleos)        1,190 s          891 ms        sostiene
-#   standalone, 4 nucleos       14,302 s        1.554 ms        sostiene
-#   standalone, 10 nucleos      34,274 s        3.194 ms        NO sostiene
-#
 # Con 10 nucleos para el cluster, la carga del sistema llego a 19,76 sobre 12
 # nucleos y el simulador se retraso 9,5 s respecto a su agenda, invalidando la
 # medicion. La causa no es el modo distribuido en si: es que el generador de
@@ -36,11 +28,6 @@
 # sola maquina, de modo que cuanta mas CPU se da al cluster, menos queda para
 # producir los eventos que hay que medir. En un despliegue real el productor y
 # el cluster estarian en maquinas distintas.
-#
-# Por eso las mediciones de KPI se toman en `local[*]` y este modo se reserva
-# para DEMOSTRAR: que el job no depende del modo de despliegue, y que el fallo
-# de un executor se absorbe (medido: ~9 s de interrupcion, sin intervencion del
-# supervisor y sin perdida).
 #
 # Uso:
 #     bash pipeline/tools/cluster.sh start     # master + $WORKERS workers
@@ -130,8 +117,7 @@ start() {
         sleep 2
     done
 
-    # La orden lleva --master a proposito: sin el, el job arranca en local[*] y
-    # el cluster recien levantado se queda mirando, sin ningun aviso.
+    # La orden lleva --master a proposito: sin el, el job arranca en local[*]
     echo "Clúster listo: $(vivos) workers registrados."
     echo
     echo "Lanza el job contra el clúster con:"

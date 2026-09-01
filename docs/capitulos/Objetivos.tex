@@ -2,7 +2,7 @@
 
 \section{Alcance del proyecto}
 
-Este trabajo abarca el diseño, desarrollo y validación de un sistema desacoplado de microservicios para la ingesta, procesamiento, análisis y visualización de datos de dispositivos IoT, utilizando como caso de uso el análisis de la telemetría de contadores de consumo energético en edificios con mediciones de electricidad, agua fría y agua caliente.
+Este proyecto abarca el diseño, desarrollo y validación de un sistema desacoplado de microservicios para la ingesta, procesamiento, análisis y visualización de datos de dispositivos IoT, utilizando como caso de uso el análisis de la telemetría de medidores de consumo energético en edificios con mediciones de electricidad, agua fría y agua caliente.
 
 \section{Tareas a desarrollar}
 
@@ -10,7 +10,7 @@ Para cubrir el alcance descrito, se plantean las siguientes tareas:
 
 \begin{itemize}
     \item Analizar el estado del arte en las tecnologías, estrategias y retos actuales en el procesamiento y análisis de datos en streaming.
-    \item Analizar las herramientas open-source disponibles para el procesamiento y análisis de datos de dispositivos IoT.
+    \item Analizar las herramientas de código abierto disponibles para el procesamiento y análisis de datos de dispositivos IoT.
     \item Diseñar e implementar un simulador de dispositivos IoT para la transmisión de datos de telemetría.
     \item Diseñar e implementar una arquitectura basada en contenedores para la orquestación y ejecución de los siguientes microservicios:
     \begin{itemize}
@@ -23,7 +23,7 @@ Para cubrir el alcance descrito, se plantean las siguientes tareas:
 
 \section{Objetivos}
 
-Los objetivos concretos de este trabajo se definen a continuación, acompañados de un indicador clave de rendimiento (KPI) que permite verificar su cumplimiento, y de las acciones necesarias para alcanzarlo. Los valores numéricos de cada KPI se han fijado a partir de rangos razonables de la práctica de ingeniería y de la literatura revisada en el estado del arte; se validarán y, si procede, se recalibrarán a partir de las pruebas piloto realizadas sobre la implementación.
+Los objetivos concretos de este proyecto se definen a continuación, acompañados de un indicador clave de rendimiento (KPI) que permite verificar su cumplimiento, y de las acciones necesarias para alcanzarlo. Los valores numéricos de cada KPI se han fijado a partir de rangos razonables de la práctica de ingeniería y de la literatura revisada en el estado del arte; se validarán y, si procede, se recalibrarán a partir de las pruebas piloto realizadas sobre la implementación.
 
 \subsection{Objetivo 1: Garantizar la ingesta fiable de telemetría en tiempo real}
 
@@ -31,17 +31,17 @@ Los objetivos concretos de este trabajo se definen a continuación, acompañados
 
 \textbf{Acciones}: desplegar Mosquitto como broker MQTT y un microservicio de bridge MQTT-Kafka encargado de reenviar los eventos ingeridos al tópico de Kafka correspondiente; definir el nivel de calidad de servicio (QoS) y la topología de tópicos; instrumentar el simulador MQTT y el bridge para medir la latencia extremo a extremo; ejecutar pruebas de ingesta sostenida con el simulador para verificar el cumplimiento del KPI.
 
-\subsection{Objetivo 2: Garantizar la gobernanza y evolución controlada del esquema de datos}
+\subsection{Objetivo 2: Garantizar la gobernanza del esquema de datos}
 
-\textbf{KPI}: el 100\,\% de los eventos ingeridos se validan correctamente contra el esquema Avro registrado; 0\,\% de fallos de deserialización ante cambios de esquema compatibles.
+\textbf{KPI}: el 100\,\% de los eventos ingeridos se validan correctamente contra el esquema Avro registrado con 0\,\% de fallos de deserialización.
 
-\textbf{Acciones}: definir el esquema Avro inicial de telemetría; configurar las reglas de compatibilidad de esquema en Apicurio; diseñar y ejecutar al menos una prueba de evolución de esquema verificando que no se interrumpe el flujo ni se pierden mensajes; documentar los límites de la protección que ofrece el registro.
+\textbf{Acciones}: definir el esquema Avro inicial de telemetría; configurar las reglas de compatibilidad de esquema en Apicurio; diseñar y ejecutar una prueba verificando que no se interrumpe el flujo ni se pierden mensajes.
 
 \subsection{Objetivo 3: Procesar y enriquecer los datos en streaming con baja latencia}
 
-\textbf{KPI}: latencia de procesamiento por micro-lote en Spark Structured Streaming inferior a 3 segundos tras el cierre de cada ventana; throughput sostenido de al menos 50 eventos por segundo sin acumulación de retraso entre lotes sucesivos.
+\textbf{KPI}: cada micro-lote de Spark Structured Streaming se procesa en menos de 3 segundos, sin acumular retraso entre lotes sucesivos.
 
-\textbf{Acciones}: implementar el job de Spark Structured Streaming (DataFrame API) con ventanas de agregación temporal y \textit{watermarking} para el tratamiento de datos tardíos; instrumentar métricas de throughput y de duración de cada micro-lote (\textit{batch duration}) del job; ejecutar pruebas de carga incremental hasta identificar el punto de saturación y verificar el cumplimiento del KPI dentro del rango definido.
+\textbf{Acciones}: implementar el job de Spark Structured Streaming (DataFrame API) con ventanas de agregación temporal y \textit{watermarking} para el tratamiento de datos tardíos; medir la duración de cada micro-lote (\textit{batch duration}) del proceso.
 
 \subsection{Objetivo 4: Ofrecer visualización diferenciada operacional y analítica}
 
@@ -53,10 +53,10 @@ Los objetivos concretos de este trabajo se definen a continuación, acompañados
 
 \textbf{KPI}: ante el fallo de un servicio individual, el sistema se recupera en menos de 60 segundos sin pérdida de datos.
 
-\textbf{Acciones}: simular la caída de un servicio (por ejemplo, el broker de mensajería o uno de los sumideros) y medir el tiempo de recuperación y la integridad de los datos gracias a la retención en Kafka; documentar los resultados obtenidos.
+\textbf{Acciones}: simular la caída de un servicio (por ejemplo, el broker de mensajería o uno de los sumideros) y medir el tiempo de recuperación y la integridad de los datos.
 
 \section{Beneficios del proyecto}
 
-El desarrollo de este sistema aporta, por un lado, un trabajo académico evaluable que documenta con rigor una implementación completa de una arquitectura Kappa para IoT basada en herramientas de código abierto, cerrando parcialmente los vacíos identificados en el estado del arte respecto a la gobernanza de esquemas y la separación de sumideros operacional y analítico. 
+El desarrollo de este proyecto aporta un trabajo académico evaluable que documenta la implementación completa de una arquitectura Kappa para IoT basada en herramientas de código abierto, cerrando parcialmente los vacíos identificados en el estado del arte respecto a la gobernanza de esquemas y la separación de sumideros operacional y analítico. 
 
-Por otro lado, el pipeline resultante queda disponible como referencia replicable mediante contenedores y sin dependencia de proveedores propietarios, lo que facilita su adopción como punto de partida en proyectos similares de monitorización energética.
+Adicionalmente, el pipeline resultante queda disponible como sistema replicable sin dependencia de proveedores propietarios, lo que facilita su adopción como punto de partida en proyectos similares de monitorización energética.
