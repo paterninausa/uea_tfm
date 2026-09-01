@@ -77,14 +77,13 @@ def consultar(props: dict, sql: str) -> list[tuple]:
 # --------------------------------------------------------------------------
 # Objetivo 1: ingesta
 # --------------------------------------------------------------------------
-def kpi_ingesta(props_pg: dict, props_ts: dict) -> dict:
-    """Latencia extremo a extremo a grano de evento, y del agregado.
+def kpi_ingesta(props_pg: dict) -> dict:
+    """Latencia extremo a extremo desde la publicacion hasta la persistencia final.
 
-    Se informan las dos por separado porque miden cosas distintas y el objetivo
-    escrito las confunde. La de evento (publicacion -> fila en PostgreSQL) mide
-    el pipeline. La del agregado (-> fila en TimescaleDB) incluye la espera a que
-    cierre la ventana horaria, que depende de cada cuanto mide el medidor y no
-    de la velocidad del sistema.
+    Se mide sobre el evento individual (publicacion -> fila persistida), que es la
+    magnitud que fija el objetivo. `negativas` cuenta los eventos con marca de
+    persistencia anterior a la de publicacion: si aparece alguno, la medicion no
+    es fiable.
     """
     (filas, con_marca, p50, p95, maximo, negativas), = consultar(props_pg, """
         SELECT count(*),
@@ -96,16 +95,8 @@ def kpi_ingesta(props_pg: dict, props_ts: dict) -> dict:
         FROM telemetry_events
     """)
 
-    (agregados, ap50, ap95), = consultar(props_ts, """
-        SELECT count(*),
-               percentile_cont(0.50) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (ingested_at - max_sim_publish_ts))),
-               percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (ingested_at - max_sim_publish_ts)))
-        FROM telemetry_metrics WHERE max_sim_publish_ts IS NOT NULL
-    """)
-
     return {"filas": filas, "con_marca": con_marca, "p50": p50, "p95": p95,
-            "max": maximo, "negativas": negativas,
-            "agregados": agregados, "agregado_p50": ap50, "agregado_p95": ap95}
+            "max": maximo, "negativas": negativas}
 
 
 def eventos_sin_dimension(props_pg: dict) -> list[tuple]:
@@ -238,6 +229,22 @@ def kpi_procesamiento(props_ts: dict, run_id: str | None) -> tuple[str | None, l
 # --------------------------------------------------------------------------
 # Objetivo 4: visualizacion
 # --------------------------------------------------------------------------
+DATASOURCE_POR_DEFECTO = {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+
+
+def _datasource_del_panel(target: dict, panel: dict) -> dict:
+    """Fuente de datos que declara cada panel, respetando la que trae.
+
+    Un panel puede fijar su fuente a nivel de consulta o de panel. Los paneles de
+    latencia de ingesta leen los eventos individuales (sumidero analitico) y el
+    resto lee las metricas agregadas (sumidero operacional); imponer una sola
+    fuente mandaria las consultas de latencia contra la base equivocada, donde la
+    tabla de eventos no existe.
+    """
+    ds = target.get("datasource") or panel.get("datasource") or DATASOURCE_POR_DEFECTO
+    return ds if isinstance(ds, dict) and ds.get("uid") else DATASOURCE_POR_DEFECTO
+
+
 def kpi_grafana(url: str, usuario: str, clave: str, rango: str) -> list[dict]:
     """Cronometra cada consulta de panel A TRAVES DE GRAFANA, no contra la base.
 
@@ -259,7 +266,7 @@ def kpi_grafana(url: str, usuario: str, clave: str, rango: str) -> list[dict]:
                 "from": rango, "to": "now",
                 "queries": [{
                     "refId": t.get("refId", chr(65 + i)),
-                    "datasource": {"type": "postgres", "uid": "timescaledb"},
+                    "datasource": _datasource_del_panel(t, panel),
                     "rawSql": t["rawSql"],
                     "format": t.get("format", "table"),
                     "rawQuery": True,
@@ -286,98 +293,114 @@ def kpi_grafana(url: str, usuario: str, clave: str, rango: str) -> list[dict]:
 # --------------------------------------------------------------------------
 # Informe
 # --------------------------------------------------------------------------
+def _num(valor, decimales=3):
+    """Numero en convencion espanola: miles con punto y decimales con coma."""
+    if valor is None:
+        return "n/d"
+    s = f"{valor:,.{decimales}f}"
+    return s.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+
+
 def _fmt(valor, decimales=3, sufijo=""):
-    return "n/d" if valor is None else f"{valor:,.{decimales}f}{sufijo}"
+    return "n/d" if valor is None else f"{_num(valor, decimales)}{sufijo}"
+
+
+# Cada consulta de streaming se nombra por el sumidero que alimenta, no por su
+# identificador interno: es asi como se describe en la memoria.
+FLUJOS = {
+    "eventos-postgresql": "Eventos individuales (sumidero analitico)",
+    "metricas-timescaledb": "Metricas agregadas (sumidero operacional)",
+}
 
 
 def construir_informe(ingesta, esquema, run_id, procesamiento, grafana, failover) -> str:
-    L = ["# Cuadro de KPIs", "",
-         f"Generado el {time.strftime('%Y-%m-%d %H:%M:%S')} sobre el estado actual del sistema.",
+    L = ["# Cuadro de indicadores de rendimiento", "",
+         f"Generado el {time.strftime('%Y-%m-%d %H:%M:%S')} sobre el estado del sistema.",
          ""]
 
-    L += ["## Objetivo 1 — Ingesta", "",
-          "| Metrica | Resultado | Objetivo |", "|---|---|---|",
-          f"| Eventos persistidos en PostgreSQL | {ingesta['filas']:,} | — |",
-          f"| Latencia de ingesta p50 | {_fmt(ingesta['p50'])} s | — |",
-          f"| **Latencia de ingesta p95** | **{_fmt(ingesta['p95'])} s** | < 2 s |",
-          f"| Latencia de ingesta maxima | {_fmt(ingesta['max'])} s | — |",
-          f"| Agregados en TimescaleDB | {ingesta['agregados']:,} | — |",
-          f"| Disponibilidad del agregado p50 / p95 | {_fmt(ingesta['agregado_p50'])} / "
-          f"{_fmt(ingesta['agregado_p95'])} s | acotada por la cadencia del sensor |", ""]
-    if ingesta.get("descartados"):
-        L += [f"| **Mensajes descartados por Mosquitto** | **{ingesta['descartados']:,}** | "
-              "0 (perdida invisible) |", ""]
-    elif ingesta.get("descartados") == 0:
-        L += ["| Mensajes descartados por Mosquitto | 0 | 0 ✓ |", ""]
+    # -- Objetivo 1 --------------------------------------------------------
+    L += ["## Objetivo 1: Garantizar la ingesta fiable de telemetria en tiempo real", "",
+          "| Indicador | Resultado | Objetivo |", "|---|---|---|",
+          f"| Eventos persistidos | {_fmt(ingesta['filas'], 0)} | — |",
+          f"| Mensajes publicados en el flujo | {_fmt(ingesta.get('publicados'), 0)} | — |",
+          f"| Latencia de ingesta (mediana) | {_fmt(ingesta['p50'])} s | — |",
+          f"| **Latencia de ingesta (percentil 95)** | **{_fmt(ingesta['p95'])} s** | < 2 s |",
+          f"| Latencia de ingesta (maxima) | {_fmt(ingesta['max'])} s | — |",
+          f"| **Tasa de perdida** | **{_fmt(ingesta.get('perdida_pct'), 4, ' %')}** | < 0,1 % |",
+          ""]
 
     if ingesta.get("descartados"):
-        L += ["> **Aviso**: el broker acepto esos mensajes —el productor recibio su PUBACK— y "
-              "no llego a entregarlos, por cola de salida llena. No aparecen como fallo en "
-              "ningun otro indicador: ni en el productor, ni en el bridge, ni en la DLQ. "
-              "Contar solo lo que el pipeline registra da un 0% de perdida que es falso.", ""]
+        L += [f"| Mensajes aceptados por el broker y no entregados | "
+              f"{_fmt(ingesta['descartados'], 0)} | 0 |", "",
+              "> El broker los confirmo al simulador pero no llego a entregarlos por tener la "
+              "cola de salida llena. Es una perdida adicional a la de la tabla, anterior a "
+              "Kafka, y no consta en ningun otro indicador.", ""]
+
+    if ingesta.get("persistidos_de_mas"):
+        L += ["> Hay mas eventos persistidos que publicados en el flujo: la medicion se ha "
+              "tomado sobre un estado que no estaba limpio. Conviene repetirla partiendo de un "
+              "estado limpio.", ""]
 
     if ingesta.get("huerfanos"):
         total = sum(n for _, n in ingesta["huerfanos"])
-        L += [f"| **Eventos sin dimension** | **{total:,}** de {len(ingesta['huerfanos'])} "
-              "edificios desconocidos | 0 |", "",
-              "> **Aviso**: esos edificios no estan en la tabla `buildings`. Sus eventos se "
-              "persisten en `telemetry_events` pero **quedan fuera de los agregados**, porque "
-              "sin `site_id` ni `primary_use` no hay por donde agruparlos. Edificios afectados: "
-              + ", ".join(str(b) for b, _ in ingesta["huerfanos"][:5]) + ".", ""]
+        L += [f"| Eventos sin edificio de referencia | {_fmt(total, 0)} | 0 |", "",
+              "> Se persisten, pero quedan fuera de las metricas agregadas: su edificio no "
+              "consta en la tabla de referencia.", ""]
 
     if ingesta["negativas"]:
-        L += [f"> **Aviso**: {ingesta['negativas']:,} filas tienen `ingested_at` anterior a "
-              "`sim_publish_ts`, es decir latencia negativa. Es el sintoma de que el UPSERT no "
-              "refresca `ingested_at` al reescribir una fila; las latencias de arriba estan "
-              "contaminadas.", ""]
+        L += [f"> Aviso: {_fmt(ingesta['negativas'], 0)} eventos presentan una latencia "
+              "negativa. La medicion no es fiable y debe repetirse.", ""]
 
+    # -- Objetivo 2 ------------------------------------------------------
     if esquema:
-        L += ["## Objetivo 2 — Gobernanza de esquema", "",
-              "| Metrica | Resultado | Objetivo |", "|---|---|---|",
-              f"| Esquema vigente | `{esquema['nombre']}` id={esquema['schema_id']}, "
-              f"{esquema['campos']} campos | — |",
-              f"| Eventos validados (topico raw) | {esquema['validos']:,} | — |",
-              f"| Eventos rechazados (DLQ) | {esquema['dlq']:,} | — |",
-              f"| **Validados sobre el total** | **{_fmt(esquema['pct_validados'], 4)}%** | 100% |", ""]
+        L += ["## Objetivo 2: Garantizar la gobernanza del esquema de datos", "",
+              "| Indicador | Resultado | Objetivo |", "|---|---|---|",
+              f"| Esquema registrado | `{esquema['nombre']}` | — |",
+              f"| Eventos validados contra el esquema | {_fmt(esquema['pct_validados'], 4, ' %')} | 100 % |",
+              f"| Eventos con error de validacion | {_fmt(esquema['dlq'], 0)} | 0 |", ""]
 
-    L += ["## Objetivo 3 — Procesamiento", ""]
+    # -- Objetivo 3 ----------------------------------------------------
+    L += ["## Objetivo 3: Procesar y enriquecer los datos en streaming con baja latencia", ""]
     if procesamiento:
-        L += [f"Ejecucion del job `run_id={run_id}`.", "",
-              "| Consulta | Lotes | Duracion p50 | Duracion p95 | Maxima | Filas | Ritmo medio |",
-              "|---|---|---|---|---|---|---|"]
-        for nombre, lotes, p50, p95, maximo, filas, ritmo in procesamiento:
-            L.append(f"| `{nombre}` | {lotes:,} | {_fmt(p50, 0, ' ms')} | **{_fmt(p95, 0, ' ms')}** | "
-                     f"{_fmt(maximo, 0, ' ms')} | {filas or 0:,} | {_fmt(ritmo, 1, ' ev/s')} |")
-        L += ["", "Objetivo: duracion de micro-lote < 3.000 ms y throughput sostenido >= 50 ev/s.", ""]
+        L += ["| Flujo de procesamiento | Micro-lotes | Duracion (mediana) | "
+              "Duracion (percentil 95) | Duracion (maxima) | Objetivo |",
+              "|---|---|---|---|---|---|"]
+        for nombre, lotes, p50, p95, maximo, _filas, _ritmo in procesamiento:
+            L.append(f"| {FLUJOS.get(nombre, nombre)} | {_fmt(lotes, 0)} | {_fmt(p50, 0, ' ms')} | "
+                     f"**{_fmt(p95, 0, ' ms')}** | {_fmt(maximo, 0, ' ms')} | < 3 s |")
+        L += [""]
     else:
-        L += ["Sin datos en `streaming_progress`: el job no ha corrido con "
-              "`--progress-interval` activo.", ""]
+        L += ["No hay datos de micro-lote registrados para esta ejecucion.", ""]
 
+    # -- Objetivo 4 --------------------------------------------------
     if grafana:
-        L += ["## Objetivo 4 — Visualizacion", "",
-              "| Dashboard | Panel | Tiempo |", "|---|---|---|"]
+        L += ["## Objetivo 4: Ofrecer visualizacion diferenciada operacional y analitica", "",
+              "| Dashboard | Paneles | Refresco mas lento | Objetivo |",
+              "|---|---|---|---|"]
+        por_dashboard: dict[str, list[dict]] = {}
         for m in grafana:
-            marca = "" if m["ok"] else " ⚠ error"
-            L.append(f"| {m['dashboard']} | {m['panel']} | {m['ms']:,.1f} ms{marca} |")
-        peor = max(grafana, key=lambda m: m["ms"])
-        L += ["", f"Panel mas lento: **{peor['ms']:,.1f} ms** (objetivo < 5.000 ms).", ""]
+            por_dashboard.setdefault(m["dashboard"], []).append(m)
+        for titulo, paneles in por_dashboard.items():
+            peor = max(paneles, key=lambda m: m["ms"])
+            fallo = " (con errores)" if any(not m["ok"] for m in paneles) else ""
+            L.append(f"| {titulo} | {len(paneles)} | {_num(peor['ms'], 0)} ms{fallo} | < 5 s |")
+        L += [""]
+        if any(not m["ok"] for m in grafana):
+            L += ["> Aviso: algun panel devolvio error. Revisar el registro de actividad.", ""]
 
+    # -- Objetivo 5 ------------------------------------------------
     if failover:
         ok = failover["recuperacion_s"] is not None and failover["recuperacion_s"] < 60
         marca = "✓" if ok else "✗"
-        L += ["## Objetivo 5 — Resiliencia", "",
-              f"Prueba ejecutada el {failover['instante']} sobre `{failover['servicio']}` "
-              f"(tabla testigo `{failover['tabla_testigo']}`).", "",
-              "| Metrica | Resultado | Objetivo |", "|---|---|---|",
-              f"| Servicio tumbado | `{failover['servicio']}` | — |",
-              f"| Caida provocada | {failover['downtime_s']:g} s | — |",
+        L += ["## Objetivo 5: Validar la resiliencia del sistema", "",
+              f"Prueba realizada el {failover['instante']} sobre el servicio "
+              f"`{failover['servicio']}`.", "",
+              "| Indicador | Resultado | Objetivo |", "|---|---|---|",
+              f"| Servicio interrumpido | `{failover['servicio']}` | — |",
+              f"| Duracion de la interrupcion | {failover['downtime_s']:g} s | — |",
               f"| **Tiempo de recuperacion** | **{_fmt(failover['recuperacion_s'], 1, ' s')}** {marca} | < 60 s |",
-              f"| Filas nuevas tras recuperar | {failover['filas_nuevas']:,} | — |",
-              f"| Estado final del servicio | {failover['estado_final']} | — |", ""]
-        if not ok:
-            L += ["> **Aviso**: el flujo no se restablecio dentro del objetivo de 60 s (o no se "
-                  "restablecio en absoluto). Un servicio cuyo fallo detiene el pipeline es un "
-                  "resultado valido y publicable.", ""]
+              f"| Eventos persistidos tras la recuperacion | {_fmt(failover['filas_nuevas'], 0)} | > 0 |",
+              ""]
 
     return "\n".join(L)
 
@@ -387,7 +410,23 @@ def run(args: argparse.Namespace) -> int:
     props_ts = props_bd(args, TIMESCALE)
 
     logger.info("Objetivo 1: consultando latencias de ingesta...")
-    ingesta = kpi_ingesta(props_pg, props_ts)
+    ingesta = kpi_ingesta(props_pg)
+
+    logger.info("Objetivo 1: comparando lo publicado en el flujo con lo persistido...")
+    try:
+        publicados = offsets_kafka(args.topic)
+    except RuntimeError as exc:
+        logger.warning("No se pudo contar lo publicado en Kafka: %s", exc)
+        publicados = None
+    ingesta["publicados"] = publicados
+    if publicados:
+        perdidos = publicados - ingesta["filas"]
+        ingesta["perdida_pct"] = max(perdidos, 0) / publicados * 100
+        ingesta["persistidos_de_mas"] = perdidos < 0
+    else:
+        ingesta["perdida_pct"] = None
+        ingesta["persistidos_de_mas"] = False
+
     logger.info("Objetivo 1: leyendo el medidor de descartes del broker...")
     ingesta["descartados"] = descartes_mosquitto()
     ingesta["huerfanos"] = eventos_sin_dimension(props_pg)

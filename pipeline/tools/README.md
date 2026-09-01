@@ -128,23 +128,30 @@ hace falta para aislar una medicion porque el job las recarga al arrancar.
 
 Interroga las fuentes donde el pipeline deja constancia:
 
-| Objetivo | Metrica | Fuente |
+| Objetivo | Indicador | Fuente |
 |---|---|---|
-| 1 | latencia de ingesta p50/p95, perdida | PostgreSQL + offsets de Kafka |
-| 2 | % validados, esquema vigente | Apicurio + topico DLQ |
-| 3 | duracion de micro-lote, ritmo | `streaming_progress` de TimescaleDB |
-| 4 | tiempo de respuesta de cada panel | API de consultas de Grafana |
+| 1 | latencia de ingesta (mediana/p95), tasa de perdida | PostgreSQL + offsets de Kafka |
+| 2 | % validados, esquema registrado | Apicurio + topico DLQ |
+| 3 | duracion de micro-lote (mediana/p95/maxima) | `streaming_progress` de TimescaleDB |
+| 4 | refresco por dashboard (panel mas lento) | API de consultas de Grafana |
 | 5 | recuperacion ante fallo | `ultimo_failover.json` (de `failover_test.py`) |
+
+La **tasa de perdida** del Objetivo 1 es lo publicado en el flujo (offsets del
+topico de Kafka) menos lo persistido en PostgreSQL, sobre lo publicado. Los
+mensajes que Mosquitto acepta y descarta por cola llena son una perdida
+adicional, anterior a Kafka: se informan aparte cuando su contador `$SYS` no es
+cero.
 
 El Objetivo 4 se mide **a traves de Grafana** (`/api/ds/query`) y no lanzando el
 SQL contra la base. Dos razones: los `rawSql` de los paneles llevan macros
 (`$__timeFilter`, `$__timeGroupAlias`) que no son SQL valido y habria que
 reimplementar su sustitucion, y el objetivo habla del refresco del dashboard,
-que incluye el trayecto por el servidor de Grafana.
+que incluye el trayecto por el servidor de Grafana. Cada consulta se lanza
+contra la fuente de datos que declara su panel (los paneles de latencia leen el
+sumidero analitico; el resto, el operacional).
 
-Avisa si encuentra filas con latencia negativa: es el sintoma de que el UPSERT
-no esta refrescando `ingested_at`, y significa que las latencias del informe
-estan contaminadas.
+Avisa si encuentra eventos con latencia negativa (marca de persistencia
+anterior a la de publicacion): la medicion no es fiable y hay que repetirla.
 
 ## failover_test.py
 
