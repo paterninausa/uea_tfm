@@ -484,6 +484,42 @@ En \texttt{http://localhost:3000/} se presentan tres dashboards, agrupados bajo 
   \label{tab:grafana-calidad}
 \end{table}
 
+\subsection{Power BI}
+\label{sec:powerbi}
+
+El informe de Power BI está almacenado en formato PBIP (\textit{Power BI Project}) dentro de la carpeta \texttt{powerbi/} del proyecto. Su modelo semántico se conecta en modo \textit{DirectQuery} a PostgreSQL, consultando los datos más recientes tanto al inicio como al interactuar con las diversas opciones y filtros; cada página tiene además la opción de activar la actualización automática.
+
+El informe contiene tres páginas:
+
+\textbf{1. Consumo de Energía.}
+\begin{itemize}
+  \item Consumo en kWh por Tiempo de medición y Tipo de medidor (gráfico de líneas)
+  \item Consumo en kWh por Emplazamiento (gráfico de barras)
+  \item Total de edificios analizados (tarjeta)
+\end{itemize}
+Filtros interactivos: Tipo de medidor, Uso de edificación y Rango de fechas inicio-fin de medición.
+
+\textbf{2. Eficiencia Eléctrica.}
+La página filtra únicamente medidores de electricidad:
+\begin{itemize}
+  \item Electricidad total consumida en kWh (tarjeta)
+  \item Total de edificios analizados (tarjeta)
+  \item Eficiencia de consumo en kWh/m² por Uso de edificación (gráfico de barras)
+  \item Top 10 edificios menos eficientes con sus valores en kWh/m² (gráfico de barras)
+  \item Top 10 edificios más eficientes con sus valores en kWh/m² (gráfico de barras)
+\end{itemize}
+Filtro interactivo: Rango de fechas inicio-fin de medición.
+
+\textbf{3. Detección de Anomalías.}
+La página filtra únicamente mediciones anómalas:
+\begin{itemize}
+  \item Total Edificios analizados (tarjeta)
+  \item Total Anomalías registradas (tarjeta)
+  \item Tabla de detalle con edificio, tipo de medidor, timestamp de medición, lectura de consumo y límite superior de consumo
+  \item Total de Anomalías por Fecha (gráfico de columnas)
+\end{itemize}
+Filtro interactivo: Rango de fechas inicio-fin de medición.
+
 \section{Recursos requeridos}
 En este apartado debes enumerar los recursos que has utilizado para la ejecución del proyecto (recursos técnicos, dispositivos, material de laboratorio, asistencia de expertos, etc.). Si bien, en la sección donde se describe Metodología y Herramientas empleadas, se describen en detalle las mismas, en esta sección, únicamente debes enumerarlas.
 
