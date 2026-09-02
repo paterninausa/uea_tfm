@@ -26,13 +26,13 @@ Para cubrir el alcance descrito, se plantean las siguientes tareas:
 \section{Metodología de desarrollo}
 \label{chap:objetivos}
 
-Las tareas del proyecto se desarrollarán como una serie de objetivos incrementales, acompañados de un indicador clave de rendimiento (KPI) que permite verificar su cumplimiento, y de las acciones necesarias para alcanzarlo. Los valores numéricos de cada KPI se han fijado a partir de rangos razonables de la práctica de ingeniería y de la literatura revisada en el estado del arte; se validarán y se recalibrarán de ser necesario, a partir de las pruebas realizadas.
+Las tareas del proyecto se desarrollarán como una serie de objetivos incrementales, acompañados de un indicador clave de rendimiento (KPI) que permite verificar su cumplimiento, y de las acciones necesarias para alcanzarlo. Los valores numéricos de cada KPI se han fijado a partir de rangos razonables de la práctica de ingeniería y de la literatura revisada en el estado del arte; se validarán y se recalibrarán de ser necesario a partir de las pruebas realizadas.
 
 \subsection{Objetivo 1: Garantizar la ingesta fiable de telemetría en tiempo real}
 
 \textbf{KPI}: latencia inferior a 2 segundos para la ingesta del 95\,\% de los mensajes MQTT publicados, calculada desde la publicación del mensaje hasta su persistencia final, con una tasa de pérdida inferior al 0.1\,\%.
 
-\textbf{Acciones}: instrumentar el simulador MQTT y desplegar Mosquitto como broker MQTT con un microservicio de bridge MQTT-Kafka que enviará los eventos ingeridos al tópico de Kafka correspondiente; definir el nivel de calidad de servicio (QoS) y la topología de tópicos; medir la latencia extremo a extremo.
+\textbf{Acciones}: instrumentar el simulador MQTT y desplegar Mosquitto como broker MQTT con un microservicio de bridge MQTT-Kafka que enviará los eventos ingeridos al tópico de Kafka correspondiente; definir el nivel de calidad de servicio (QoS) y la topología de tópicos; medir la latencia máxima de extremo a extremo.
 
 \subsection{Objetivo 2: Garantizar la gobernanza del esquema de datos}
 
@@ -42,9 +42,9 @@ Las tareas del proyecto se desarrollarán como una serie de objetivos incrementa
 
 \subsection{Objetivo 3: Procesar y enriquecer los datos en flujo con baja latencia}
 
-\textbf{KPI}: cada micro-lote de Spark Structured Streaming se procesa en menos de 1 segundo sin acumular retraso entre lotes sucesivos.
+\textbf{KPI}: cada micro-lote de Spark Structured Streaming se procesa en menos de 1 segundo sin acumular retraso entre micro-lotes sucesivos.
 
-\textbf{Acciones}: implementar el job de Spark Structured Streaming (DataFrame API) con ventanas de agregación temporal y \textit{watermarking} para el tratamiento de datos tardíos; medir la máxima duración de procesamiento cada micro-lote.
+\textbf{Acciones}: implementar el proceso de Spark Structured Streaming (DataFrame API) con ventanas de agregación temporal y \textit{watermarking} para el tratamiento de datos tardíos; medir la máxima duración de procesamiento cada micro-lote.
 
 \subsection{Objetivo 4: Ofrecer visualización diferenciada operacional y analítica}
 

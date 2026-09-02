@@ -158,6 +158,7 @@ Para la preparación de los datos usados en este proyecto, el script \texttt{pre
 \end{itemize}
 
 \subsection{Simulador de telemetría}
+\label{sec:simulador}
 
 El script \texttt{mqtt\_simulator.py} ocupa el lugar de los 652 medidores reales representados en el subconjunto del dataset. Cada medidor publica una vez por hora, lo que supone 0,18 eventos por segundo considerando el total de medidores. Debido a lo anterior, el script usa el argumento \texttt{-{}-acelerar} para incrementar el ritmo de publicación de los datos durante las pruebas de carga (en eventos por segundo), tal y como recoge la Tabla~\ref{tab:acelerar-simulador}.
 
@@ -365,7 +366,7 @@ Cada fila de \texttt{telemetry\_metrics} corresponde a una ventana de una hora p
   \label{tab:columnas-telemetry-metrics}
 \end{table}
 
-Además de \texttt{telemetry\_metrics}, TimescaleDB también contiene \texttt{streaming\_progress}, la tabla que registra el progreso de cada micro-lote de las dos consultas de Spark y que sostiene el KPI de latencia. A diferencia de \texttt{telemetry\_metrics}, sus columnas no son agregaciones calculadas por el pipeline: son valores que la propia API de Spark Structured Streaming ya expone por cada micro-lote, y que el proceso se limita a extraer y guardar. Cada fila corresponde a un micro-lote concreto de una de las dos consultas; sus columnas son las siguientes:
+Además de \texttt{telemetry\_metrics}, TimescaleDB también contiene \texttt{streaming\_progress}, la tabla que registra el progreso de cada micro-lote de las dos consultas de Spark y que sostiene el KPI de latencia. A diferencia de \texttt{telemetry\_metrics}, sus columnas no son agregaciones calculadas por el pipeline: son valores que la propia API de Spark Structured Streaming ya expone por cada micro-lote, y que el proceso se limita a extraer y guardar. Cada fila corresponde a un micro-lote de una de las dos consultas; sus columnas son las siguientes:
 
 \begin{table}[H]
   \centering
@@ -571,7 +572,11 @@ El diseño modular del sistema permite incorporar nuevos sumideros, consultas de
 
 \section{Resultados del proyecto}
 
-Esta sección contrasta cada KPI fijado en el Capítulo~\ref{chap:objetivos} con el resultado medido sobre el sistema completo, en estado limpio (tópicos recreados, tablas vacías, \textit{checkpoints} borrados) y bajo la misma carga: el simulador publicando a 357,6 eventos por segundo efectivos (\texttt{--acelerar 2000}), 50.000 eventos, sin retraso acumulado sobre la agenda.
+Los resultados conseguidos en el desarrollo del proyecto confirman el cumplimiento de los objetivos planteados en el Capítulo~\ref{chap:objetivos}. El sistema ingiere, gobierna, procesa y visualiza los datos de telemetría dentro de los KPIs fijados, y se recupera de la interrupción de cualquiera de sus servicios sin pérdida de datos.
+
+Todas las mediciones de este capítulo se obtuvieron con el simulador MQTT acelerado, no con el ritmo real del parque de medidores (652 medidores / 3600 segundos = 0,18 eventos por segundo). Reproducir la cadencia horaria real habría exigido semanas de ejecución continua para acumular una muestra representativa de cada KPI.
+
+Por ello, \texttt{mqtt\_simulator.py} con la opción \texttt{-{}-acelerar 2000}, se encarga de que cada medidor publique cada 1,8 segundos en vez de cada hora (3600 segundos / 2000 = 1.8), y la velocidad del parque completo asciende a 362 eventos por segundo (Tabla~\ref{tab:acelerar-simulador}). Este script se encarga de que los 652 medidores, que en el conjunto de datos miden todos en la hora en punto no publiquen a la vez, haciendo que el parque entregue un flujo sostenido en lugar de ráfagas de 652 eventos.
 
 \subsection{Objetivo 1: Garantizar la ingesta fiable de telemetría en tiempo real}
 
@@ -580,7 +585,7 @@ Esta sección contrasta cada KPI fijado en el Capítulo~\ref{chap:objetivos} con
   \begin{tabular}{|p{6cm}|c|c|}
     \hline
     \textbf{Indicador} & \textbf{Resultado} & \textbf{Objetivo} \\ \hline
-    Eventos persistidos / publicados & 50.000 / 50.000 & — \\ \hline
+    Eventos publicados / persistidos & 50.000 / 50.000 & — \\ \hline
     Latencia de ingesta (mediana) & 0,715 s & — \\ \hline
     \textbf{Latencia de ingesta (p95)} & \textbf{1,173 s} & < 2 s \\ \hline
     Latencia de ingesta (máxima) & 1,819 s & — \\ \hline
@@ -590,7 +595,11 @@ Esta sección contrasta cada KPI fijado en el Capítulo~\ref{chap:objetivos} con
   \label{tab:resultado-obj1}
 \end{table}
 
-Sin mensajes descartados por el broker Mosquitto (sección~\ref{sec:mosquitto}) y sin eventos huérfanos de edificio de referencia.
+Los valores de la Tabla~\ref{tab:resultado-obj1} se obtuvieron sobre \texttt{telemetry\_events} en PostgreSQL (Tabla~\ref{tab:columnas-telemetry-events}) y los \textit{offsets} del tópico \texttt{iot.telemetry.raw} de Kafka, tras publicar 50.000 eventos.
+
+Los eventos \textbf{publicados} por el bridge se calcularon como la suma de todos los (\textit{offset} final - \textit{offset} inicial) de todas las particiones del tópico de Kafka (debe recordarse que gracias a acks=all los mensajes en las particiones de Kafka son exactamente los que publicó el bridge). Los eventos \textbf{persistidos} son el recuento de filas de la tabla \texttt{telemetry\_events}. La \textbf{tasa de pérdida} es el porcentaje de eventos publicados que no llegó a persistirse, es decir (publicados - persistidos) / publicados.
+
+La \textbf{latencia de ingesta} de cada evento es la diferencia, en segundos, entre \texttt{ingested\_at} y \texttt{sim\_publish\_ts}. Sobre esa diferencia se calcularon la \textbf{mediana}, el \textbf{percentil 95} y el valor \textbf{máximo} para las 50.000 filas.
 
 \subsection{Objetivo 2: Garantizar la gobernanza del esquema de datos}
 
@@ -606,6 +615,14 @@ Sin mensajes descartados por el broker Mosquitto (sección~\ref{sec:mosquitto}) 
   \label{tab:resultado-obj2}
 \end{table}
 
+Los valores de la Tabla~\ref{tab:resultado-obj2} se obtuvieron de Apicurio Registry y de los dos tópicos de Kafka implicados en la validación. 
+
+\texttt{es.uea.tfm.iot.TelemetryEvent} es el nombre completo del esquema Avro contra el que se valida toda la telemetría del pipeline. Los \textbf{eventos validados} son los mensajes presentes en el tópico \texttt{iot.telemetry.raw}, contados por el mismo método de \textit{offsets} descrito para los eventos publicados del Objetivo~1, y los \textbf{eventos con error de validación} son los eventos del tópico de descartes \texttt{iot.telemetry.dlq} contados también de la misma forma. Todo mensaje que llega a \texttt{iot.telemetry.raw} lo hizo porque el bridge consiguió serializarlo contra el esquema registrado sin error; el que no encaja en el esquema o que no supera las validaciones del propio bridge, se desvía a \texttt{iot.telemetry.dlq} con su motivo de rechazo.
+
+Se contaron 50.000 mensajes en \texttt{iot.telemetry.raw} y ninguno en \texttt{iot.telemetry.dlq}, de ahí el 100,0000\,\%. 
+
+La ausencia de fallos de deserialización del lado de Spark se sostiene sobre el resultado del Objetivo~1: las 50.000 filas persistidas implican que Spark deserializó los 50.000 mensajes contra el esquema correspondiente a su \texttt{schema\_id} sin una sola excepción, ya que un \texttt{schema\_id} no reconocido habría detenido el proceso.
+
 \subsection{Objetivo 3: Procesar y enriquecer los datos en flujo con baja latencia}
 
 \begin{table}[H]
@@ -613,27 +630,33 @@ Sin mensajes descartados por el broker Mosquitto (sección~\ref{sec:mosquitto}) 
   \begin{tabular}{|p{3.5cm}|c|c|c|c|c|}
     \hline
     \textbf{Flujo} & \textbf{Lotes} & \textbf{Mediana} & \textbf{p95} & \textbf{Máxima} & \textbf{Objetivo} \\ \hline
-    Eventos individuales (sumidero analítico) & 142 & 262 ms & \textbf{385 ms} & 1.428 ms & < 3 s \\ \hline
-    Métricas agregadas (sumidero operacional) & 142 & 525 ms & \textbf{747 ms} & 1.887 ms & < 3 s \\ \hline
+    Eventos individuales (sumidero analítico) & 142 & 262 ms & \textbf{385 ms} & 1.428 ms & < 1 s \\ \hline
+    Métricas agregadas (sumidero operacional) & 142 & 525 ms & \textbf{747 ms} & 1.887 ms & < 1 s \\ \hline
   \end{tabular}
   \caption{Resultado del Objetivo 3: latencia de micro-lote.}
   \label{tab:resultado-obj3}
 \end{table}
 
+Los valores de la Tabla~\ref{tab:resultado-obj3} proceden de \texttt{streaming\_progress} de TimescaleDB (Tabla~\ref{tab:columnas-streaming-progress}): la tabla que registra el progreso del procesamiento por flujo, con valores que la propia API de Spark Structured Streaming ya expone por cada micro-lote procesado.
+
+Cada \textbf{flujo} de la tabla es una consulta independiente de Spark sobre Kafka: \texttt{eventos-postgresql} escribe cada evento individual y \texttt{metricas-timescaledb} escribe las métricas agregadas por ventanas. \textbf{Lotes} es el número de micro-lotes procesados en cada consulta; \textbf{Mediana} y \textbf{p95} son los percentiles 50 y 95 de \texttt{duration\_ms}, y \textbf{Máxima} es el máximo tiempo de procesamiento entre todos los micro-lotes.
+
 \subsection{Objetivo 4: Ofrecer visualización diferenciada operacional y analítica}
 
 \begin{table}[H]
   \centering
-  \begin{tabular}{|p{5cm}|c|c|c|}
+  \begin{tabular}{|p{4.5cm}|c|c|c|c|}
     \hline
-    \textbf{Dashboard} & \textbf{Paneles} & \textbf{Refresco más lento} & \textbf{Objetivo} \\ \hline
-    1. Estado del pipeline & 6 & 78 ms & < 5 s \\ \hline
-    2. Consumo energético & 7 & 9 ms & < 5 s \\ \hline
-    3. Calidad y anomalías & 6 & 17 ms & < 5 s \\ \hline
+    \textbf{Dashboard} & \textbf{Paneles} & \textbf{Ventana} & \textbf{Refresco} & \textbf{Objetivo} \\ \hline
+    1. Estado del pipeline & 6 & 15 min & 5 s & $\leq$ 5 s \\ \hline
+    2. Consumo energético & 7 & 7 días & 30 s & --- \\ \hline
+    3. Calidad y anomalías & 6 & 7 días & 30 s & --- \\ \hline
   \end{tabular}
-  \caption{Resultado del Objetivo 4: dashboards de Grafana (sección~\ref{sec:grafana}).}
+  \caption{Resultado del Objetivo 4: configuración de los dashboards de Grafana (sección~\ref{sec:grafana}).}
   \label{tab:resultado-obj4-grafana}
 \end{table}
+
+Los valores de la Tabla~\ref{tab:resultado-obj4-grafana} son la configuración de los tres \textit{dashboards} aprovisionados de Grafana (sección~\ref{sec:grafana}), definida de forma declarativa en el repositorio: el número de \textbf{paneles}, la \textbf{ventana} de tiempo que muestra cada uno y su \textbf{intervalo de refresco}, que es cada cuánto Grafana vuelve a consultar los datos y repinta el \textit{dashboard}. El \textit{dashboard} operativo, ``Estado del pipeline'', se refresca cada 5 segundos, de modo que el dato mostrado nunca tiene más de 5 segundos de antigüedad; los otros dos presentan agregados de negocio sobre ventanas de siete días, donde un refresco de 30 segundos es suficiente y el umbral de 5 segundos no aplica. Las consultas de los paneles se resuelven muy por debajo de ese intervalo, del orden de milisegundos, como puede comprobarse en el inspector de consultas de la propia Grafana.
 
 % Figuras Grafana
 \begin{figure}[H]
@@ -657,7 +680,7 @@ Sin mensajes descartados por el broker Mosquitto (sección~\ref{sec:mosquitto}) 
   \label{fig:grafana-calidad}
 \end{figure}
 
-En cuanto a Power BI (sección~\ref{sec:powerbi}), el informe cubre las tres áreas exigidas por el KPI: consumo energético, eficiencia operativa y detección de anomalías.
+En cuanto a Power BI (sección~\ref{sec:powerbi}), el informe cubre las áreas exigidas por el KPI: consumo energético, eficiencia operativa, detección de anomalías y análisis histórico.
 
 \begin{figure}[H]
   \centering

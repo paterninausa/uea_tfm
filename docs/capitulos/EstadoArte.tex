@@ -15,11 +15,11 @@ En la literatura sobre procesamiento de grandes volúmenes de datos en flujo des
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.8\textwidth]{imagenes/lambda_architecture.png}
-    \caption[Arquitectura Lambda]{Arquitectura Lambda: las capas batch y speed se fusionan en la capa de servicio. Elaboración propia a partir de \cite{marz2011,marzwarren2015}.}
+    \caption[Arquitectura Lambda]{Arquitectura Lambda: las capas por lote y por flujo se fusionan en la capa de servicio. Elaboración propia a partir de \cite{marz2011,marzwarren2015}.}
     \label{fig:lambda}
 \end{figure}
 
-No obstante la amplia adopción de la arquitectura Lambda, J. Kreps \cite{kreps2014} señala que esta exige implementar y mantener la misma lógica de transformación por duplicado: una en el sistema \textit{batch} y otra en el de \textit{streaming}; y sincronizar ambas transformaciones resulta muy costoso operativamente. H. Cao y M. Wachowicz \cite{caowachowicz2019} añaden que la dependencia de infraestructura de cómputo intensivo hace esta arquitectura poco adecuada para muchos escenarios IoT.
+No obstante la amplia adopción de la arquitectura Lambda, J. Kreps \cite{kreps2014} señala que esta exige implementar y mantener la misma lógica de transformación por duplicado: una en el sistema por lote y otra en el sistema por flujo, y sincronizar ambas transformaciones resulta muy costoso operativamente. H. Cao y M. Wachowicz \cite{caowachowicz2019} añaden que la dependencia de infraestructura de cómputo intensivo hace esta arquitectura poco adecuada para muchos escenarios IoT.
 
 Como alternativa, J. Kreps \cite{kreps2014} propuso en 2014 la arquitectura Kappa, que elimina la capa por lotes y utiliza un flujo reproducible (\textit{replayable stream}) como fuente de verdad única. Cuando hace falta reprocesar el flujo (por un cambio de lógica o corrección de un bug), se lanza una nueva instancia de job de flujo (con una versión mejorada del código, corriendo sobre el mismo framework) que se ejecuta reproduciendo el flujo desde el principio, escribiendo su resultado en una nueva tabla de salida y en paralelo a la tabla que ya está en producción; una vez que el nuevo job se sincroniza al presente, la aplicación se redirige a leer de la tabla nueva, y solo entonces se puede retirar la tabla y el job antiguos \cite{kreps2014}.
 
@@ -139,5 +139,3 @@ De la revisión anterior se desprende que, si bien existen múltiples implementa
 La mayoría de los recursos formativos y de referencia disponibles para diseñar este tipo de arquitecturas dependen, en algún punto de la cadena, de servicios gestionados o plataformas propietarias (colas de mensajería en la nube, motores de flujo como servicio, o plataformas de ingesta IoT gestionadas como AWS IoT Core o Azure IoT Hub), lo que dificulta el diseño en escenarios que requieren control total sobre el despliegue, la no dependencia de un proveedor concreto, o la posibilidad de ejecutar el sistema en un entorno local (o on-premise) mediante microservicios.
 
 Considerando lo anterior, el problema planteado en este proyecto es \textit{la falta de una implementación de referencia, de código abierto y containerizada, de una arquitectura Kappa para IoT que integre bridging MQTT-Kafka, gobernanza de esquemas mediante Avro/Apicurio, y una estrategia de doble sumidero que separe el consumo operacional del analítico}.
-
-En el desarrollo del proyecto se utilizará un conjunto de datos de telemetría de consumo energético como caso de estudio, evaluando la viabilidad técnica de la arquitectura y dejando como elementos reutilizables el código, la configuración de despliegue y la documentación asociada.
