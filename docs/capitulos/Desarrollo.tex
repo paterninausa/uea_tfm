@@ -324,7 +324,7 @@ En la configuración de despliegue para Kafka en \texttt{docker-compose.yml} se 
 \subsection{Apache Spark Structured Streaming}
 \label{sec:spark-structured-streaming}
 
-Spark Structured Streaming (\texttt{stream\_processing.py}) es el único consumidor de Kafka: dos consultas de flujo (\textit{streaming}) independientes al tópico \texttt{iot.telemetry.raw} deserializan cada mensaje Avro usando el esquema correspondiente al \texttt{schema\_id} del mensaje, los enriquecen cruzándolos con las tablas de referencia del proyecto, y los guardan en sus respectivos sumideros. Como cada consulta de flujo se realiza con su propio \textit{checkpoint} que registra hasta qué punto se ha consumido el tópico, la caída de una consulta causada por una falla de PostgreSQL o TimescaleDB no interrumpe a la otra.
+Spark Structured Streaming (\texttt{stream\_processing.py}) es el único consumidor de Kafka: dos consultas de flujo independientes al tópico \texttt{iot.telemetry.raw} deserializan cada mensaje Avro usando el esquema correspondiente al \texttt{schema\_id} del mensaje, los enriquecen cruzándolos con las tablas de referencia del proyecto, y los guardan en sus respectivos sumideros. Como cada consulta de flujo se realiza con su propio \textit{checkpoint} que registra hasta qué punto se ha consumido el tópico, la caída de una consulta causada por una falla de PostgreSQL o TimescaleDB no interrumpe a la otra.
 
 Las dos consultas comparten la misma lógica de enriquecimiento inicial de los datos: un join por difusión de Spark (\textit{broadcast join}) con \texttt{ashrae\_buildings.parquet} y con \texttt{ashrae\_
 sensor\_baseline.parquet}, ya que ambas tablas son lo bastante pequeñas para replicarse en la memoria de cada nodo sin necesidad de barajar (\textit{shuffle}) los datos. Adicionalmente, la consulta hacia TimescaleDB agrega por ventanas temporales de una hora sobre el tiempo de evento (\texttt{timestamp}), agrupando siempre por tipo de medidor además de por emplazamiento y uso del edificio. Esta agregación por ventana de TimescaleDB exige una marca de agua (\textit{watermark}) que le indique a Spark cuánto puede tardar un evento en llegar antes de dar una ventana por cerrada. La consulta hacia PostgreSQL almacena cada evento enriquecido de forma directa, por lo que no necesita ventanas de agregación con \textit{watermark}.
@@ -365,28 +365,28 @@ Cada fila de \texttt{telemetry\_metrics} corresponde a una ventana de una hora p
   \label{tab:columnas-telemetry-metrics}
 \end{table}
 
-Además de \texttt{telemetry\_metrics}, TimescaleDB también contiene \texttt{streaming\_progress}, la tabla que registra el progreso de cada microlote de las dos consultas de Spark y que sostiene el KPI de latencia. A diferencia de \texttt{telemetry\_metrics}, sus columnas no son agregaciones calculadas por el pipeline: son valores que la propia API de Spark Structured Streaming ya expone por cada microlote, y que el proceso se limita a extraer y guardar. Cada fila corresponde a un microlote concreto de una de las dos consultas; sus columnas son las siguientes:
+Además de \texttt{telemetry\_metrics}, TimescaleDB también contiene \texttt{streaming\_progress}, la tabla que registra el progreso de cada micro-lote de las dos consultas de Spark y que sostiene el KPI de latencia. A diferencia de \texttt{telemetry\_metrics}, sus columnas no son agregaciones calculadas por el pipeline: son valores que la propia API de Spark Structured Streaming ya expone por cada micro-lote, y que el proceso se limita a extraer y guardar. Cada fila corresponde a un micro-lote concreto de una de las dos consultas; sus columnas son las siguientes:
 
 \begin{table}[H]
   \centering
   \begin{tabular}{|l|p{9cm}|}
     \hline
     \textbf{Columna} & \textbf{Descripción} \\ \hline
-    \texttt{trigger\_ts} & Instante en que Spark emitió el informe del microlote \\ \hline
+    \texttt{trigger\_ts} & Instante en que Spark emitió el informe del micro-lote \\ \hline
     \texttt{run\_id} & Identificador de la ejecución del proceso \\ \hline
     \texttt{query\_name} & Nombre de la consulta que generó el informe (\texttt{metricas-timescaledb} o \texttt{eventos-postgresql}) \\ \hline
-    \texttt{batch\_id} & Número del microlote dentro de esa consulta \\ \hline
-    \texttt{num\_input\_rows} & Filas leídas de Kafka en este microlote \\ \hline
+    \texttt{batch\_id} & Número del micro-lote dentro de esa consulta \\ \hline
+    \texttt{num\_input\_rows} & Filas leídas de Kafka en este micro-lote \\ \hline
     \texttt{input\_rows\_per\_second} & Ritmo de entrada de filas \\ \hline
     \texttt{processed\_rows\_per\_second} & Ritmo al que la consulta procesó las filas \\ \hline
-    \texttt{duration\_ms} & Duración total del microlote \\ \hline
-    \texttt{add\_batch\_ms} & Parte de \texttt{duration\_ms} dedicada a la escritura del microlote \\ \hline
+    \texttt{duration\_ms} & Duración total del micro-lote \\ \hline
+    \texttt{add\_batch\_ms} & Parte de \texttt{duration\_ms} dedicada a la escritura del micro-lote \\ \hline
     \texttt{query\_planning\_ms} & Parte de \texttt{duration\_ms} dedicada a planificar la consulta \\ \hline
     \texttt{sink\_num\_output\_rows} & Filas escritas en el sumidero \\ \hline
     \texttt{rows\_dropped\_by\_watermark} & Eventos descartados por llegar tarde respecto al \textit{watermark} \\ \hline
     \texttt{offsets\_behind} & Mensajes en Kafka que la consulta no ha leído \\ \hline
-    \texttt{event\_time\_max} & Marca de tiempo de evento más reciente del microlote \\ \hline
-    \texttt{watermark} & Valor del \textit{watermark} del microlote \\ \hline
+    \texttt{event\_time\_max} & Marca de tiempo de evento más reciente del micro-lote \\ \hline
+    \texttt{watermark} & Valor del \textit{watermark} del micro-lote \\ \hline
   \end{tabular}
   \caption{Columnas de \texttt{streaming\_progress}.}
   \label{tab:columnas-streaming-progress}
