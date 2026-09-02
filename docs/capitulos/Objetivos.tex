@@ -2,35 +2,37 @@
 
 \section{Alcance del proyecto}
 
-Este proyecto abarca el diseño, desarrollo y validación de un sistema desacoplado de microservicios para la ingesta, procesamiento, análisis y visualización de datos de dispositivos IoT, utilizando como caso de uso el análisis de la telemetría de medidores de consumo energético en edificios con mediciones de electricidad, agua fría y agua caliente.
+Este proyecto abarca el diseño, desarrollo y validación de un sistema desacoplado de microservicios para la ingesta, procesamiento, y análisis operacional de datos de dispositivos IoT, utilizando como caso de uso la supervisión y análisis en tiempo real de la telemetría de consumo energético en edificios con medidores de electricidad, agua fría y agua caliente.
 
 \section{Tareas a desarrollar}
 
 Para cubrir el alcance descrito, se plantean las siguientes tareas:
 
 \begin{itemize}
-    \item Analizar el estado del arte en las tecnologías, estrategias y retos actuales en el procesamiento y análisis de datos en streaming.
+    \item Analizar el estado del arte en las tecnologías, estrategias y retos actuales en el procesamiento y análisis de datos en flujo.
     \item Analizar las herramientas de código abierto disponibles para el procesamiento y análisis de datos de dispositivos IoT.
     \item Diseñar e implementar un simulador de dispositivos IoT para la transmisión de datos de telemetría.
     \item Diseñar e implementar una arquitectura basada en contenedores para la orquestación y ejecución de los siguientes microservicios:
     \begin{itemize}
-        \item Servicio para la ingesta de datos, mediante un gestor de mensajería que acepte protocolos de telemetría estándar.
-        \item Servicio de filtrado y transformación que alimente dos sumideros: una base de datos optimizada para series temporales con métricas ya agregadas por ventana, y una base relacional para eventos individuales con tablas de referencia.
-        \item Servicio de análisis que calcule índices de eficiencia energética, efectúe análisis operativo y detección de anomalías en datos de consumo.
+        \item Servicio para la ingesta de datos que acepte protocolos de telemetría estándar.
+        \item Servicio de gobernanza y validación de esquemas de datos en flujo.
+        \item Servicios de agregado y transformación que permitan calcular índices de eficiencia energética, efectuar análisis operativo e histórico y hacer detección de anomalías.
+        \item Servicio de almacenamiento optimizado para series temporales.
+        \item Servicio de almacenamiento optimizado para consumo analítico.
     \end{itemize}
-    \item Diseñar un servicio de visualización mediante dashboards, para la visualización interactiva de los datos procesados.
+    \item Diseñar e implementar servicios de visualización que permitan la exploración interactiva de los datos procesados.
 \end{itemize}
 
-\section{Objetivos}
+\section{Metodología de desarrollo}
 \label{chap:objetivos}
 
-Los objetivos concretos de este proyecto se definen a continuación, acompañados de un indicador clave de rendimiento (KPI) que permite verificar su cumplimiento, y de las acciones necesarias para alcanzarlo. Los valores numéricos de cada KPI se han fijado a partir de rangos razonables de la práctica de ingeniería y de la literatura revisada en el estado del arte; se validarán y, si procede, se recalibrarán a partir de las pruebas piloto realizadas sobre la implementación.
+Las tareas del proyecto se desarrollarán como una serie de objetivos incrementales, acompañados de un indicador clave de rendimiento (KPI) que permite verificar su cumplimiento, y de las acciones necesarias para alcanzarlo. Los valores numéricos de cada KPI se han fijado a partir de rangos razonables de la práctica de ingeniería y de la literatura revisada en el estado del arte; se validarán y se recalibrarán de ser necesario, a partir de las pruebas realizadas.
 
 \subsection{Objetivo 1: Garantizar la ingesta fiable de telemetría en tiempo real}
 
-\textbf{KPI}: latencia inferior a 2 segundos para la ingesta del 95\,\% de los mensajes MQTT publicados; calculada desde la publicación del mensaje hasta su persistencia final, con una tasa de pérdida inferior al 0.1\,\%.
+\textbf{KPI}: latencia inferior a 2 segundos para la ingesta del 95\,\% de los mensajes MQTT publicados, calculada desde la publicación del mensaje hasta su persistencia final, con una tasa de pérdida inferior al 0.1\,\%.
 
-\textbf{Acciones}: desplegar Mosquitto como broker MQTT y un microservicio de bridge MQTT-Kafka encargado de reenviar los eventos ingeridos al tópico de Kafka correspondiente; definir el nivel de calidad de servicio (QoS) y la topología de tópicos; instrumentar el simulador MQTT y el bridge para medir la latencia extremo a extremo; ejecutar pruebas de ingesta sostenida con el simulador para verificar el cumplimiento del KPI.
+\textbf{Acciones}: instrumentar el simulador MQTT y desplegar Mosquitto como broker MQTT con un microservicio de bridge MQTT-Kafka que enviará los eventos ingeridos al tópico de Kafka correspondiente; definir el nivel de calidad de servicio (QoS) y la topología de tópicos; medir la latencia extremo a extremo.
 
 \subsection{Objetivo 2: Garantizar la gobernanza del esquema de datos}
 
@@ -38,23 +40,23 @@ Los objetivos concretos de este proyecto se definen a continuación, acompañado
 
 \textbf{Acciones}: definir el esquema Avro inicial de telemetría; configurar las reglas de compatibilidad de esquema en Apicurio; diseñar y ejecutar una prueba verificando que no se interrumpe el flujo ni se pierden mensajes.
 
-\subsection{Objetivo 3: Procesar y enriquecer los datos en streaming con baja latencia}
+\subsection{Objetivo 3: Procesar y enriquecer los datos en flujo con baja latencia}
 
-\textbf{KPI}: cada micro-lote de Spark Structured Streaming se procesa en menos de 3 segundos, sin acumular retraso entre lotes sucesivos.
+\textbf{KPI}: cada micro-lote de Spark Structured Streaming se procesa en menos de 1 segundo sin acumular retraso entre lotes sucesivos.
 
-\textbf{Acciones}: implementar el job de Spark Structured Streaming (DataFrame API) con ventanas de agregación temporal y \textit{watermarking} para el tratamiento de datos tardíos; medir la duración de cada micro-lote (\textit{batch duration}) del proceso.
+\textbf{Acciones}: implementar el job de Spark Structured Streaming (DataFrame API) con ventanas de agregación temporal y \textit{watermarking} para el tratamiento de datos tardíos; medir la máxima duración de procesamiento cada micro-lote.
 
 \subsection{Objetivo 4: Ofrecer visualización diferenciada operacional y analítica}
 
-\textbf{KPI}: dashboard de Grafana que muestre datos con una latencia inferior a 5 segundos; se dispone de al menos 1 dashboard en Power BI que cubra consumo energético, eficiencia operativa y detección de anomalías.
+\textbf{KPI}: visualización mediante dashboards de Grafana y páginas de Power BI que muestren datos con una latencia menor o igual a 5 segundos cubriendo consumo energético, eficiencia operativa, detección de anomalías y análisis histórico.
 
-\textbf{Acciones}: diseñar el dashboard operacional de Grafana sobre TimescaleDB; conectar Power BI a los eventos enriquecidos de PostgreSQL; definir y calcular los índices de eficiencia energética requeridos por las tareas de análisis; validar la latencia de refresco de los dashboards.
+\textbf{Acciones}: implementar los dashboards operacionales de Grafana sobre los datos de TimescaleDB; implementar las páginas analíticas de Power BI sobre los datos en PostgreSQL; definir y calcular los datos requeridos por los tipos de análisis; validar la latencia de actualización de las visualizaciones.
 
 \subsection{Objetivo 5: Validar la resiliencia del sistema}
 
 \textbf{KPI}: ante el fallo de un servicio individual, el sistema se recupera en menos de 60 segundos sin pérdida de datos.
 
-\textbf{Acciones}: simular la caída de un servicio (por ejemplo, el broker de mensajería o uno de los sumideros) y medir el tiempo de recuperación y la integridad de los datos.
+\textbf{Acciones}: simular la caída de un servicio (por ejemplo, el broker de mensajería o una de las bases de datos) y medir el tiempo de recuperación y la tasa de pérdida de datos.
 
 \section{Beneficios del proyecto}
 

@@ -2,32 +2,13 @@
 
 \section{Antecedentes}
 
-\subsection{El crecimiento de la analítica de datos en el Internet de las Cosas}
+\subsection{El crecimiento exponencial de datos IoT y el Big Data}
 
-El despliegue masivo de dispositivos conectados ha convertido a la analítica de datos en el elemento central para transformar la telemetría generada por sensores e infraestructuras inteligentes en información accionable. Como señala Y. Liu \cite{liu2025}, el crecimiento exponencial del volumen, la velocidad y la variedad de los datos generados por miles de millones de dispositivos ha superado la capacidad de los enfoques tradicionales de procesamiento orientado a lotes, obligando a la creación y adopción de arquitecturas capaces de ingerir, procesar y almacenar flujos continuos de datos en tiempo real.
+La explosión en el volumen, velocidad y variedad de los datos generados por miles de millones de dispositivos ha superado la capacidad de los enfoques de procesamiento tradicionales, obligando a la creación y adopción de arquitecturas capaces de ingerir, procesar y almacenar flujos continuos de datos en tiempo real. Por tanto, el rápido crecimiento en el número de dispositivos conectados al Internet de las Cosas (IoT) y el aumento exponencial en el uso de datos sugieren claramente que el desarrollo del Big Data está estrechamente vinculado con el IoT (Y. Liu \cite{liu2025}).
 
-Junto a los factores tecnológicos de la transición impulsada por el crecimiento exponencial de los datos IoT, debe considerarse que el valor de dichos datos depende de la latencia con la que estos se procesan. Por ejemplo, los datos de temperatura de un motor industrial pierden gran parte de su utilidad inicial si se analizan horas después de haber sido generados, cuando la ventana para prevenir el evento ya se ha cerrado. Este factor temporal motiva la centralidad que ha adquirido el procesamiento por flujos (\textit{stream processing}) versus el procesamiento por lotes clásico para los pipelines IoT modernos.
+Junto a los factores tecnológicos impulsados por el crecimiento de los datos IoT, debe considerarse que el valor de éstos depende de la latencia con la que se procesan. Por ejemplo, los datos de temperatura de un motor industrial pierden gran parte de su utilidad inicial si se procesan horas después de haber sido generados, cuando la ventana para prevenir el evento adverso ya se ha cerrado. Este factor temporal motiva la centralidad que ha adquirido el procesamiento por flujos (\textit{stream processing}) versus el procesamiento por lotes clásico para los pipelines IoT modernos.
 
-El proceso de análisis de datos IoT abarca la recolección, el procesamiento, el almacenamiento y la extracción de conocimiento, y su relevancia se ha extendido a dominios tan diversos como la salud, las ciudades inteligentes, la automatización industrial, el monitoreo ambiental y el transporte inteligente (Y. Liu \cite{liu2025}).
-
-\subsection{Categorización de la analítica de datos IoT}
-
-Y. Liu \cite{liu2025} propone un marco de clasificación que resulta útil para situar cualquier pipeline dentro del panorama general de la analítica de datos IoT. El marco de clasificación distingue tres dimensiones globales, tal como se muestra en la Figura~\ref{fig:liu2025}:
-
-\begin{itemize}
-    \item \textbf{Categorías de análisis}, según el momento y el propósito del procesamiento: análisis descriptivo (qué ha ocurrido), análisis en tiempo real (qué está ocurriendo), análisis predictivo (qué es probable que ocurra) y análisis prescriptivo (qué debería hacerse al respecto).
-    \item \textbf{Enfoques de procesamiento de datos}: Computación en la nube (\textit{cloud-based}), computación en el borde (\textit{edge}) y computación en la niebla (\textit{fog computing}), cada uno con distintos compromisos entre latencia, ancho de banda y capacidad de cómputo disponible.
-    \item \textbf{Componentes funcionales}: recolección e ingesta de datos, almacenamiento y gestión, preprocesamiento y transformación, y finalmente analítica y aprendizaje automático.
-\end{itemize}
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=0.75\textwidth]{imagenes/liu2025_fig1.png}
-    \caption[Categorías, enfoques y componentes de la analítica de datos IoT]{Categorías, enfoques y componentes de la analítica de datos IoT. Reproducida de Y. Liu \cite{liu2025}, distribuida bajo licencia Creative Commons (CC BY).}
-    \label{fig:liu2025}
-\end{figure}
-
-\subsection{Arquitecturas de referencia: Lambda y Kappa}
+\subsection{Arquitecturas de referencia para el procesamiento por flujos: Lambda y Kappa}
 
 En la literatura sobre procesamiento de grandes volúmenes de datos en streaming destacan dos patrones arquitectónicos ampliamente documentados. La arquitectura Lambda fue propuesta originalmente por N. Marz \cite{marz2011} en 2011 (posteriormente detallada junto con J. Warren \cite{marzwarren2015}), que parte de la premisa de que toda consulta puede expresarse como una función sobre la totalidad de los datos (\textit{query = function(all data)}), pero calcular esa función \textit{en tiempo real} sobre el dataset completo resulta prohibitivamente costoso. Para resolver esto, se implementa una capa de procesamiento por lotes (que recalcula vistas precisas sobre el histórico completo), junto a una capa de velocidad (que ofrece vistas aproximadas de baja latencia sobre los datos más recientes), que después se fusionan en una capa de servicio.
 
@@ -123,7 +104,7 @@ Pese a la madurez alcanzada por las herramientas disponibles, Y. Liu \cite{liu20
     \item En tercer lugar, la especialización técnica requerida: la complejidad y la escala de los datos generados por los dispositivos IoT hacen necesario el uso de herramientas o plataformas especializadas para procesarlos de forma efectiva \cite{liu2025}. El manejo de estas herramientas puede exigir un nivel de dominio técnico que no siempre está disponible en equipos de tamaño reducido.
 \end{itemize}
 
-\subsection{Criterios de selección de herramientas de procesamiento streaming}
+\subsection{Criterios de selección de herramientas de procesamiento de flujos}
 \label{sec:criterios-streaming}
 
 La elección de un sistema concreto para el procesamiento de flujos dentro de una arquitectura Kappa no tiene una respuesta universal: distintas herramientas optimizan frente a distintos compromisos, y la decisión debe fundamentarse en los criterios aplicables al proyecto de procesamiento de streaming, no en percepciones públicas o popularidad de una herramienta. 

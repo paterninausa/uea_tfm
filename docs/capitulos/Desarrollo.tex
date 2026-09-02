@@ -10,7 +10,7 @@ El proyecto se desarrolló a lo largo de tres meses, entre junio y agosto de 202
     \hline
     \textbf{Actividad} & \textbf{Periodo} & \textbf{Horas} & \textbf{Entregable} \\ \hline
     Estudio de los antecedentes y estado del arte & Jun. 2026 & 30 & Revisión bibliográfica \\ \hline
-    Búsqueda y adaptación de la fuente de datos; establecimiento de objetivos & Jun. 2026 & 5 & \texttt{prepare\_ashrae.py}, objetivos y KPIs \\ \hline
+    Búsqueda y adaptación de la fuente de datos; establecimiento de tareas y objetivos & Jun. 2026 & 5 & \texttt{prepare\_ashrae.py}, objetivos y KPIs \\ \hline
     Selección de herramientas y diseño de la arquitectura & Jun. 2026 & 5 & Documento de diseño \\ \hline
     Desarrollo técnico y pruebas iniciales de la sección de procesamiento & Jun.--Jul. 2026 & 80 & Artefactos en \texttt{bridge/}, \texttt{common/}, \texttt{docker/}, \texttt{schemas/}, \texttt{simulator/} y \texttt{spark/} \\ \hline
     Validación, pruebas y ajustes de la sección de procesamiento & Jul. 2026 & 100 & Informe de resultados: pérdida de mensajes (0,0000\,\%), latencia de ingesta p50/p95 (0,766 / 1,277 s), soporte de carga (652 sensores concurrentes, sin pérdida de mensajes), tiempo de recuperación ante fallo (4,1 s TimescaleDB / 5,1 s PostgreSQL) \\ \hline
@@ -102,7 +102,7 @@ A continuación se documentan tres casos en los que se evaluaron herramientas us
 
 \textbf{Almacenamiento de series temporales: TimescaleDB frente a InfluxDB.} La sección~\ref{sec:benchmarks-series-temporales} advierte que los \textit{benchmarks} de rendimiento entre los almacenamientos de series temporales proceden mayoritariamente de los propios fabricantes, por lo que la decisión en este proyecto no se apoyó en esas cifras sino en el ajuste con el resto de la arquitectura. Al ser TimescaleDB una extensión de PostgreSQL que ya se emplea en el sumidero analítico, ambos comparten cliente, dialecto SQL y patrón de escritura \textit{upsert} en el mismo proceso de Spark, evitando incorporar un lenguaje de consulta adicional (como Flux o InfluxQL) al proyecto.
 
-\textbf{Motor de procesamiento de flujos: Spark Structured Streaming frente a PyFlink.} Aplicando los criterios de la sección~\ref{sec:criterios-streaming} (relación entre la cadencia de los datos y los requisitos de latencia, madurez de la API en el lenguaje de implementación, unificación del modelo \textit{batch}/streaming, y disponibilidad de talento) al caso concreto de este proyecto: el parque de medidores emite, verificado sobre el propio conjunto de datos, una lectura por hora y sensor, muy por debajo del umbral en el que las ventajas de latencia sub-segundo de un motor de streaming nativo como Flink resultan necesarias. A esto se suma que la API de PySpark tiene mayor madurez que la de PyFlink dentro del ecosistema Python, que Spark unifica el procesamiento por lotes y en streaming bajo el mismo modelo de \textit{DataFrame}, y que su adopción en el ámbito profesional es más amplia.
+\textbf{Motor de procesamiento de flujos: Spark Structured Streaming frente a PyFlink.} Aplicando los criterios de la sección~\ref{sec:criterios-streaming} (relación entre la cadencia de los datos y los requisitos de latencia, madurez de la API en el lenguaje de implementación, unificación del modelo \textit{batch/streaming}, y disponibilidad de talento) al caso concreto de este proyecto: el parque de medidores emite, verificado sobre el propio conjunto de datos, una lectura por hora y sensor, muy por debajo del umbral en el que las ventajas de latencia sub-segundo de un motor de flujo nativo como Flink resultan necesarias. A esto se suma que la API de PySpark tiene mayor madurez que la de PyFlink dentro del ecosistema Python, que Spark unifica el procesamiento por lotes y en flujo bajo el mismo modelo de \textit{DataFrame}, y que su adopción en el ámbito profesional es más amplia.
 
 \subsection{Estructura del repositorio}
 
@@ -324,7 +324,7 @@ En la configuración de despliegue para Kafka en \texttt{docker-compose.yml} se 
 \subsection{Apache Spark Structured Streaming}
 \label{sec:spark-structured-streaming}
 
-Spark Structured Streaming (\texttt{stream\_processing.py}) es el único consumidor de Kafka: dos consultas de streaming independientes al tópico \texttt{iot.telemetry.raw} deserializan cada mensaje Avro usando el esquema correspondiente al \texttt{schema\_id} del mensaje, los enriquecen cruzándolos con las tablas de referencia del proyecto, y los guardan en sus respectivos sumideros. Como cada consulta de streaming se realiza con su propio \textit{checkpoint} que registra hasta qué punto se ha consumido el tópico, la caída de una consulta causada por una falla de PostgreSQL o TimescaleDB no interrumpe a la otra.
+Spark Structured Streaming (\texttt{stream\_processing.py}) es el único consumidor de Kafka: dos consultas de flujo (\textit{streaming}) independientes al tópico \texttt{iot.telemetry.raw} deserializan cada mensaje Avro usando el esquema correspondiente al \texttt{schema\_id} del mensaje, los enriquecen cruzándolos con las tablas de referencia del proyecto, y los guardan en sus respectivos sumideros. Como cada consulta de flujo se realiza con su propio \textit{checkpoint} que registra hasta qué punto se ha consumido el tópico, la caída de una consulta causada por una falla de PostgreSQL o TimescaleDB no interrumpe a la otra.
 
 Las dos consultas comparten la misma lógica de enriquecimiento inicial de los datos: un join por difusión de Spark (\textit{broadcast join}) con \texttt{ashrae\_buildings.parquet} y con \texttt{ashrae\_
 sensor\_baseline.parquet}, ya que ambas tablas son lo bastante pequeñas para replicarse en la memoria de cada nodo sin necesidad de barajar (\textit{shuffle}) los datos. Adicionalmente, la consulta hacia TimescaleDB agrega por ventanas temporales de una hora sobre el tiempo de evento (\texttt{timestamp}), agrupando siempre por tipo de medidor además de por emplazamiento y uso del edificio. Esta agregación por ventana de TimescaleDB exige una marca de agua (\textit{watermark}) que le indique a Spark cuánto puede tardar un evento en llegar antes de dar una ventana por cerrada. La consulta hacia PostgreSQL almacena cada evento enriquecido de forma directa, por lo que no necesita ventanas de agregación con \textit{watermark}.
@@ -350,7 +350,7 @@ Cada fila de \texttt{telemetry\_metrics} corresponde a una ventana de una hora p
     \texttt{primary\_use} & Uso principal del edificio; clave de agrupación \\ \hline
     \texttt{meter\_type} & Tipo de medidor; clave de agrupación \\ \hline
     \texttt{event\_count} & Número de lecturas que caen dentro de la ventana \\ \hline
-    \texttt{distinct\_buildings} & Número de edificios distintos que reportaron en la ventana, contados de forma aproximada porque Spark no admite el conteo exacto en agregaciones de streaming \\ \hline
+    \texttt{distinct\_buildings} & Número de edificios distintos que reportaron en la ventana, contados de forma aproximada porque Spark no admite el conteo exacto en agregaciones de flujo \\ \hline
     \texttt{avg\_reading} & Media de las lecturas de consumo de la ventana \\ \hline
     \texttt{max\_reading} & Máximo de las lecturas de consumo de la ventana \\ \hline
     \texttt{sum\_reading} & Suma de las lecturas de consumo de la ventana \\ \hline
@@ -606,7 +606,7 @@ Sin mensajes descartados por el broker Mosquitto (sección~\ref{sec:mosquitto}) 
   \label{tab:resultado-obj2}
 \end{table}
 
-\subsection{Objetivo 3: Procesar y enriquecer los datos en streaming con baja latencia}
+\subsection{Objetivo 3: Procesar y enriquecer los datos en flujo con baja latencia}
 
 \begin{table}[H]
   \centering
