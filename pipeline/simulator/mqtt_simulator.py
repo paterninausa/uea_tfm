@@ -11,7 +11,13 @@ dispersion— y hay 652 medidores con datos en el 99,2% de las horas de 2016. Es
 es el caso de uso: **menos de una quinta parte de un evento por segundo**, sobre
 un historico de 8.784 horas.
 
-Por eso el simulador acelera el reloj. `--acelerar` es el factor:
+Por eso el simulador acelera el reloj. `--acelerar` comprime la linea de tiempo
+del historico por un factor CONSTANTE Y GLOBAL: cada marca real se divide por ese
+factor antes de publicarse, la misma division para todos los sensores. No es una
+tasa de publicacion repartida entre ellos.
+
+La tasa agregada del parque es una CONSECUENCIA de reproducir la cadencia horaria
+de los 652 medidores a esa compresion:
 
     tasa agregada = n_sensores x acelerar / 3600
 
@@ -20,22 +26,18 @@ Por eso el simulador acelera el reloj. `--acelerar` es el factor:
     2.000              1,8 s                 362 ev/s            4,4 h
     7.145              0,5 s               1.294 ev/s             74 min
 
-Es un factor POR SENSOR, no una tasa global, y esa diferencia importa para el
-Objetivo 5: con una tasa global fija, pasar de 100 a 652 sensores reparte los
-mismos eventos entre mas identidades y no escala nada. Con `--acelerar`, cada
-medidor mantiene su cadencia y la carga crece con el numero de medidores, que
-es lo que significa "sensores concurrentes".
-
 POR QUE NO SE REPRODUCEN LAS RAFAGAS. Los medidores reales miden en la hora en
 punto, asi que un replay literal publicaria los 652 de golpe y luego callaria. No
 se hace, y no por comodidad: con un factor alto esa rafaga desborda el sistema.
 Con un drenaje del bridge de unos 4.000 ev/s, el replay fiel se sostiene hasta
 ~x22.000 (652 / (3600/acelerar) <= 4.000); por encima, la cola de Mosquitto
 —10.000 mensajes segun `mosquitto.conf`— se llena en menos de tres segundos y el
-broker empieza a descartar EN SILENCIO. En su lugar, los sensores se escalonan de
-forma determinista dentro de cada intervalo, lo que equivale a suponer que sus
-relojes no estan sincronizados al milisegundo: mas realista que la rafaga
-perfecta, y sin perdida artificial.
+broker empieza a descartar EN SILENCIO. Para evitarlo, `repartir()` asigna a cada
+sensor un desfase determinista igual a una fraccion fija de su intervalo de
+medida, lo que equivale a suponer que sus relojes no estan sincronizados al
+milisegundo: mas realista que la rafaga perfecta, y sin perdida artificial. Ese
+escalonado es independiente de `--acelerar`: solo reparte a los sensores dentro
+del intervalo, ya comprimido o no.
 
 
 Uso:
@@ -65,8 +67,8 @@ logger = logging.getLogger("mqtt_simulator")
 
 TOPIC_TEMPLATE = "iot/{building_id}/{meter_type}/telemetry"
 
-# Cadencia del medidor real, en segundos. Es la constante de la que sale todo:
-# el factor de aceleracion, la tasa agregada y el escalonado entre sensores.
+# Cadencia del medidor real, en segundos. De aqui salen la tasa agregada
+# (n_sensores x acelerar / 3600) y el escalonado determinista entre sensores.
 PERIODO_SENSOR_S = 3600.0
 
 
@@ -162,9 +164,10 @@ def repartir(df, n_clientes: int) -> list[list]:
 
     for idx, (_clave, filas) in enumerate(sensores):
         # Desfase del sensor dentro de su intervalo, como fraccion de 0 a 1: es
-        # lo que evita que los 652 publiquen a la vez. Determinista y no
-        # aleatorio, para que dos ejecuciones con los mismos argumentos sean
-        # comparables entre si.
+        # lo que evita que los 652 publiquen a la vez (los relojes reales no van
+        # sincronizados). Determinista y no aleatorio, para que dos ejecuciones
+        # con los mismos argumentos sean comparables. No tiene que ver con
+        # --acelerar: es de-sincronizacion, no aceleracion.
         grupos[idx % len(grupos)].append((filas, idx / len(sensores)))
     return grupos
 
@@ -172,11 +175,12 @@ def repartir(df, n_clientes: int) -> list[list]:
 def _programa(filas, fraccion: float, t_sim0, speedup: float):
     """Instantes de publicacion de UN sensor, en segundos desde el arranque.
 
-    El instante sale del tiempo de evento comprimido por `speedup`, mas el
-    desfase propio del sensor dentro de su intervalo. Ese desfase es lo que
-    impide que los 652 medidores publiquen a la vez: equivale a suponer que sus
-    relojes no estan sincronizados al milisegundo, que es lo que ocurre en un
-    parque real y ademas evita la rafaga que desbordaria al bridge.
+    El instante sale del tiempo de evento comprimido por `speedup` —la misma
+    compresion global para todos los sensores—, mas un desfase propio del sensor
+    dentro de su intervalo. Ese desfase es lo que impide que los 652 medidores
+    publiquen a la vez: equivale a suponer que sus relojes no estan sincronizados
+    al milisegundo, que es lo que ocurre en un parque real y ademas evita la
+    rafaga que desbordaria al bridge.
     """
     desfase = fraccion * PERIODO_SENSOR_S / speedup
     for fila in filas.itertuples(index=False):
@@ -319,8 +323,8 @@ def parse_args() -> argparse.Namespace:
     anadir_argumentos_dataset(p)
     anadir_argumentos_mqtt(p, client_id="tfm-sim")
     p.add_argument("--acelerar", dest="speedup", metavar="FACTOR", type=float, default=2000.0,
-                   help="Cuantas veces mas rapido avanza el reloj simulado. Es un factor "
-                        "POR SENSOR: la tasa agregada es n_sensores x acelerar / 3600")
+                   help="Factor de compresion GLOBAL del reloj: cada marca del historico se "
+                        "divide por el. La tasa agregada que resulta es n_sensores x acelerar / 3600")
     p.add_argument("--clients", type=int, default=0,
                    help="Conexiones MQTT simultaneas. 0 (por defecto) abre una por sensor, "
                         "que es el parque real; un valor menor agrupa varios sensores por "

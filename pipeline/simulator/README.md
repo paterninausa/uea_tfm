@@ -73,7 +73,9 @@ del intervalo son exactamente 3.600 s, sin dispersion— y los 652 medidores
 tienen datos en el 99,2% de las 8.784 horas de 2016. **El caso de uso completo
 son menos de dos decimas de evento por segundo.**
 
-Por eso el simulador acelera el reloj:
+Por eso el simulador acelera el reloj. `--acelerar` **comprime la linea de tiempo
+del historico por un factor constante y global**: cada marca real se divide por
+ese factor antes de publicarse, la misma division para todos los sensores.
 
     tasa agregada = n_sensores x acelerar / 3600
 
@@ -83,9 +85,10 @@ Por eso el simulador acelera el reloj:
 | 2.000 | 1,8 s | 359 ev/s | 4,4 h |
 | 7.145 | 0,5 s | 1.294 ev/s | 74 min |
 
-**Es un factor POR SENSOR, no una tasa global**: cada medidor mantiene su propia
-cadencia, y la tasa agregada del sistema es la suma de las 652 cadencias
-individuales, no el reparto de una tasa fija entre identidades.
+La tasa agregada no es un parametro: es la **consecuencia** de reproducir la
+cadencia horaria de los 652 medidores a esa compresion. Cada medidor conserva su
+cadencia real (una lectura por hora, comprimida), sus huecos y el ciclo diario y
+anual de demanda, porque lo que se reproduce son sus marcas de tiempo reales.
 
 Si el simulador no consigue sostener el ritmo pedido, **la ejecucion se marca
 como no valida** (codigo de salida 1) en lugar de recuperar el tiempo perdido
@@ -101,8 +104,9 @@ y por encima la cola de Mosquitto, 10.000 mensajes segun `mosquitto.conf`, se
 llena en menos de tres segundos y el broker **descarta en silencio**.
 
 En su lugar los sensores se escalonan de forma determinista dentro de cada
-intervalo, lo que equivale a suponer que sus relojes no estan sincronizados al
-milisegundo: mas realista que la rafaga perfecta y sin perdida artificial.
+intervalo —un desfase igual a una fraccion fija del intervalo, independiente de
+`--acelerar`—, lo que equivale a suponer que sus relojes no estan sincronizados
+al milisegundo: mas realista que la rafaga perfecta y sin perdida artificial.
 
 ## Una conexion por sensor
 
