@@ -1,20 +1,12 @@
 # Dependencias Python del proyecto (entorno venv + pip)
 #
-# Requiere Java 17 o superior (21 LTS recomendado) para PySpark 4.x. venv no
-# gestiona JDK; alternativas de instalacion en README.md.
+# Se requiere Java 17 o superior (21 LTS recomendado) para PySpark 4.x.
 #
-# Instalacion (normalmente via ./setup.sh, que hace exactamente esto):
+# Instalacion (normalmente via ./setup.sh, que hace esto):
 #   python3 -m venv .venv
 #   source .venv/bin/activate
 #   pip install -r requirements.txt
 #
-# Snapshot reproducible completo (con hashes) en requirements.lock.txt una vez
-# generado con: pip freeze > requirements.lock.txt
-#
-# Un unico fichero para todo el proyecto: el pipeline en ejecucion y la
-# preparacion del dataset (pipeline/data/) comparten venv, asi que comparten
-# tambien su lista de dependencias.
-
 python-dotenv==1.0.1
 pytest==8.3.3
 
@@ -22,27 +14,19 @@ pyspark==4.2.0            # motor de procesamiento (Structured Streaming, DataFr
 
 # pandas y pyarrow SI se declaran explicitamente: se comprobo que `pip install
 # pyspark==4.2.0` NO los instala (solo llegan con extras como pyspark[sql] o
-# pyspark[connect]). El simulador los necesita para leer el Parquet historico,
-# y prepare_ashrae.py para generarlo.
+# pyspark[connect]).
 pandas==2.3.3
 pyarrow==22.0.0
 
 paho-mqtt==2.1.0          # cliente MQTT del bridge (suscriptor, callbacks)
 
-# El simulador abre UNA CONEXION MQTT POR SENSOR —652 en el parque completo— y
-# eso con paho serian 652 hilos. aiomqtt las mantiene como corrutinas sobre un
-# unico hilo: verificado con 652 conexiones simultaneas publicando sin un solo
-# fallo. Es un envoltorio sobre paho, no un cliente distinto.
 aiomqtt==2.5.1
 psycopg2-binary==2.9.9    # PostgreSQL / TimescaleDB
 fastavro==1.9.7           # serializacion Avro (register_schema, prueba del watermark)
 requests==2.32.3          # llamadas REST a Apicurio (register_schema, kpi_report)
 kafka-python==2.0.2       # cliente Kafka (testing/debug, no para el job de Spark)
 
-# AvroSerializer del ecosistema Confluent (Apache 2.0). El bridge serializa con
-# el y resuelve el esquema por el protocolo compatible con Confluent (ccompat)
-# que expone Apicurio. El extra [avro] arrastra fastavro, con el que serializa
-# por debajo. Reemplaza la implementacion propia del formato de cable.
+# AvroSerializer del ecosistema Confluent (Apache 2.0)
 confluent-kafka[avro]==2.15.0
 
-kaggle==2.2.3              # CLI de descarga del dataset ASHRAE (prepare_ashrae.py no la importa)
+kaggle==2.2.3              # CLI de descarga del dataset ASHRAE

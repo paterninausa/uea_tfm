@@ -1,37 +1,37 @@
 \chapter{EJECUCIÓN Y VALIDACIÓN DEL SISTEMA}
 \label{chap:ejecucion}
 
-Este capítulo describe cómo poner en marcha el pipeline y cómo reproducir las mediciones presentadas en el capítulo anterior. Se ofrecen dos vías de arranque —una automática, pensada para la demostración, y una manual paso a paso— y se documentan las herramientas con las que se obtuvieron los resultados de los objetivos.
+Este capítulo describe cómo poner en marcha el pipeline y cómo reproducir las mediciones presentadas en el capítulo~\ref{chap:resultados}. Se ofrecen dos vías de arranque: una automática y una manual paso a paso, y se documentan las herramientas con las que se obtuvieron los resultados de los objetivos.
 
 \section{Requisitos previos}
 \label{sec:ejec-requisitos}
 
-El sistema se ejecuta sobre Linux (o WSL2) y necesita:
+El sistema se ejecuta sobre Linux, WSL2 o macOS y las dependencias en detalle están en \texttt{requirements.txt} en la raíz del repositorio:
 
 \begin{itemize}
-  \item \textbf{Docker} y \textbf{Docker Compose}, para el stack de servicios (Mosquitto, Kafka, Apicurio, TimescaleDB, PostgreSQL, Grafana y el bridge).
-  \item \textbf{Java 21 LTS}, gestionado por SDKMAN a partir del fichero \texttt{.sdkmanrc} del repositorio. Lo requiere PySpark.
-  \item \textbf{Python 3} con un entorno virtual (\texttt{venv}).
+  \item Docker y Docker Compose para el stack de servicios.
+  \item Java 17 o superior (21 LTS recomendado).
+  \item Python 3.11.
 \end{itemize}
 
-El script \texttt{bash setup.sh}, en la raíz del repositorio, comprueba la presencia de Docker y Java (guía la instalación, no la realiza), crea el entorno virtual, instala las dependencias de \texttt{requirements.txt} y prepara el conjunto de datos ASHRAE si encuentra credenciales de Kaggle. El entorno virtual debe estar activado antes de lanzar los procesos que corren en el host: el job de Spark y el simulador.
+Con ejecutar \texttt{bash setup.sh} en la raíz del repositorio, se comprueba la presencia de Docker y Java (guía la instalación si no los detecta), se crea el entorno virtual .venv, se instalan las dependencias de \texttt{requirements.txt} y se prepara la data en parquet si se encuentran las credenciales de Kaggle para descargar el dataset; caso contrario se presenta una guía para obtener y guardar dichas credenciales.
 
-\section{Modo automático (demostración)}
+\section{Modo automático de ejecución}
 \label{sec:ejec-demo}
 
-El script \texttt{pipeline/tools/demo.py} orquesta todo el arranque en un solo comando: levanta el stack, deja las bases de datos limpias, arranca el bridge y el job de Spark —esperando a que las consultas de \textit{streaming} estén activas— y lanza el simulador reproduciendo los datos más recientes del histórico.
+El script \texttt{pipeline/tools/demo.py} orquesta el arranque del sistema: levanta el stack Docker, limpia las bases de datos, inicia el proceso Spark, espera a que las consultas hacia Kafka estén activas, y lanza el simulador reproduciendo los eventos más recientes de la data en los archivos parquet.
 
 {\footnotesize
 \begin{verbatim}
-python pipeline/tools/demo.py            # 6 semanas de datos, arranque completo
-python pipeline/tools/demo.py --semanas 10
-python pipeline/tools/demo.py --stop     # cierra los procesos y baja el stack
+python pipeline/tools/demo.py                 # publica 6 semanas de eventos (opción por defecto)
+python pipeline/tools/demo.py --semanas 10    # publica 10 semanas de eventos
+python pipeline/tools/demo.py --stop          # cierra los procesos y baja el stack
 \end{verbatim}
 }
 
-La opción \texttt{-{}-semanas N} reproduce la cola de las últimas \texttt{N} semanas del histórico (entre 1 y 52; 6 por defecto). Como el Parquet de datos ya viene fechado en el presente, esa cola termina en fecha reciente. Mientras el simulador publica, el dashboard de Grafana (\texttt{http://localhost:3000}) se rellena de izquierda a derecha; en los dashboards operacionales conviene fijar el rango temporal a \texttt{now-Nw} para ver el bloque completo.
+La opción \texttt{-{}-semanas N} reproduce las últimas \texttt{N} semanas del subconjunto (valores disponibles entre 1 y 52; 6 por defecto). Debe tenerse en cuenta que la opción \texttt{-{}-semanas N} cuenta las semanas desde la fecha más reciente hacia atrás, por lo que deben ajustarse los rangos de fechas en Grafana para cubrir las últimas \texttt{N} semanas.
 
-Esta vía sirve para \textbf{demostrar} el sistema en funcionamiento, no para medir: las cifras de los KPIs se toman con el procedimiento manual de la sección siguiente.
+Este script sirve para \textbf{demostrar} el sistema en funcionamiento, no para medir: las cifras de los KPIs se toman con el procedimiento manual de la siguiente sección.
 
 \section{Modo manual}
 \label{sec:ejec-manual}
@@ -39,35 +39,35 @@ Esta vía sirve para \textbf{demostrar} el sistema en funcionamiento, no para me
 El arranque manual sigue cinco pasos, en este orden:
 
 \begin{enumerate}
-  \item \textbf{Estado limpio.} Borra los \textit{checkpoints} de Spark, recrea los tópicos de Kafka y vacía las tablas de los sumideros, de modo que la medición no se mezcle con los restos de una ejecución anterior.
-  {\footnotesize
-  \begin{verbatim}
-python pipeline/tools/reset_state.py --yes
-  \end{verbatim}
-  }
-
-  \item \textbf{Levantar el stack.} Arranca los siete servicios. El registro del esquema (\texttt{register-schema}, un contenedor de un solo uso) y el bridge están encadenados por \texttt{depends\_on}: el bridge no arranca hasta que el esquema Avro está registrado.
+  \item \textbf{Levantar el stack.}
   {\footnotesize
   \begin{verbatim}
 docker compose -f pipeline/docker-compose.yml up -d
   \end{verbatim}
   }
 
-  \item \textbf{Arrancar el job de Spark.} El primer arranque descarga los conectores de Maven y tarda más de lo habitual; hay que esperar a que el job informe de que las consultas de \textit{streaming} están en marcha antes de generar carga.
+  \item \textbf{Estado limpio.} Con el stack en marcha, borra los \textit{checkpoints} de Spark, recrea los tópicos de Kafka y vacía las tablas de los sumideros.
+  {\footnotesize
+  \begin{verbatim}
+python pipeline/tools/reset_state.py --yes
+  \end{verbatim}
+  }
+
+  \item \textbf{Arrancar Spark.} El primer arranque descarga los conectores de Maven y tarda más de lo habitual; hay que esperar a que Spark informe de que las consultas hacia Kafka están en marcha antes de generar carga.
   {\footnotesize
   \begin{verbatim}
 python pipeline/spark/stream_processing.py --trigger "1 second"
   \end{verbatim}
   }
 
-  \item \textbf{Generar la carga.} El simulador reproduce la telemetría de los 652 sensores. El factor \texttt{-{}-acelerar} comprime el reloj del histórico.
+  \item \textbf{Generar la carga.} El simulador reproduce la telemetría de los 652 sensores. El factor \texttt{-{}-acelerar} aumenta la velocidad de publicación por segundo calculado como 652 x (N / 3600), y \texttt{-{}-limite} acota cuántos eventos se publicarán (sin \texttt{-{}-limite} se reproducirán 5.682.185 eventos).
   {\footnotesize
   \begin{verbatim}
-python pipeline/simulator/mqtt_simulator.py --acelerar 2000
+python pipeline/simulator/mqtt_simulator.py --acelerar 2000 --limite 50000
   \end{verbatim}
   }
 
-  \item \textbf{Emitir el cuadro de KPIs.} Consulta las fuentes donde el pipeline deja constancia de su actividad y escribe el informe en \texttt{pipeline/logs/informe\_kpi.md}.
+  \item \textbf{Emitir el cuadro de KPIs.} \texttt{kpi\_report.py} consulta los informes de actividad del pipeline y escribe el reporte en \texttt{pipeline/logs/informe\_kpi.md}.
   {\footnotesize
   \begin{verbatim}
 python pipeline/tools/kpi_report.py
@@ -75,32 +75,36 @@ python pipeline/tools/kpi_report.py
   }
 \end{enumerate}
 
-El orden importa: el job de Spark debe estar procesando \textbf{antes} de que el simulador publique. Si se invierte, los eventos esperan en Kafka a que aparezca quien los consuma y esa espera se contabiliza como latencia de ingesta, falseando la medición.
+El job de Spark debe estar procesando \textbf{antes} de que el simulador publique. Si se invierte el orden, los eventos esperan en Kafka a que aparezca quien los consuma y esa espera se contabiliza como latencia de ingesta, falseando la medición.
 
 \section{Herramientas de validación}
 \label{sec:ejec-herramientas}
 
-Las mediciones de los objetivos se obtuvieron con tres scripts que no forman parte del pipeline —no procesan telemetría, la miden o preparan el sistema para medirla— y que residen en \texttt{pipeline/tools/}.
+Las mediciones de los KPIs se obtuvieron mediante tres scripts que residen en \texttt{pipeline/tools/}.
 
 \begin{table}[H]
   \centering
-  \begin{tabular}{|p{3.2cm}|p{7.3cm}|p{3.3cm}|}
+  \begin{tabular}{|p{3.3cm}|p{7.3cm}|p{4cm}|}
     \hline
     \textbf{Herramienta} & \textbf{Función} & \textbf{Salida} \\ \hline
     \texttt{reset\_state.py} & Deja el sistema en estado limpio: borra los \textit{checkpoints} de Spark, recrea los tópicos de Kafka y vacía las tablas de los sumideros. & --- \\ \hline
     \texttt{kpi\_report.py} & Interroga PostgreSQL, TimescaleDB, Apicurio y Grafana y emite el cuadro de los KPIs 1 a 5 en Markdown. & \texttt{pipeline/logs/} \texttt{informe\_kpi.md} \\ \hline
-    \texttt{failover\_test.py} & Lanza el simulador, provoca el fallo de un servicio y mide el tiempo de recuperación y la tasa de pérdida (Objetivo 5). & \texttt{pipeline/logs/} \texttt{ultimo\_failover.json} \\ \hline
+    \texttt{failover\_test.py} & Lanza el simulador, provoca el fallo de un servicio, mide el tiempo de recuperación y la tasa de pérdida. & \texttt{pipeline/logs/} \texttt{ultimo\_failover.json} \\ \hline
   \end{tabular}
-  \caption{Herramientas de validación del sistema.}
+  \caption{Herramientas de validación de KPIs.}
   \label{tab:herramientas-validacion}
 \end{table}
 
-\texttt{kpi\_report.py} no mide una prueba concreta, sino el estado en que encuentra el sistema. Para que sus cifras sean fiables debe ejecutarse siguiendo el orden estricto de la sección~\ref{sec:ejec-manual} (estado limpio, stack, Spark, carga, informe); la alternativa es apoyarse en \texttt{demo.py} (sección~\ref{sec:ejec-demo}), que realiza esa misma secuencia de puesta en marcha de forma automática.
+\texttt{kpi\_report.py} mide el estado en que encuentra el pipeline para el instante en que es ejecutado. Para que sus cifras sean fiables, debe seguirse estrictamente el orden de la sección~\ref{sec:ejec-manual} (stack, estado limpio, Spark, simulador y reporte) antes de ser utilizado.
 
-\texttt{failover\_test.py} necesita que se haya ejecutado \texttt{reset\_state.py} antes de arrancar el pipeline: el simulador que lanza internamente parte de un estado limpio. La prueba comprueba que el bridge y el job de Spark estén en marcha y se detiene con un mensaje si falta alguno. El servicio a interrumpir se indica con \texttt{-{}-target} (Mosquitto, Kafka, TimescaleDB, PostgreSQL o el bridge).
+\texttt{failover\_test.py} necesita que se haya ejecutado \texttt{reset\_state.py} antes de iniciar el pipeline. El script verifica que el bridge y Spark estén en marcha antes de interrumpir algún servicio. Las opciones empleadas son:
 
-{\footnotesize
-\begin{verbatim}
-python pipeline/tools/failover_test.py --target postgres
-\end{verbatim}
-}
+\begin{itemize}
+  \item \texttt{failover\_test.py -{}-target mosquitto -{}-fallo kill}
+  \item \texttt{failover\_test.py -{}-target kafka -{}-fallo kill}
+  \item \texttt{failover\_test.py -{}-target timescaledb -{}-fallo oom}
+  \item \texttt{failover\_test.py -{}-target postgres -{}-fallo oom}
+  \item \texttt{failover\_test.py -{}-target bridge -{}-fallo oom}
+\end{itemize}
+
+Los servicios \texttt{mosquitto} y \texttt{kafka} no admiten \texttt{-{}-fallo oom}: Mosquitto usa unos 3~MB, insuficiente para un fallo por memoria, y en Kafka un fallo de este tipo deja la JVM en bucle de reinicios.
