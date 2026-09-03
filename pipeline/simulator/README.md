@@ -73,9 +73,10 @@ del intervalo son exactamente 3.600 s, sin dispersion— y los 652 medidores
 tienen datos en el 99,2% de las 8.784 horas de 2016. **El caso de uso completo
 son menos de dos decimas de evento por segundo.**
 
-Por eso el simulador acelera el reloj. `--acelerar` **comprime la linea de tiempo
-del historico por un factor constante y global**: cada marca real se divide por
-ese factor antes de publicarse, la misma division para todos los sensores.
+Por eso el simulador acelera el reloj. `--acelerar N` **reproduce el historico N
+veces mas rapido**, con el mismo factor para todos los sensores: un evento cuya
+marca real esta a T segundos del inicio se publica T/N segundos despues de
+arrancar.
 
     tasa agregada = n_sensores x acelerar / 3600
 
@@ -86,8 +87,8 @@ ese factor antes de publicarse, la misma division para todos los sensores.
 | 7.145 | 0,5 s | 1.294 ev/s | 74 min |
 
 La tasa agregada no es un parametro: es la **consecuencia** de reproducir la
-cadencia horaria de los 652 medidores a esa compresion. Cada medidor conserva su
-cadencia real (una lectura por hora, comprimida), sus huecos y el ciclo diario y
+cadencia horaria de los 652 medidores a esa velocidad. Cada medidor conserva su
+cadencia real (una lectura por hora, acelerada), sus huecos y el ciclo diario y
 anual de demanda, porque lo que se reproduce son sus marcas de tiempo reales.
 
 Si el simulador no consigue sostener el ritmo pedido, **la ejecucion se marca

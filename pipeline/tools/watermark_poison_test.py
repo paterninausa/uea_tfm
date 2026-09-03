@@ -376,7 +376,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--meter-type", default="electricity",
                    help="Debe ser un simbolo valido del enum del esquema")
     p.add_argument("--acelerar", dest="speedup", metavar="FACTOR", type=float, default=2000.0,
-                   help="Factor de compresion global del reloj del simulador")
+                   help="Reproduce el historico este numero de veces mas rapido (ver mqtt_simulator.py)")
     p.add_argument("--limite", dest="limit", metavar="N", type=int, default=200000,
                    help="Tope de eventos del simulador: solo tiene que durar mas que la prueba")
     p.add_argument("--warmup", type=float, default=180.0,

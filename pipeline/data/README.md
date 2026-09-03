@@ -143,9 +143,12 @@ De los 16 emplazamientos de la tabla original se usan tres:
 | Combinaciones de agregación | **46** | 193 |
 | Reproducción a 740 eventos/s | **128 min** | 6,6 h |
 
-- **652 sensores** deja margen sobre los 500 concurrentes que exige el Objetivo
-  5, y permite muestrear la carga base de 100 para medir la degradacion de
-  throughput.
+- **652 sensores** permite ejercitar mas de 500 conexiones MQTT concurrentes
+  —util para la caracterizacion de carga y las pruebas de resiliencia— y
+  muestrear una carga base de 100 para medir la degradacion de throughput. (El
+  Objetivo 5 se redefinio el 31 de agosto de 2026 y ya solo exige recuperacion
+  ante fallo de un servicio en < 60 s; la escalera de concurrencia queda como
+  material de caracterizacion, no como criterio.)
 - El **emplazamiento 3** con 274 sensores tiene la mejor calidad del dataset, apenas un
   0,1% de lecturas a cero.
 - El **emplazamiento 2** aporta la variedad de medidores (electricidad, agua

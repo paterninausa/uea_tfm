@@ -96,38 +96,44 @@ directamente de Kaggle (ver `pipeline/data/README.md`).
    y se guia en vez de automatizar, con las alternativas sin SDKMAN descritas
    mas arriba --, crea el entorno virtual e instala las dependencias Python
    (reutiliza lo que ya exista en vez de rehacerlo), y si encuentra
-   credenciales de Kaggle en `~/.kaggle/kaggle.json` descarga y prepara el
-   dataset ASHRAE automaticamente. Si no las encuentra, imprime como
-   obtenerlas y deja el resto listo para repetir el script despues.
+   credenciales de Kaggle -- token en `~/.kaggle/access_token` (el metodo
+   vigente, empieza por `KGAT_`), `~/.kaggle/kaggle.json` (el antiguo) o la
+   variable `KAGGLE_API_TOKEN` -- descarga y prepara el dataset ASHRAE
+   automaticamente. Si no las encuentra, imprime como obtenerlas y deja el
+   resto listo para repetir el script despues.
 
        source .venv/bin/activate
 
-3. Levantar el stack completo -- Mosquitto, Kafka, Apicurio, TimescaleDB,
-   PostgreSQL, Grafana (detalle de servicios, puertos y comprobaciones en
-   `pipeline/README.md`):
+3. Levantar el stack completo (detalle de servicios, puertos y comprobaciones
+   en `pipeline/README.md`):
 
        docker compose -f pipeline/docker-compose.yml up -d
        docker compose -f pipeline/docker-compose.yml ps -a
+
+   `up -d` levanta Mosquitto, Kafka, Apicurio, TimescaleDB, PostgreSQL y
+   Grafana, y ademas encadena dos servicios propios: `register-schema` (un
+   contenedor de un solo uso que registra el contrato Avro y termina) y el
+   `bridge`, que no arranca hasta que `register-schema` acaba con exito. Solo
+   el job de Spark y el simulador quedan como procesos del host.
 
 4. **Camino rapido -- ver los dashboards funcionando:**
 
        python pipeline/tools/demo.py --semanas 6
 
-   Deja las bases limpias, registra el esquema, arranca el bridge y el job de
-   Spark, y lanza el simulador con datos reales de ASHRAE traidos al presente
-   (las ultimas 6 semanas terminan en "ahora"). Al acabar imprime la URL de
-   Grafana -- sin necesidad de credenciales, acceso anonimo de solo lectura --
-   y el rango de tiempo que poner en cada dashboard. Para cerrarlo todo:
+   Deja las bases limpias, arranca el job de Spark y lanza el simulador con
+   datos reales de ASHRAE traidos al presente (las ultimas 6 semanas terminan
+   en "ahora"). Al acabar imprime la URL de Grafana -- sin necesidad de
+   credenciales, acceso anonimo de solo lectura -- y el rango de tiempo que
+   poner en cada dashboard. Para cerrarlo todo:
 
        python pipeline/tools/demo.py --stop
 
    Detalle completo en [`pipeline/tools/README.md`](pipeline/tools/README.md).
 
-5. **Camino manual -- para desarrollo o para medir los KPIs**, con el stack
-   arriba y el esquema registrado, cada pieza en su propia terminal:
+5. **Camino manual -- para desarrollo o para medir los KPIs.** Con el stack
+   arriba (paso 3: el esquema ya esta registrado y el bridge en marcha),
+   quedan solo los dos procesos del host, cada uno en su terminal:
 
-       python pipeline/schemas/register_schema.py
-       python pipeline/bridge/mqtt_kafka_bridge.py
        python pipeline/spark/stream_processing.py --trigger "1 second"
        python pipeline/simulator/mqtt_simulator.py --acelerar 2000 --limite 50000
 

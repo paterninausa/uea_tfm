@@ -31,8 +31,11 @@ Cada componente tiene su propio README con las decisiones de diseño y lo medido
 El job de Spark Structured Streaming se ejecuta desde el `venv` del host contra
 el listener externo de Kafka (`localhost:29092`), no como servicio del compose.
 Motivo: cada cambio de codigo exigiria reconstruir o volver a copiar la imagen,
-y la depuracion desde VS Code es directa ejecutandolo en local. La
-containerizacion del job se puede anadir al final para la demostracion.
+la depuracion desde VS Code es directa ejecutandolo en local, y en `local[*]` no
+compite por recursos con los siete contenedores (las cifras de KPI se toman
+asi). El job acepta `--master`, de modo que el mismo codigo corre distribuido
+sin cambios; `tools/cluster.sh` levanta un Spark standalone para demostrarlo
+(ver [tools/README.md](tools/README.md)).
 
 Esto es lo que obliga a Kafka a publicar **dos listeners**:
 
@@ -46,12 +49,18 @@ Un unico listener no funciona: el nombre `kafka` no resuelve desde el host, y
 
 ## Servicios y puertos
 
-| Servicio       | Imagen                                | Puerto (host) | Para que |
-|----------------|---------------------------------------|---------------|----------|
-| `mosquitto`    | `eclipse-mosquitto:2.0.22`            | 1883, 9001    | Broker MQTT |
-| `kafka`        | `apache/kafka:4.3.1`                  | 29092         | Log Kappa (modo KRaft, sin Zookeeper) |
-| `apicurio`     | `apicurio/apicurio-registry:3.3.1`    | 8080          | API REST del registro de esquemas |
-| `apicurio-ui`  | `apicurio/apicurio-registry-ui:3.3.1` | 8888          | UI del registro (contenedor aparte en 3.x) |
+| Servicio          | Imagen                                | Puerto (host) | Para que |
+|-------------------|---------------------------------------|---------------|----------|
+| `mosquitto`       | `eclipse-mosquitto:2.0.22`            | 1883, 9001    | Broker MQTT |
+| `kafka`           | `apache/kafka:4.3.1`                  | 29092         | Log Kappa (modo KRaft, sin Zookeeper) |
+| `apicurio`        | `apicurio/apicurio-registry:3.3.1`    | 8080          | API REST del registro de esquemas |
+| `apicurio-ui`     | `apicurio/apicurio-registry-ui:3.3.1` | 8888          | UI del registro (contenedor aparte en 3.x) |
+| `register-schema` | `bridge/Dockerfile` (otro entrypoint) | --            | Contenedor de un solo uso: registra el contrato Avro y termina. El `bridge` tiene `depends_on: service_completed_successfully` sobre el |
+| `bridge`          | `bridge/Dockerfile`                   | --            | Puente MQTT -> Kafka con validacion Avro y DLQ. No arranca hasta que `register-schema` termina con exito. Sin `container_name` fijo, para poder escalarlo con `--shared-group` |
+
+Ademas del stack de mensajeria, `docker compose up -d` levanta TimescaleDB
+(5432), PostgreSQL (5433) y Grafana (3000). Solo el job de Spark y el simulador
+quedan como procesos del host.
 
 Topicos del pipeline:
 
@@ -78,7 +87,8 @@ Levantar el stack:
 docker compose -f pipeline/docker-compose.yml up -d
 ```
 
-Ver el estado (los cuatro servicios de larga duracion deben quedar `healthy`):
+Ver el estado (los servicios de larga duracion deben quedar `healthy`;
+`register-schema` debe figurar como `Exited (0)`):
 
 ```bash
 docker compose -f pipeline/docker-compose.yml ps -a
@@ -124,7 +134,7 @@ UI del registro de esquemas: <http://localhost:8888>
 
 ## Estado verificado
 
-Comprobado sobre este stack (Docker 29.7.2, Compose v5.4.0, Java 21 Temurin,
+Comprobado sobre este stack (Docker 29.7.2, Compose v5.5.0, Java 21 Temurin,
 Python 3.11 + PySpark 4.2.0):
 
 - Los cuatro servicios de larga duracion levantan y quedan `healthy`.
@@ -136,10 +146,11 @@ Python 3.11 + PySpark 4.2.0):
   `iot/{building_id}/{meter_type}/telemetry` —el topico identifica al sensor, que
   es el par edificio-medidor— y 0% de perdida en la prueba corta.
 
-- Esquema Avro v1 registrado en Apicurio como `iot/iot.telemetry.raw-value`,
-  con las reglas `VALIDITY=FULL` y `COMPATIBILITY=FULL_TRANSITIVE` activas y
-  comprobadas contra evoluciones compatibles e incompatibles (ver
-  [schemas/README.md](schemas/README.md)).
+- Esquema Avro v1 registrado en Apicurio por la API compatible con Confluent
+  (ccompat), bajo el subject plano `iot.telemetry.raw-value` (sin el concepto
+  de «grupo» de la API nativa), con la regla `COMPATIBILITY=FULL_TRANSITIVE`
+  fijada por `PUT /config` y comprobada contra evoluciones compatibles e
+  incompatibles (ver [schemas/README.md](schemas/README.md)).
 
 - Bridge MQTT→Kafka operativo: 300 eventos con 0% de perdida, latencia
   MQTT→Kafka p95 de 2,2 ms, DLQ funcionando y recuperacion sin perdida tras
@@ -157,9 +168,10 @@ Python 3.11 + PySpark 4.2.0):
   pico, factor de carga, intensidad) y calidad/anomalias. Consultas medidas
   entre 1,9 y 15,4 ms (ver [docker/grafana/README.md](docker/grafana/README.md)).
 
-- Herramientas de medicion (`tools/`): estado limpio reproducible,
-  generador de carga asincrono, cuadro de KPIs y prueba de recuperacion ante
-  fallo. Ver [tools/README.md](tools/README.md).
+- Herramientas de medicion (`tools/`): estado limpio reproducible
+  (`reset_state.py`), cuadro de KPIs (`kpi_report.py`), prueba de recuperacion
+  ante fallo (`failover_test.py`) y prueba de envenenamiento del watermark
+  (`watermark_poison_test.py`). Ver [tools/README.md](tools/README.md).
 
 ## Medir los KPIs
 
@@ -184,5 +196,6 @@ Todos los procesos escriben en `pipeline/logs/<nombre>.log` ademas de por
 consola, con la orden completa en la cabecera de cada arranque. Rotan a los 3 MB
 conservando tres copias. No se versionan.
 
-Pendiente: informes de Power BI (Objetivo 4) y determinar el punto de saturacion
-real del pipeline con el generador asincrono.
+Pendiente: informes de Power BI (Objetivo 4). El punto de saturacion ya esta
+caracterizado (el pipeline sostiene ~1.800 ev/s dentro de objetivo; el techo de
+~2.900 ev/s es del simulador): ver [FAULT_HANDLING.md](FAULT_HANDLING.md) §5.

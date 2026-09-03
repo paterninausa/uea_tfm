@@ -83,8 +83,8 @@ from spark.monitoring import (  # noqa: E402
 logger = logging.getLogger("spark_job")
 
 # Dependencias JVM que no vienen con PySpark. Se resuelven de Maven Central en
-# el primer arranque y quedan en la cache local (~/.ivy2), asi que solo la
-# primera ejecucion necesita red.
+# el primer arranque y quedan en la cache local (~/.ivy2.5.2 en Spark 4.x, que
+# usa un directorio Ivy versionado), asi que solo la primera ejecucion necesita red.
 MAVEN_PACKAGES = [
     "org.apache.spark:spark-sql-kafka-0-10_2.13:4.2.0",
     "org.apache.spark:spark-avro_2.13:4.2.0",

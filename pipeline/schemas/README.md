@@ -50,25 +50,33 @@ enviaria el dispositivo.
 
 ## Identificacion en el registro
 
-    grupo:      iot
-    artefacto:  iot.telemetry.raw-value
+    subject:  iot.telemetry.raw-value
 
-El sufijo `-value` sigue la convencion **TopicNameStrategy**: un esquema por
-topico, describiendo el *valor* de los mensajes de `iot.telemetry.raw`. Es la
-convencion adecuada aqui porque los cuatro tipos de medidor comparten forma
-—identificador, instante y un numero—. Si el pipeline llegara a ingerir
-sensores estructuralmente distintos, habria que replantearlo hacia topicos
-separados por familia o hacia `RecordNameStrategy`.
+Se registra por la **API compatible con Confluent (ccompat)** de Apicurio, no
+por la API nativa v3. El `AvroSerializer` del bridge resuelve el esquema por el
+protocolo de Confluent, que solo entiende de *subjects* planos: no existe el
+concepto de «grupo» de la API nativa. `register_schema.py` usa
+`POST /subjects/{s}/versions` y fija la regla por `PUT /config/{s}`. El id que
+viaja en la cabecera del mensaje es el de ccompat, un espacio de identificadores
+distinto del `globalId` nativo.
+
+El sufijo `-value` sigue la convencion **`{topic}-value`** (TopicNameStrategy):
+un esquema por topico, describiendo el *valor* de los mensajes de
+`iot.telemetry.raw`. Es la convencion adecuada aqui porque los cuatro tipos de
+medidor comparten forma —identificador, instante y un numero—. Si el pipeline
+llegara a ingerir sensores estructuralmente distintos, habria que replantearlo
+hacia topicos separados por familia o hacia `RecordNameStrategy`.
 
 ## Reglas de gobernanza activas
 
 | Regla | Valor | Quien la aplica |
 |---|---|---|
-| `VALIDITY` | `FULL` | Apicurio |
-| `COMPATIBILITY` | `FULL_TRANSITIVE` | Apicurio |
+| `COMPATIBILITY` | `FULL_TRANSITIVE` | Apicurio (via `PUT /config`) |
 | Orden de simbolos de enum | Solo se permite anadir al final | **`register_schema.py`** |
 
-Las dos primeras son del registro. La tercera es nuestra, y hace falta.
+La primera es del registro. La segunda es nuestra, y hace falta. El protocolo
+de Confluent **no expone la regla `VALIDITY`** de la API nativa de Apicurio;
+solo se gobierna `COMPATIBILITY`.
 
 ## El hallazgo: Apicurio no protege el orden de los enums
 
@@ -125,20 +133,26 @@ incluir `meter_type` en la clave de agrupacion.
 
 ## Uso
 
-Registrar el esquema (idempotente):
+Desde el 3 de septiembre de 2026 el registro lo hace **Compose**: el contenedor
+de un solo uso `register-schema` ejecuta este mismo script (idempotente) y el
+`bridge` no arranca hasta que termina con exito. `docker compose up -d` ya deja
+el esquema registrado.
+
+Ejecutarlo a mano sigue valiendo para desarrollo o para registrar una evolucion:
 
 ```bash
 python pipeline/schemas/register_schema.py --schema pipeline/schemas/telemetry_event_v1.avsc
 ```
 
 Registrar una evolucion (cuando exista): se escribe el `.avsc` nuevo y se pasa
-por `--schema`. Si es aceptada queda como version nueva y el job de Spark la
-reconoce al reiniciarse (decodifica cada mensaje con el esquema de su id, ver
-[`../spark/README.md`](../spark/README.md)). Para volver atras hay que borrar la
-version, algo que el compose habilita expresamente:
+por `--schema`. Si es aceptada queda como version nueva del subject y el job de
+Spark la reconoce al reiniciarse (decodifica cada mensaje con el esquema de su
+id, ver [`../spark/README.md`](../spark/README.md)). Para volver atras hay que
+borrar la version por la API ccompat, borrado que el compose habilita
+expresamente (`APICURIO_REST_DELETION_*`):
 
 ```bash
-curl -X DELETE http://localhost:8080/apis/registry/v3/groups/iot/artifacts/iot.telemetry.raw-value/versions/2
+curl -X DELETE http://localhost:8080/apis/ccompat/v7/subjects/iot.telemetry.raw-value/versions/2
 ```
 
 No hay ningun `.avsc` de evolucion en el repo: el que valga para la demo del
@@ -151,7 +165,7 @@ Codigo de salida 0 si el esquema es valido y aceptado, 1 si es rechazado, si el
 Para ver lo registrado, la UI en <http://localhost:8888> o:
 
 ```bash
-curl -s http://localhost:8080/apis/registry/v3/groups/iot/artifacts/iot.telemetry.raw-value/versions
+curl -s http://localhost:8080/apis/ccompat/v7/subjects/iot.telemetry.raw-value/versions
 ```
 
 ## Estado verificado
@@ -177,7 +191,7 @@ Contra Apicurio 3.3.1 con almacenamiento KafkaSQL:
 El registro permanece en la version 1: ninguna de las evoluciones probadas
 llego a persistirse, porque todas fueron rechazadas antes de escribirse.
 
-El grupo, el artefacto y las dos reglas son **constantes** del script, no
+El subject y la regla de compatibilidad son **constantes** del script, no
 opciones: hay un unico contrato en el proyecto y una unica politica de
 compatibilidad. Como opciones invitaban a registrar con una politica distinta y
 dejar el registro incoherente sin darse cuenta.

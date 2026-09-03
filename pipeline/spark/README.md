@@ -333,7 +333,9 @@ mientras ocurria. Antes, el unico sintoma era que `telemetry_metrics` aparecia v
 
 ## Uso
 
-Requiere el stack levantado, el esquema registrado y el bridge en marcha:
+Requiere el stack levantado. `docker compose up -d` ya deja el esquema
+registrado (contenedor `register-schema`) y el `bridge` en marcha; el job de
+Spark es uno de los dos unicos procesos del host:
 
 ```bash
 docker compose -f pipeline/docker-compose.yml up -d
@@ -362,7 +364,8 @@ identifica con un `run_id` propio, porque al borrar los checkpoints —lo primer
 que hace `reset_state.py`— el `batch_id` vuelve a empezar en cero.
 
 El primer arranque descarga de Maven Central los conectores de Kafka, Avro y el
-driver JDBC; quedan cacheados en `~/.ivy2` y los siguientes no necesitan red.
+driver JDBC; quedan cacheados en `~/.ivy2.5.2` (Spark 4.x usa un directorio de
+cache Ivy versionado, no `~/.ivy2`) y los siguientes no necesitan red.
 Los checkpoints viven en `pipeline/spark/checkpoints/` y no se versionan:
 borrarlos hace que el job reprocese el topico desde el principio.
 

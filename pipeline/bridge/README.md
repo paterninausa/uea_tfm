@@ -109,27 +109,32 @@ siguiente paso seria un pool de trabajadores.
 
 ## Uso
 
-Requiere el stack levantado y el esquema registrado:
+Desde el 3 de septiembre de 2026 el bridge es un **servicio de Compose**: lo
+levanta `docker compose up -d`, y no antes de que el contenedor `register-schema`
+(que ejecuta `register_schema.py`) termine con exito. No hay que arrancarlo a
+mano.
 
 ```bash
 docker compose -f pipeline/docker-compose.yml up -d
 ```
 
 ```bash
-python pipeline/schemas/register_schema.py
+docker compose -f pipeline/docker-compose.yml logs -f bridge
 ```
 
-Arrancar el bridge (se queda en primer plano; `Ctrl+C` cierra ordenadamente
-vaciando el buffer del productor):
+Generar trafico contra el (en otra terminal, con el simulador del host):
+
+```bash
+python pipeline/simulator/mqtt_simulator.py --acelerar 2000 --limite 300
+```
+
+Para iterar sobre el codigo del bridge sin reconstruir la imagen se puede
+ejecutar el script directamente contra el stack, parando antes el contenedor
+(`docker compose stop bridge`). Se queda en primer plano; `Ctrl+C` cierra
+ordenadamente vaciando el buffer del productor:
 
 ```bash
 python pipeline/bridge/mqtt_kafka_bridge.py --report-interval 5
-```
-
-Y en otra terminal, generar trafico:
-
-```bash
-python pipeline/simulator/mqtt_simulator.py --speedup 500 --limit 300
 ```
 
 Parametros utiles: `--bootstrap-servers`, `--broker-host`, `--qos`,
@@ -158,38 +163,42 @@ Medido sobre el stack real (Mosquitto 2.0.22, Kafka 4.3.1 KRaft, Apicurio
 | Eventos recibidos / publicados | 300 / 300 |
 | Perdida | **0,0000%** |
 | Latencia MQTT→Kafka p50 / p95 / max | **1,5 / 2,2 / 6,0 ms** |
-| Tamano del mensaje | 158 B (5 de cabecera + 153 de Avro) |
 | Particiones utilizadas | 0, 1, 2 |
 
-Los 300 mensajes se releyeron desde Kafka resolviendo el esquema por el
-id de la cabecera. **Esta medicion es anterior al dataset de ASHRAE y a
-la correccion de la clave**: se tomo cuando la clave seguia siendo `machine_id`,
-de modo que el reparto por particiones que refleja no es el actual. Verificado
-despues sobre ASHRAE: las claves son del tipo `156:electricity` y el reparto
-entre las tres particiones es desigual (6.144 / 7.468 / 6.388 sobre 20.000
-eventos), que es lo que produce el hash de una clave real y no el round-robin de
-una clave nula.
+**Esta medicion es anterior al dataset de ASHRAE y a la correccion de la
+clave**: se tomo cuando la clave seguia siendo `machine_id` y el payload era el
+del dataset sintetico anterior, de modo que ni el tamano del mensaje ni el
+reparto por particiones que refleja son los actuales. Sobre ASHRAE, con el
+`AvroSerializer` de Confluent, el mensaje ronda los **30 B** (5 de cabecera de
+Confluent -- byte magico + id de esquema de 4 bytes -- mas el payload Avro
+schemaless, ~23 B segun la longitud del `building_id`) y las claves del tipo
+`156:electricity` reparten de forma desigual por hash (6.144 / 7.468 / 6.388
+sobre 20.000 eventos), no en round-robin como haria una clave nula.
 
 **Camino de rechazo (DLQ)**
 
-Los cuatro casos se desviaron con el motivo exacto y sin afectar a la tasa de
-perdida:
+Sobre el contrato de ASHRAE (`building_id`, `meter_type`, `timestamp`,
+`meter_reading`), cada caso se desvia con su motivo exacto y sin afectar a la
+tasa de perdida (tabla completa en [../FAULT_HANDLING.md](../FAULT_HANDLING.md)
+§2):
 
 | Evento inyectado | Motivo registrado en la DLQ |
 |---|---|
-| `device_state="OFF"` (fuera del enum) | `ValueError: 'OFF' is not in list` |
-| Sin `power_watts` | `ValueError: no value and no default for power_watts` |
-| `voltage="doscientos treinta"` | `TypeError: an integer is required on field voltage` |
+| `meter_type` fuera del enum (p. ej. `"gas"`) | `'gas' is not in list` |
+| Falta un campo obligatorio | `no value and no default for <campo>` |
+| `building_id` numerico (p. ej. `156.9`) | `must be string on field building_id` |
+| `timestamp` en el futuro | `timestamp en el futuro (...), lo que envenenaria el watermark` |
+| `meter_reading` negativo, `inf` o `NaN` | `meter_reading negativo (...)` / `no finito (...)` |
 | JSON mal formado | `JSONDecodeError: Expecting property name...` |
 
 **Recuperacion ante caida (Objetivo 5)**
 
 Se detuvo el bridge, se publicaron 50 eventos con el caido y se reinicio: el
 broker le entrego los 50 al reconectar gracias a la sesion persistente
-(`clean_session=False` + QoS 1). Kafka paso de 300 a 350 mensajes, **sin
-perdida**. La latencia p50 de esos eventos fue de 10,8 s, que es exactamente el
-tiempo que pasaron encolados en el broker.
+(`clean_session=False` + QoS 1), **sin perdida**. La latencia p50 de esos
+eventos fue de 10,8 s, que es exactamente el tiempo que pasaron encolados en el
+broker.
 
-Nota: la latencia medida aqui es solo el tramo MQTT→Kafka. El KPI de 2 s del
-Objetivo 1 se mide extremo a extremo hasta TimescaleDB, y se completara cuando
-exista el sumidero.
+Nota: la latencia medida aqui es solo el tramo MQTT→Kafka. La latencia extremo a
+extremo hasta el sumidero (Objetivo 1) se mide con `tools/kpi_report.py`; las
+cifras vigentes estan en la memoria y en `../FAULT_HANDLING.md`.

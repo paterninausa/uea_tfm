@@ -3,7 +3,10 @@
 Mitad **operacional** del doble sumidero: responde a "que esta pasando ahora".
 Lee de TimescaleDB, que guarda agregados por ventana de 1 hora.
 
-Acceso: <http://localhost:3000> (admin / admin), carpeta **TFM**.
+Acceso: <http://localhost:3000>, carpeta **TFM**. Hay **acceso anonimo de solo
+lectura** habilitado (`GF_AUTH_ANONYMOUS_ENABLED`, rol `Viewer`), asi que
+reiniciar el contenedor no expulsa a quien este mirando un dashboard; para
+editar, `admin` / `admin`.
 
 ## Aprovisionamiento declarativo
 
@@ -11,7 +14,8 @@ Ni la fuente de datos ni los dashboards se construyen pulsando en la interfaz:
 se cargan de ficheros versionados en git al arrancar el contenedor.
 
 ```
-provisioning/datasources/timescaledb.yml   -> conexion a TimescaleDB
+provisioning/datasources/timescaledb.yml   -> conexion a TimescaleDB (sumidero operacional)
+provisioning/datasources/postgres.yml      -> conexion a PostgreSQL (solo los paneles de latencia del dashboard 1)
 provisioning/dashboards/dashboards.yml     -> declara de donde cargar
 dashboards/*.json                          -> los tres dashboards
 ```
