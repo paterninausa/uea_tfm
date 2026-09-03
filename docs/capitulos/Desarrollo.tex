@@ -602,7 +602,7 @@ Por ello, \texttt{mqtt\_simulator.py} con la opción \texttt{-{}-acelerar 2000},
 
 Los valores de la Tabla~\ref{tab:resultado-obj1} se obtuvieron sobre \texttt{telemetry\_events} en PostgreSQL y los \textit{offsets} del tópico \texttt{iot.telemetry.raw} de Kafka, tras publicar 50.000 eventos.
 
-Los eventos \textbf{publicados} por el bridge se calcularon como la suma de todos los (\textit{offset} final - \textit{offset} inicial) de todas las particiones del tópico de Kafka (debe recordarse que gracias a acks=all los mensajes en las particiones de Kafka son exactamente los que publicó el bridge). Los eventos \textbf{persistidos} son el recuento de filas de la tabla \texttt{telemetry\_events}. La \textbf{tasa de pérdida} es el porcentaje de eventos publicados que no llegó a persistirse, es decir (publicados - persistidos) / publicados.
+Los eventos \textbf{publicados} por el simulador se calcularon como la suma de todos los (\textit{offset} final - \textit{offset} inicial) de todas las particiones del tópico de Kafka (asumiendo la no pérdida de eventos entre el simulador, el broker y el bridge). Los eventos \textbf{persistidos} son el recuento de filas de la tabla \texttt{telemetry\_events}. La \textbf{tasa de pérdida} es el porcentaje de eventos publicados que no llegó a persistirse, es decir (publicados - persistidos) / publicados.
 
 La \textbf{latencia de persistencia} de cada evento es el tiempo transcurrido desde \texttt{sim\_publish\_ts} (publicación) hasta \texttt{ingested\_at} (persistencia), en segundos (Tabla~\ref{tab:columnas-telemetry-events}). Sobre esa diferencia se calcularon la \textbf{mediana}, el \textbf{percentil 95} y el valor \textbf{máximo} para las 50.000 filas.
 
@@ -652,7 +652,7 @@ Cada \textbf{flujo} de la tabla es una consulta independiente de Spark sobre Kaf
   \centering
   \begin{tabular}{|p{4.5cm}|c|c|c|c|}
     \hline
-    \textbf{Dashboard} & \textbf{Paneles} & \textbf{Ventana} & \textbf{Refresco} & \textbf{Objetivo} \\ \hline
+    \textbf{Dashboard} & \textbf{Paneles} & \textbf{Ventana} & \textbf{Actualización} & \textbf{Objetivo} \\ \hline
     1. Estado del pipeline & 6 & 15 min & 5 s & $\leq$ 5 s \\ \hline
     2. Consumo energético & 7 & 7 días & 30 s & --- \\ \hline
     3. Calidad y anomalías & 6 & 7 días & 30 s & --- \\ \hline
@@ -661,7 +661,7 @@ Cada \textbf{flujo} de la tabla es una consulta independiente de Spark sobre Kaf
   \label{tab:resultado-obj4-grafana}
 \end{table}
 
-Los valores de la Tabla~\ref{tab:resultado-obj4-grafana} son la configuración de los tres \textit{dashboards} aprovisionados de Grafana (sección~\ref{sec:grafana}), definida de forma declarativa en el repositorio: el número de \textbf{paneles}, la \textbf{ventana} de tiempo que muestra cada uno y su \textbf{intervalo de refresco}, que es cada cuánto Grafana vuelve a consultar los datos y repinta el \textit{dashboard}. El \textit{dashboard} operativo, ``Estado del pipeline'', se refresca cada 5 segundos, de modo que el dato mostrado nunca tiene más de 5 segundos de antigüedad; los otros dos presentan agregados de negocio sobre ventanas de siete días, donde un refresco de 30 segundos es suficiente y el umbral de 5 segundos no aplica. Las consultas de los paneles se resuelven muy por debajo de ese intervalo, del orden de milisegundos, como puede comprobarse en el inspector de consultas de la propia Grafana.
+Los valores de la Tabla~\ref{tab:resultado-obj4-grafana} son la configuración de los tres \textit{dashboards} de Grafana (sección~\ref{sec:grafana}): el número de \textbf{paneles}, la \textbf{ventana} de tiempo que muestra cada uno y su \textbf{intervalo de actualización}, que es cada cuánto Grafana vuelve a consultar los datos y repinta el \textit{dashboard}. El \textit{dashboard} operativo, ``Estado del pipeline'', se actualiza cada 5 segundos, de modo que el dato mostrado nunca tiene más de 5 segundos de antigüedad; los otros dos presentan agregados de negocio sobre ventanas de siete días con actualización cada 30 segundos. La consulta de cada panel se resuelve en fracciones de segundo, y tanto la ventana como el intervalo de actualización son ampliamente configurables.
 
 % Figuras Grafana
 \begin{figure}[H]
@@ -711,22 +711,25 @@ En cuanto a Power BI (sección~\ref{sec:powerbi}), el informe cubre las áreas e
 \subsection{Objetivo 5: Validar la resiliencia del sistema}
 \label{sec:validacion-procesamiento}
 
-Cada servicio se interrumpió por separado con \texttt{docker kill} durante 15 segundos, con el \textit{bridge} y el job de Spark en marcha durante las cuatro pruebas, y se cronometró cuánto tardaba en volver a persistir datos el camino que corta cada fallo.
+Los valores de la Tabla~\ref{tab:resultado-obj5} se obtuvieron con el comando \texttt{python pipeline/tools/failover\_test.py -{}-target <servicio>{} -{}-fallo oom}.
+
+Con el pipeline en marcha, el script simula 181 eventos por segundo, espera a ver flujo llegando al sumidero y entonces provoca el fallo del servicio bajando el límite de memoria del contenedor a 6~MB (por debajo de la memoria requerida), de modo que el núcleo mata su proceso principal por falta de memoria. A continuación \texttt{failover\_test} devuelve el límite a 2~GB, y la política \texttt{restart: unless-stopped} declarada en el \textit{docker-compose.yml} vuelve a levantar el contenedor sin intervención. Desde ese instante se cronometra cuánto tarda en aparecer una fila nueva en la tabla afectada por ese fallo concreto: \texttt{telemetry\_metrics} (TimescaleDB) cuando el servicio caído es TimescaleDB, y \texttt{telemetry\_events} (PostgreSQL) en los demás servicios.
+
+El fallo por OOM no puede forzarse sobre Mosquitto porque consume solo 3~MB. Para el servicio de Kafka, el fallo por OOM es un evento extremo que deja a su motor JVM en bucle de reinicios. Por tanto en ambos casos se usa \texttt{-{}-fallo kill}.
 
 \begin{table}[H]
   \centering
-  \begin{tabular}{|l|c|c|c|}
+  \begin{tabular}{|l|c|c|c|c|}
     \hline
-    \textbf{Servicio interrumpido} & \textbf{Recuperación} & \textbf{Filas nuevas} & \textbf{Objetivo} \\ \hline
-    TimescaleDB & \textbf{4,1 s} & 322 & < 60 s \\ \hline
-    Mosquitto & \textbf{2,0 s} & 2.529 & < 60 s \\ \hline
-    Kafka & \textbf{15,2 s} & 1.027 & < 60 s \\ \hline
-    PostgreSQL & \textbf{2,0 s} & 3.588 & < 60 s \\ \hline
+    \textbf{Servicio interrumpido} & \textbf{Fallo} & \textbf{Recuperación} & \textbf{Tasa de pérdida} & \textbf{Objetivo} \\ \hline
+    TimescaleDB & OOM & \textbf{3,3 s} & \textbf{0,0000\,\%} & < 60 s \\ \hline
+    Mosquitto & \texttt{docker kill} & \textbf{8,3 s} & \textbf{0,0000\,\%} & < 60 s \\ \hline
+    Kafka & \texttt{docker kill} & \textbf{14,4 s} & \textbf{0,0000\,\%} & < 60 s \\ \hline
+    PostgreSQL & OOM & \textbf{2,4 s} & \textbf{0,0000\,\%} & < 60 s \\ \hline
+    Bridge & OOM & \textbf{1,2 s} & \textbf{0,0000\,\%} & < 60 s \\ \hline
   \end{tabular}
   \caption{Resultado del Objetivo 5: recuperación ante fallo de un servicio individual.}
   \label{tab:resultado-obj5}
 \end{table}
 
-En ninguna de las cuatro pruebas hizo falta reiniciar el job de Spark: solo se recuperó el camino afectado por el servicio caído, mientras el otro sumidero siguió operando sin intervención, evidencia práctica de que las dos consultas mantienen \textit{checkpoints} independientes (sección~\ref{sec:spark-structured-streaming}). La ausencia de pérdida de datos no se mide como una tasa explícita, sino que se sostiene en el diseño: cada consulta reanuda desde su propio \textit{checkpoint} y la clave natura de la tabla de eventos hace idempotente el reproceso, mientras que los eventos publicados durante la caída permanecen en el \textit{log} de Kafka hasta ser consumidos.
-
-Los cinco objetivos se cumplen.
+La \textbf{tasa de pérdida} se calculó con el mismo método descrito para la tabla~\ref{tab:resultado-obj1} del Objetivo~1: los \textit{offsets} del tópico \texttt{iot.telemetry.raw} como eventos publicados, las filas de \texttt{telemetry\_events} como eventos persistidos, y la tasa como (publicados - persistidos) / publicados.
