@@ -2,9 +2,9 @@
 demo.py — Prepara el terreno para ver los dashboards de Grafana en vivo.
 
 No mide nada (para eso estan los demas scripts de tools/): orquesta las piezas
-que ya existen en el orden correcto para una demostracion. Levanta el stack,
-deja las bases limpias, arranca bridge + Spark + simulador y te deja Grafana
-listo con datos recientes.
+que ya existen en el orden correcto para una demostracion. Levanta el stack
+(que ahora incluye el registro del esquema y el bridge), deja las bases limpias,
+arranca Spark + simulador y te deja Grafana listo con datos recientes.
 
 Los datos son las medidas reales de ASHRAE, REUBICADAS AL PRESENTE de una vez por
 `prepare_ashrae.py --fecha-final`: el Parquet ya viene datado en fechas recientes,
@@ -43,11 +43,12 @@ from common.logging_setup import DIRECTORIO_LOGS, configurar_logging  # noqa: E4
 logger = logging.getLogger("demo")
 
 # --- Rutas de las piezas que se orquestan ---------------------------------
+# El bridge y el registro del esquema son ahora servicios de docker-compose
+# (register-schema corre antes que el bridge, ver docker-compose.yml), asi que
+# aqui solo quedan los procesos del host: Spark y el simulador.
 COMPOSE = RAIZ / "docker-compose.yml"
 SIMULADOR = RAIZ / "simulator" / "mqtt_simulator.py"
-BRIDGE = RAIZ / "bridge" / "mqtt_kafka_bridge.py"
 SPARK = RAIZ / "spark" / "stream_processing.py"
-REGISTER = RAIZ / "schemas" / "register_schema.py"
 RESET = RAIZ / "tools" / "reset_state.py"
 SPARK_LOG = RAIZ / "logs" / "spark_job.log"
 ESTADO = Path(DIRECTORIO_LOGS) / "demo_estado.json"  # PIDs de los procesos en marcha
@@ -170,38 +171,31 @@ def run_start(args: argparse.Namespace) -> int:
         raise DemoError("Ya hay una demo en marcha. Cierrala antes: "
                         "python pipeline/tools/demo.py --stop")
 
-    logger.info("1/6 Levantando el stack Docker...")
+    logger.info("1/4 Levantando el stack Docker (incluye register-schema y el bridge)...")
     compose("up", "-d")
     esperar(apicurio_ok, timeout=120, intervalo=3, desc="Apicurio")
     for cont, db in SUMIDEROS:
         esperar(lambda c=cont, d=db: pg_ok(c, d), timeout=60, intervalo=3, desc=cont)
-    logger.info("    Stack sano (Apicurio + TimescaleDB + PostgreSQL)")
+    logger.info("    Stack sano (Apicurio + TimescaleDB + PostgreSQL); esquema registrado y bridge arriba")
 
-    logger.info("2/6 Dejando las bases limpias (reset_state)...")
+    logger.info("2/4 Dejando las bases limpias (reset_state)...")
     if subprocess.run([sys.executable, str(RESET), "--yes"]).returncode != 0:
         raise DemoError("reset_state fallo")
 
-    logger.info("3/6 Registrando el esquema...")
-    if subprocess.run([sys.executable, str(REGISTER)]).returncode != 0:
-        raise DemoError("register_schema fallo")
-
-    logger.info("4/6 Arrancando el bridge...")
-    bridge = lanzar_fondo("bridge", [str(BRIDGE)])
-
-    logger.info("5/6 Arrancando Spark y esperando a las consultas de streaming...")
+    logger.info("3/4 Arrancando Spark y esperando a las consultas de streaming...")
     offset = SPARK_LOG.stat().st_size if SPARK_LOG.exists() else 0
     spark = lanzar_fondo("spark", [str(SPARK), "--trigger", "1 second"])
     esperar_spark(spark, offset)
     logger.info("    Spark en marcha con las dos consultas activas")
 
     eta_min = args.semanas * 7 * 24 * 3600 / args.acelerar / 60
-    logger.info("6/6 Arrancando el simulador: cola de %d semanas (--ultimas-semanas), "
+    logger.info("4/4 Arrancando el simulador: cola de %d semanas (--ultimas-semanas), "
                 "--acelerar %g", args.semanas, args.acelerar)
     sim = lanzar_fondo("simulador", [
         str(SIMULADOR), "--acelerar", str(args.acelerar),
         "--ultimas-semanas", str(args.semanas)])
 
-    guardar_estado({"bridge": bridge.pid, "spark": spark.pid, "simulador": sim.pid})
+    guardar_estado({"spark": spark.pid, "simulador": sim.pid})
 
     logger.info("Esperando a que lleguen los primeros datos...")
     esperar(lambda: contar_postgres() > 0, timeout=90, intervalo=3, desc="primeros datos")
@@ -253,7 +247,7 @@ def run_stop() -> int:
     estado = cargar_estado()
     if not estado:
         logger.info("Sin estado guardado; intento por nombre de script")
-        for patron in ("mqtt_simulator.py", "mqtt_kafka_bridge.py", "stream_processing.py"):
+        for patron in ("mqtt_simulator.py", "stream_processing.py"):
             subprocess.run(["pkill", "-9", "-f", patron])
     else:
         for nombre, pid in estado.items():

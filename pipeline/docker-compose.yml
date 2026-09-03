@@ -154,27 +154,42 @@ services:
     networks: [tfm-net]
 
   # ---------------------------------------------------------------------------
+  # register-schema — registra el contrato Avro en Apicurio (previo al bridge)
+  # ---------------------------------------------------------------------------
+  # Contenedor de un solo uso: ejecuta register_schema.py con sus comprobaciones
+  # (orden de enums, regla de compatibilidad, rechazo de cambios incompatibles) y
+  # termina. NO es auto-registro del productor: es el mismo script gobernado, solo
+  # que lo lanza Compose para que el bridge no pueda arrancar sin el esquema.
+  # Reutiliza la imagen del bridge con otro entrypoint.
+  register-schema:
+    build:
+      context: .
+      dockerfile: bridge/Dockerfile
+    entrypoint: ["python", "/app/schemas/register_schema.py"]
+    restart: "no"
+    depends_on:
+      apicurio:
+        condition: service_healthy
+    environment:
+      APICURIO_URL: http://apicurio:8080
+      KAFKA_TOPIC_RAW: ${KAFKA_TOPIC_RAW:-iot.telemetry.raw}
+    networks: [tfm-net]
+
+  # ---------------------------------------------------------------------------
   # Bridge — MQTT -> Kafka con validacion Avro (Objetivos 1 y 2)
   # ---------------------------------------------------------------------------
-  # Bajo un profile aparte ("bridge"): un `docker compose up -d` normal NO lo
-  # arranca, porque necesita el esquema YA registrado en Apicurio para poder
-  # resolverlo (register_schema.py sigue siendo un paso manual posterior).
-  # Arrancarlo junto al resto lo dejaria en bucle de reinicio hasta que alguien
-  # registre el esquema. Se levanta aparte, a proposito:
+  # Arranca con `docker compose up -d`, pero NUNCA antes de que register-schema
+  # termine con exito: `service_completed_successfully` lo garantiza. Si el .avsc
+  # cambia de forma incompatible, register-schema falla y el bridge no arranca.
   #
-  #   docker compose -f pipeline/docker-compose.yml up -d          # stack base
-  #   python pipeline/schemas/register_schema.py
-  #   docker compose -f pipeline/docker-compose.yml --profile bridge up -d bridge
-  #
-  # Sin container_name fijo, a diferencia del resto de servicios: es
-  # deliberado, para no impedir levantar una segunda instancia mas adelante
-  # (Docker exige nombres de contenedor unicos). Preparado para escalar
-  # horizontalmente via --shared-group (suscripcion compartida de MQTT).
+  # Sin container_name fijo, a diferencia del resto de servicios: es deliberado,
+  # para no impedir levantar una segunda instancia mas adelante (Docker exige
+  # nombres unicos). Preparado para escalar horizontalmente via --shared-group
+  # (suscripcion compartida de MQTT).
   bridge:
     build:
       context: .
       dockerfile: bridge/Dockerfile
-    profiles: ["bridge"]
     restart: unless-stopped
     depends_on:
       mosquitto:
@@ -183,6 +198,8 @@ services:
         condition: service_healthy
       apicurio:
         condition: service_healthy
+      register-schema:
+        condition: service_completed_successfully
     # Spark y tools/ corren desde el host y leen pipeline/.env via python-dotenv;
     # el bridge corre en contenedor, asi que los nombres de topico se le inyectan
     # explicitamente. Misma fuente (.env), mismos valores por defecto.

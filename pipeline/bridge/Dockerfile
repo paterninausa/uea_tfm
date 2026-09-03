@@ -23,5 +23,11 @@ RUN pip install --no-cache-dir \
 COPY common/ ./common/
 COPY bridge/mqtt_kafka_bridge.py ./bridge/mqtt_kafka_bridge.py
 
+# schemas/ viaja en la misma imagen para el servicio register-schema del
+# docker-compose, que reutiliza esta imagen con otro entrypoint para registrar
+# el contrato en Apicurio antes de que arranque el bridge. register_schema.py
+# solo usa requests y fastavro, que confluent-kafka[avro] ya arrastra.
+COPY schemas/ ./schemas/
+
 WORKDIR /app/bridge
 ENTRYPOINT ["python", "mqtt_kafka_bridge.py"]

@@ -34,6 +34,7 @@ from pathlib import Path
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.apicurio import DEFAULT_REGISTRY_URL, ccompat_url  # noqa: E402
 from common.apicurio import DEFAULT_SUBJECT as SUBJECT  # noqa: E402
 from common.logging_setup import configurar_logging  # noqa: E402
 from fastavro import parse_schema
@@ -41,8 +42,9 @@ from fastavro import parse_schema
 logger = logging.getLogger("register_schema")
 
 # API compatible con Confluent. El AvroSerializer de confluent-kafka habla este
-# protocolo, no la API nativa v3 de Apicurio.
-CCOMPAT_URL = "http://localhost:8080/apis/ccompat/v7"
+# protocolo, no la API nativa v3 de Apicurio. La URL base sale de APICURIO_URL
+# (localhost desde el host, http://apicurio:8080 desde el contenedor register-schema).
+CCOMPAT_URL = ccompat_url(DEFAULT_REGISTRY_URL)
 
 # SUBJECT se importa de common.apicurio, donde se deriva de KAFKA_TOPIC_RAW con
 # la convencion TopicNameStrategy ({topic}-value). Una sola fuente para el

@@ -53,19 +53,13 @@ resultado.
 python pipeline/tools/reset_state.py --yes
 ```
 
-**2. Levantar el pipeline.** Cada pieza en su terminal, porque hay que poder
-pararlas por separado.
+**2. Levantar el pipeline.** El stack incluye ahora el registro del esquema
+(`register-schema`, contenedor de un solo uso) y el `bridge`, encadenados por
+`depends_on`: `docker compose up -d` no arranca el bridge hasta que el esquema
+esta registrado. Solo el job de Spark queda como proceso del host.
 
 ```bash
 docker compose -f pipeline/docker-compose.yml up -d
-```
-
-```bash
-python pipeline/schemas/register_schema.py
-```
-
-```bash
-python pipeline/bridge/mqtt_kafka_bridge.py
 ```
 
 ```bash
@@ -119,10 +113,12 @@ Borra tres estados, y los tres hacen falta:
 - **Tablas de ambos sumideros**: la escritura es idempotente, asi que reprocesar
   no duplica filas, pero si deja dos mediciones mezcladas en la misma tabla.
 
-Se niega a correr si detecta el bridge, el job o un productor en marcha:
+Se niega a correr si detecta el job de Spark o un productor del host en marcha:
 recrear un topico bajo los pies de un consumidor lo deja leyendo de algo que ya
-no existe. Con `--all` trunca ademas `buildings` y `sensor_baseline`, que no
-hace falta para aislar una medicion porque el job las recarga al arrancar.
+no existe. El bridge es un contenedor: no hace falta pararlo a mano, `reset_state`
+lo detiene y lo reanuda solo mientras recrea los topicos. Con `--all` trunca
+ademas `buildings` y `sensor_baseline`, que no hace falta para aislar una
+medicion porque el job las recarga al arrancar.
 
 ## kpi_report.py
 
@@ -166,8 +162,10 @@ a mover datos de un extremo al otro.
 python pipeline/tools/failover_test.py --target mosquitto --downtime 15
 ```
 
-Exige que el bridge y el job esten en marcha, y **informa de lo que pase,
-incluido que no se recupere**: un servicio cuyo fallo detiene el pipeline es un
+Objetivos disponibles: `mosquitto`, `kafka`, `timescaledb`, `postgres` y
+`bridge` (contenedor desde que dejo de correr en el host). Exige que el bridge
+y el job de Spark esten en marcha, y **informa de lo que pase, incluido que no
+se recupere**: un servicio cuyo fallo detiene el pipeline es un
 resultado publicable; afirmar una recuperacion que no se ha observado, no.
 
 ### Resultados medidos

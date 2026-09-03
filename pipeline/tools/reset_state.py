@@ -50,13 +50,15 @@ logger = logging.getLogger("reset_state")
 CONTENEDOR_KAFKA = "tfm-kafka"
 KAFKA_TOPICS = "/opt/kafka/bin/kafka-topics.sh"
 BOOTSTRAP_INTERNO = "kafka:9092"
+COMPOSE = Path(__file__).resolve().parents[1] / "docker-compose.yml"
 
 DIRECTORIO_CHECKPOINTS = Path(__file__).resolve().parents[1] / "spark" / "checkpoints"
 
-# Procesos que deben estar parados: recrear un topico o borrar un checkpoint
-# mientras el job corre lo deja leyendo de algo que ya no existe.
-PROCESOS_INCOMPATIBLES = ("stream_processing.py", "mqtt_kafka_bridge.py",
-                          "mqtt_simulator.py")
+# Procesos del host que deben estar parados: recrear un topico o borrar un
+# checkpoint mientras el job o el simulador corren los deja apuntando a algo que
+# ya no existe. El bridge es un contenedor: no se exige pararlo a mano, se para
+# y se reanuda aqui (ver run()).
+PROCESOS_INCOMPATIBLES = ("stream_processing.py", "mqtt_simulator.py")
 
 TABLAS_MEDICION = {
     TIMESCALE: ["telemetry_metrics", "streaming_progress"],
@@ -77,6 +79,18 @@ def procesos_en_marcha() -> list[str]:
         if r.returncode == 0 and r.stdout.strip():
             vivos.append(f"{nombre} (pid {', '.join(r.stdout.split())})")
     return vivos
+
+
+def bridge_contenedor_en_marcha() -> bool:
+    r = subprocess.run(
+        ["docker", "compose", "-f", str(COMPOSE), "ps", "-q", "--status=running", "bridge"],
+        capture_output=True, text=True,
+    )
+    return bool(r.stdout.strip())
+
+
+def bridge_contenedor(accion: str) -> None:
+    subprocess.run(["docker", "compose", "-f", str(COMPOSE), accion, "bridge"], check=False)
 
 
 def kafka_topics(*argumentos: str) -> str:
@@ -218,12 +232,23 @@ def run(args: argparse.Namespace) -> int:
             logger.error("Sin terminal interactiva: usa --yes si es lo que quieres")
             return 1
 
+    # El bridge es un productor del topico que se va a recrear. Se para antes y
+    # se reanuda despues, solo si estaba en marcha.
+    reanudar_bridge = bridge_contenedor_en_marcha()
+    if reanudar_bridge:
+        logger.info("Deteniendo el contenedor del bridge para recrear los topicos...")
+        bridge_contenedor("stop")
+
     borrar_checkpoints()
     recrear_topico(args.topic)
     recrear_topico(args.dlq_topic, retencion_infinita=True)
     for cual, lista in tablas.items():
         logger.info("Truncando en %s:", cual)
         truncar(props_bd(args, cual), lista)
+
+    if reanudar_bridge:
+        logger.info("Reanudando el contenedor del bridge...")
+        bridge_contenedor("start")
 
     logger.info("--- Estado limpio: el pipeline puede arrancar para una medicion nueva ---")
     return 0

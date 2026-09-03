@@ -54,12 +54,14 @@ SIMULADOR = RAIZ / "simulator" / "mqtt_simulator.py"
 RESULTADO = DIRECTORIO_LOGS / "ultimo_failover.json"
 
 # Servicios que se pueden tumbar y que se espera que el pipeline sobreviva.
-# apicurio queda fuera a proposito: el esquema se resuelve una sola vez al
-# arrancar, asi que su caida no afecta a un pipeline ya en marcha y la prueba no
-# demostraria nada.
-OBJETIVOS = ("mosquitto", "kafka", "timescaledb", "postgres")
+# apicurio y register-schema quedan fuera a proposito: el esquema se resuelve una
+# sola vez al arrancar, asi que su caida no afecta a un pipeline ya en marcha.
+OBJETIVOS = ("mosquitto", "kafka", "timescaledb", "postgres", "bridge")
 
-PROCESOS_NECESARIOS = ("mqtt_kafka_bridge.py", "stream_processing.py")
+# Piezas que deben estar en marcha para que la prueba mida algo. El job de Spark
+# corre en el host (pgrep); el bridge es un contenedor de Compose.
+PROCESOS_NECESARIOS = ("stream_processing.py",)
+CONTENEDORES_NECESARIOS = ("bridge",)
 
 
 def compose(*argumentos: str) -> None:
@@ -90,6 +92,9 @@ def procesos_ausentes() -> list[str]:
         r = subprocess.run(["pgrep", "-f", nombre], capture_output=True, text=True)
         if r.returncode != 0:
             faltan.append(nombre)
+    for servicio in CONTENEDORES_NECESARIOS:
+        if estado_contenedor(servicio) not in ("healthy", "running"):
+            faltan.append(f"contenedor {servicio}")
     return faltan
 
 
@@ -103,6 +108,7 @@ TABLA_TESTIGO = {
     "postgres": (POSTGRES, "telemetry_events"),
     "mosquitto": (POSTGRES, "telemetry_events"),
     "kafka": (POSTGRES, "telemetry_events"),
+    "bridge": (POSTGRES, "telemetry_events"),
 }
 
 

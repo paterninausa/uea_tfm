@@ -24,13 +24,17 @@ Este es la biblioteca que RESUELVE el esquema para leer/escribir, y la importan
 el bridge, el job de Spark y las herramientas de medida en cada arranque.
 """
 
+import os
 import struct
 
 from confluent_kafka.schema_registry import SchemaRegistryClient
 
 from common.connection_args import TOPIC_RAW
 
-DEFAULT_REGISTRY_URL = "http://localhost:8080"
+# Desde el host, Apicurio se ve en localhost; desde un contenedor de la red de
+# Compose, en `http://apicurio:8080`. La variable APICURIO_URL permite fijarlo
+# sin argumentos (la usa el servicio register-schema del docker-compose).
+DEFAULT_REGISTRY_URL = os.environ.get("APICURIO_URL", "http://localhost:8080")
 
 # Subject del proyecto. El sufijo "-value" sigue la convencion TopicNameStrategy
 # de Confluent (el esquema describe el VALOR de los mensajes del topico), asi que
