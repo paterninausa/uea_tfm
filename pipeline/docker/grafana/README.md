@@ -35,7 +35,7 @@ llegaron los datos, no cuando se midieron.
 
 Contiene la evidencia en vivo del KPI del Objetivo 1: un panel dibuja el
 percentil 95 de `ingested_at - sim_publish_ts` sobre `telemetry_events`
-(PostgreSQL, via su propio datasource), con la linea de referencia en 2 s.
+(PostgreSQL, via su propio datasource), con la linea de referencia en 25 s.
 Durante la defensa, ese panel *es* el KPI.
 
 Tambien lleva la antiguedad del ultimo dato, que delata al instante si el
