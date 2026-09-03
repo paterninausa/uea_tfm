@@ -1,6 +1,21 @@
 \chapter{DISCUSIÓN}
-Esta sección es más habitual en trabajos de tipo "científico" o de "investigación", donde uno presenta brevemente los resultados principales y los discute, pero también puede utilizarse en otro tipo de trabajos.
 
-Puedes incluir secciones específicas para discutir cuestiones como: limitaciones del estudio, limitaciones de la tecnología empleada, cambios respecto a objetivos planteados inicialmente.
+\section{Limitaciones del proyecto}
 
-Puedes incluir respuestas a preguntas del tipo: ¿la metodología inicialmente pensada ha sido útil?, ¿he tenido que adaptarme a cambios a lo largo del proyecto?, ¿qué cambios han sido y cómo he adaptado el proyecto para poder manejar esos cambios?, ¿qué impacto ha tenido el resultado de mi proyecto?
+\textbf{Infraestructura de un solo nodo.} El sistema se ha desplegado y validado sobre una pc personal mediante Docker Compose. Kafka se ejecuta como un solo nodo, por lo que el factor de replicación es necesariamente uno y no existen réplicas de las particiones a las que recurrir si el nodo cae; un despliegue real exigiría varios \textit{brokers} para tener tolerancia efectiva a fallos. Además Spark Structured Streaming no se ejecuta como contenedor, sino desde el entorno virtual del \textit{host} porque contenerizarlo exige recursos de procesador y memoria ya comprometidos con el resto de servicios.
+
+\textbf{Seguridad del entorno de desarrollo.} El broker MQTT admite conexiones anónimas, lo cual es válido para el entorno local del proyecto pero se sustituiría en un despliegue real por autenticación con fichero de contraseñas o TLS mutuo.
+
+\textbf{Formato de los mensajes.} El simulador publica cada evento como JSON en texto plano. Es la práctica recomendada para la fase de desarrollo, pero en producción se migraría a un formato binario como Sparkplug~B, que es entre un 50 y un 80\,\% más pequeño que el JSON equivalente.
+
+\textbf{Descarte silencioso del broker bajo saturación.} La cola de salida que Mosquitto mantiene por suscriptor está limitada a 10.000 mensajes. Si el bridge confirma los mensajes más despacio de lo que le llegan durante un tiempo sostenido y esa cola se llena, el broker descarta los mensajes siguientes sin emitir ningún error.
+
+\textbf{Aproximaciones en la agregación por ventana.} La columna \texttt{distinct\_buildings} de las métricas agregadas es un recuento aproximado de edificios, porque Spark Structured Streaming no admite el conteo exacto de valores distintos en agregaciones de flujo.
+
+\textbf{Alcance de la evaluación.} Todas las mediciones se obtuvieron con el simulador MQTT acelerado y no con el ritmo real del parque de medidores; reproducir la cadencia horaria real habría exigido semanas de ejecución continua para obtener comprobación de la correcta ingesta, validación y persistencia de los datos procesados.
+
+\section{Impacto del resultado}
+
+El impacto directo del proyecto es servir de implementación de referencia allí donde la revisión del estado del arte encontró un vacío. Esa revisión puso de manifiesto que, si bien existen numerosos casos ilustrativos de arquitecturas Kappa en IoT, ninguna de las revisadas combina los tres elementos que este proyecto integra en código abierto: un broker MQTT ligero acoplado a un microservicio de \textit{bridging} hacia Kafka, un registro de esquemas Avro que valida el formato y la admisibilidad de cada evento, y una estrategia de doble sumidero que separa el consumo operacional del analítico.
+
+Más allá del caso de uso energético, el diseño implementado es transferible a otros escenarios de monitorización sobre grandes volúmenes de datos de sensores: gestión de edificios inteligentes, instrumentación industrial o cualquier dominio en el que convivan la necesidad de vigilancia inmediata y la de análisis histórico. Al estar construido con herramientas de código abierto, containerizado y disponible desde el repositorio, el sistema puede adoptarse como punto de partida por terceros, cumpliendo así el objetivo de ser una referencia técnica reutilizable.
