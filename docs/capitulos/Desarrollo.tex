@@ -109,14 +109,15 @@ A continuación se documentan tres casos en los que se evaluaron herramientas us
 {\footnotesize
 \begin{verbatim}
 tfm_boris_paternina/
-|-- setup.sh                    # Crea el entorno virtual y prepara el dataset
-|-- requirements.txt            # Dependencias Python del pipeline completo
-|-- .sdkmanrc                   # Versión de Java fijada (21 Temurin) para PySpark
+|-- setup.sh                    # Crea el entorno virtual, descarga el dataset Kaggle
+|                               #   y crea el subconjunto usando prepare_ashrae.py
+|-- requirements.txt            # Dependencias Python del pipeline
+|-- .sdkmanrc                   # Versión de Java fijada para PySpark
+|-- .gitignore
 |-- pipeline/
 |   |-- data/
-|   |   |-- prepare_ashrae.py       # Preparación del subconjunto (ver Sección 5.2.2)
-|   |-- docker-compose.yml          # Orquesta Mosquitto, Bridge, Apicurio, Kafka, 
-|   |                               #   TimescaleDB, PostgreSQL y Grafana
+|   |   |-- raw/                    # Carpeta de descarga de ASHRAE Kaggle competition
+|   |   |-- prepare_ashrae.py       # Genera los archivos .parquet del pipeline
 |   |-- docker/
 |   |   |-- mosquitto/              # Configuración del broker MQTT
 |   |   |-- grafana/                # Datasources y dashboards provisionados
@@ -132,12 +133,17 @@ tfm_boris_paternina/
 |   |   |-- telemetry_event_v1.avsc # Contrato de datos en Apicurio (Objetivo 2)
 |   |   |-- register_schema.py      # Registro y gobernanza de esquemas en Apicurio
 |   |-- spark/
-|   |   |-- stream_processing.py    # Spark Structured Streaming (Objetivos 3 y 4)
-|   |   |-- database_writers.py     # Escritura idempotente hacia los dos sumideros
+|   |   |-- checkpoints/            # Estado de ejecución de las consultas a Kafka
+|   |   |-- stream_processing.py    # Script de procesamiento PySpark (Objetivos 3 y 4)
+|   |   |-- database_writers.py     # Escritura idempotente hacia los sumideros
 |   |   |-- monitoring.py           # Supervisión del proceso Spark
 |   |-- common/                     # Utilidades compartidas: logging, conexiones, Apicurio
 |   |-- logs/                       # Logs de ejecución
-|   |-- tools/                      # Scripts de medición (KPIs), prueba de fallos, demo
+|   |-- tools/                      # Scripts de medición (KPIs), prueba de fallos, demo.py
+|   |-- .env.example                # Plantilla con credenciales de ejemplo para bases
+|   |                               #   de datos y configuración de tópicos Kafka
+|   |-- docker-compose.yml          # Orquesta Mosquitto, Bridge, Apicurio, Kafka, 
+|                                   #   TimescaleDB, PostgreSQL y Grafana
 |-- powerbi/
     |-- powerbi_dashboard_analitico.pbip            # Proyecto Power BI (formato PBIP)
     |-- powerbi_dashboard_analitico.Report/         # Definición de páginas y visuales
