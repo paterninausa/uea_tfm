@@ -350,11 +350,6 @@ def run(args: argparse.Namespace) -> int:
             simulador.wait(timeout=30)
         except subprocess.TimeoutExpired:
             simulador.kill()
-        if recrear_al_final:
-            logger.info("Recreando %s para quitar el limite de memoria del test...",
-                        args.target)
-            subprocess.run(["docker", "compose", "-f", str(COMPOSE), "up", "-d",
-                            "--force-recreate", "--no-deps", args.target], check=False)
 
     # Drenaje: al pipeline aun le quedan mensajes en vuelo cuando el productor
     # para. Sin esta espera, la comparacion final contaria como perdido lo que
@@ -404,6 +399,15 @@ def run(args: argparse.Namespace) -> int:
                        "telemetry_events (%.4f%%)", perdidos, publicados, tasa_perdida_pct)
     logger.info("Objetivo: recuperacion < 60 s sin perdida de datos")
     logger.info("Guardado en %s", RESULTADO)
+
+    # El recrear va AL FINAL, despues de medir: `--force-recreate` reinicia el
+    # contenedor otra vez, y si el servicio caido es Kafka, leer sus offsets
+    # mientras rehace la recuperacion de segmentos da una cifra sin sentido.
+    if recrear_al_final:
+        logger.info("Recreando %s para quitar el limite de memoria del test...",
+                    args.target)
+        subprocess.run(["docker", "compose", "-f", str(COMPOSE), "up", "-d",
+                        "--force-recreate", "--no-deps", args.target], check=False)
 
     return 0 if recuperacion is not None and recuperacion < 60 else 1
 
