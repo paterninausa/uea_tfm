@@ -15,8 +15,9 @@ Que hace, en orden:
   3. MATA el contenedor elegido (`docker kill`, no `stop`: un fallo real no avisa
      con un SIGTERM ordenado).
   4. Lo deja caido el tiempo indicado y lo vuelve a levantar.
-  5. Cronometra cuanto tarda el flujo en restablecerse, contando filas nuevas en
-     la base de datos.
+  5. Cronometra cuanto tarda el flujo en restablecerse ---desde la orden de
+     reinicio, con lo que Docker tarda en arrancar el contenedor incluido---,
+     contando filas nuevas en la base de datos.
   6. Compara lo publicado con lo persistido para verificar que no se perdio nada.
 
 INFORMA DE LO QUE PASE, incluido que no se recupere. Un servicio cuyo fallo
@@ -131,15 +132,19 @@ def contar(props: dict, tabla: str = "telemetry_events") -> int:
 
 
 def esperar_flujo(props: dict, tabla: str, referencia: int, timeout: float,
-                  parada) -> float | None:
+                  parada, desde: float | None = None) -> float | None:
     """Segundos hasta ver filas NUEVAS respecto a `referencia`, o None si no llegan.
 
     Se mide sobre filas persistidas y no sobre el estado del contenedor a
     proposito: que Docker diga "healthy" solo significa que el proceso responde,
     no que el pipeline haya vuelto a mover datos de un extremo al otro. Lo que
     exige el objetivo es lo segundo.
+
+    `desde` fija el origen del cronometro; por defecto es "ahora". El llamador lo
+    pone ANTES de ordenar el reinicio del contenedor, para que la recuperacion
+    medida incluya lo que Docker tarda en arrancarlo.
     """
-    t0 = time.monotonic()
+    t0 = desde if desde is not None else time.monotonic()
     while time.monotonic() - t0 < timeout:
         if parada.is_set():
             return None
@@ -202,8 +207,11 @@ def run(args: argparse.Namespace) -> int:
                     f"{filas_durante:,}" if filas_durante >= 0 else "(base de datos caida)")
 
         logger.info("--- LEVANTANDO %s ---", args.target)
-        compose("start", args.target)
+        # El cronometro de recuperacion arranca ANTES de la orden de reinicio:
+        # asi la cifra incluye lo que Docker tarda en volver a poner en pie el
+        # contenedor, no solo lo que tarda el flujo en reanudarse despues.
         instante_reinicio = time.monotonic()
+        compose("start", args.target)
 
         # La referencia es el ULTIMO RECUENTO VALIDO, no el de durante la caida.
         # Cuando el servicio tumbado es la propia base testigo, `contar` devuelve
@@ -213,15 +221,17 @@ def run(args: argparse.Namespace) -> int:
         # nada nuevo. Daba 2,0 s de recuperacion que no median nada.
         referencia = filas_durante if filas_durante >= 0 else filas_antes_del_fallo
         logger.info("Se esperan filas nuevas por encima de %s", f"{referencia:,}")
-        recuperacion = esperar_flujo(props, tabla, referencia, args.timeout, parada)
+        recuperacion = esperar_flujo(props, tabla, referencia, args.timeout, parada,
+                                     desde=instante_reinicio)
         total = time.monotonic() - instante_fallo
 
         if recuperacion is None:
             logger.error("EL FLUJO NO SE RESTABLECIO en %g s tras levantar %s",
                          args.timeout, args.target)
         else:
-            logger.info("Flujo restablecido %.1f s despues de levantar el servicio "
-                        "(%.1f s desde el fallo)", recuperacion, total)
+            logger.info("Flujo restablecido %.1f s despues de ordenar el reinicio "
+                        "(incluye el arranque del contenedor; %.1f s desde el fallo)",
+                        recuperacion, total)
 
     finally:
         logger.info("Deteniendo el simulador...")

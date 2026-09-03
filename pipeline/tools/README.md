@@ -153,10 +153,12 @@ anterior a la de publicacion): la medicion no es fiable y hay que repetirla.
 
 Lanza el simulador, mata un contenedor con `docker kill` —no `stop`: un fallo
 real no avisa con un SIGTERM ordenado—, lo levanta y cronometra cuanto tarda el
-flujo en restablecerse, contando filas nuevas en la base de datos. Se mide sobre
-datos persistidos y no sobre el estado del contenedor porque que Docker diga
-`healthy` solo significa que el proceso responde, no que el pipeline haya vuelto
-a mover datos de un extremo al otro.
+flujo en restablecerse contando filas nuevas en la base de datos. El cronometro
+arranca en la orden de reinicio, así que la cifra **incluye lo que Docker tarda
+en volver a poner en pie el contenedor**. Se mide sobre datos persistidos y no
+sobre el estado del contenedor porque que Docker diga `healthy` solo significa
+que el proceso responde, no que el pipeline haya vuelto a mover datos de un
+extremo al otro.
 
 ```bash
 python pipeline/tools/failover_test.py --target mosquitto --downtime 15
