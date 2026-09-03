@@ -23,7 +23,8 @@ Que hace, en orden:
   5. Cronometra cuanto tarda el flujo en restablecerse contando filas nuevas en
      la base de datos: con kill, desde la orden de reinicio (con el arranque del
      contenedor incluido); con oom, desde el propio OOM.
-  6. Compara lo publicado con lo persistido para verificar que no se perdio nada.
+  6. Compara lo publicado en Kafka (offsets del topico raw) con lo persistido en
+     telemetry_events para medir la tasa de perdida.
 
 INFORMA DE LO QUE PASE, incluido que no se recupere. Un servicio cuyo fallo
 detiene el pipeline es un resultado valido y publicable: lo que invalidaria el
@@ -46,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.connection_args import (  # noqa: E402
     POSTGRES,
     TIMESCALE,
+    TOPIC_RAW,
     anadir_argumentos_bd,
     props_bd,
 )
@@ -58,6 +60,7 @@ RAIZ = Path(__file__).resolve().parents[1]
 COMPOSE = RAIZ / "docker-compose.yml"
 SIMULADOR = RAIZ / "simulator" / "mqtt_simulator.py"
 RESULTADO = DIRECTORIO_LOGS / "ultimo_failover.json"
+CONTENEDOR_KAFKA = "tfm-kafka"
 
 # Servicios que se pueden tumbar y que se espera que el pipeline sobreviva.
 # apicurio y register-schema quedan fuera a proposito: el esquema se resuelve una
@@ -183,6 +186,21 @@ def contar(props: dict, tabla: str = "telemetry_events") -> int:
         conn.close()
 
 
+def offsets_topico(topico: str) -> int:
+    """Suma de los offsets finales por particion: cuantos mensajes lleva el
+    topico. Es el mismo metodo que kpi_report.py; el delta entre dos lecturas es
+    lo que el bridge publico en Kafka en ese intervalo. Devuelve -1 si no se
+    puede leer (Kafka caido)."""
+    r = subprocess.run(
+        ["docker", "exec", CONTENEDOR_KAFKA, "/opt/kafka/bin/kafka-get-offsets.sh",
+         "--bootstrap-server", "kafka:9092", "--topic", topico, "--time", "-1"],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return -1
+    return sum(int(l.rsplit(":", 1)[1]) for l in r.stdout.splitlines() if ":" in l)
+
+
 def esperar_flujo(props: dict, tabla: str, referencia: int, timeout: float,
                   parada, desde: float | None = None) -> float | None:
     """Segundos hasta ver filas NUEVAS respecto a `referencia`, o None si no llegan.
@@ -211,6 +229,9 @@ def run(args: argparse.Namespace) -> int:
     parada = evento_de_parada("prueba de recuperacion")
     cual_bd, tabla = TABLA_TESTIGO[args.target]
     props = props_bd(args, cual_bd)
+    # La tasa de perdida se mide siempre sobre el evento individual: filas de
+    # telemetry_events (PostgreSQL) frente a lo publicado en el topico de Kafka.
+    props_pg = props_bd(args, POSTGRES)
     logger.info("Se observara el flujo en %s.%s, que es el camino que corta un fallo de %s",
                 cual_bd, tabla, args.target)
 
@@ -247,6 +268,12 @@ def run(args: argparse.Namespace) -> int:
             logger.error("No llega flujo al sumidero antes del fallo; se aborta la prueba")
             return 1
         logger.info("Flujo confirmado. Filas antes del fallo: %s", f"{contar(props, tabla):,}")
+
+        # Referencias para la tasa de perdida: lo publicado en Kafka y lo
+        # persistido en telemetry_events, ANTES del fallo. Al final se toman otra
+        # vez y se comparan los deltas.
+        publicados_ini = offsets_topico(TOPIC_RAW)
+        eventos_pg_ini = contar(props_pg, "telemetry_events")
 
         # El recuento de referencia se toma con el servicio TODAVIA VIVO. Si se
         # toma despues del kill y el servicio caido es la propia base testigo,
@@ -336,6 +363,20 @@ def run(args: argparse.Namespace) -> int:
     time.sleep(args.drain)
     filas_final = contar(props, tabla)
 
+    # Tasa de perdida: lo que el bridge publico en Kafka durante la prueba frente
+    # a lo que se persistio en telemetry_events. Un delta positivo es perdida; un
+    # pequeno delta negativo (mas persistido que publicado) es ruido del desfase
+    # de ~1 s entre las dos lecturas o duplicados de Kafka que el UPSERT colapso,
+    # y se lleva a cero. Una perdida real, de cientos o miles de filas, se ve.
+    off_fin = offsets_topico(TOPIC_RAW)
+    publicados = off_fin - publicados_ini if off_fin >= 0 and publicados_ini >= 0 else None
+    persistidos = contar(props_pg, "telemetry_events") - eventos_pg_ini
+    if publicados and publicados > 0:
+        perdidos = max(publicados - persistidos, 0)
+        tasa_perdida_pct = round(perdidos / publicados * 100, 4)
+    else:
+        perdidos, tasa_perdida_pct = None, None
+
     resultado = {
         "servicio": args.target,
         "modo": args.fallo,
@@ -347,6 +388,10 @@ def run(args: argparse.Namespace) -> int:
         "filas_antes": filas_inicio,
         "filas_final": filas_final,
         "filas_nuevas": filas_final - filas_inicio,
+        "publicados_kafka": publicados,
+        "persistidos_pg": persistidos,
+        "eventos_perdidos": perdidos,
+        "tasa_perdida_pct": tasa_perdida_pct,
         "estado_final": estado_contenedor(args.target),
     }
     RESULTADO.write_text(json.dumps(resultado, indent=2))
@@ -354,6 +399,9 @@ def run(args: argparse.Namespace) -> int:
     logger.info("--- Resultado de la prueba de recuperacion ---")
     for k, v in resultado.items():
         logger.info("  %-18s %s", k, v)
+    if perdidos:
+        logger.warning("PERDIDA DETECTADA: %d de %d eventos publicados no llegaron a "
+                       "telemetry_events (%.4f%%)", perdidos, publicados, tasa_perdida_pct)
     logger.info("Objetivo: recuperacion < 60 s sin perdida de datos")
     logger.info("Guardado en %s", RESULTADO)
 

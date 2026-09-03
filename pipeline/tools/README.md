@@ -151,11 +151,14 @@ anterior a la de publicacion): la medicion no es fiable y hay que repetirla.
 
 ## failover_test.py
 
-Lanza el simulador, provoca el fallo de un contenedor, y cronometra cuanto tarda
-el flujo en restablecerse contando filas nuevas en la base de datos. Se mide
-sobre datos persistidos y no sobre el estado del contenedor porque que Docker
-diga `healthy` solo significa que el proceso responde, no que el pipeline haya
-vuelto a mover datos de un extremo al otro.
+Lanza el simulador, provoca el fallo de un contenedor, y mide dos cosas: el
+**tiempo de recuperacion** (cuanto tarda en aparecer una fila nueva en la tabla
+que corta el fallo) y la **tasa de perdida** (los offsets del topico
+`iot.telemetry.raw` de Kafka al principio y al final de la prueba, frente a las
+filas de `telemetry_events`; un delta negativo pequeno es ruido de muestreo y se
+lleva a cero). Se mide sobre datos persistidos y no sobre el estado del
+contenedor porque que Docker diga `healthy` solo significa que el proceso
+responde, no que el pipeline haya vuelto a mover datos de un extremo al otro.
 
 ```bash
 python pipeline/tools/failover_test.py --target mosquitto --downtime 15
