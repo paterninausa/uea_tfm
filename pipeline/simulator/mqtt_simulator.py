@@ -71,6 +71,11 @@ TOPIC_TEMPLATE = "iot/{building_id}/{meter_type}/telemetry"
 # (n_sensores x acelerar / 3600) y el escalonado determinista entre sensores.
 PERIODO_SENSOR_S = 3600.0
 
+# Se resta a sim_publish_ts para que la latencia de ingesta medida incluya el
+# trayecto dispositivo -> broker: 20 s mimetiza el retardo de transmision de un
+# enlace NB-IoT.
+RETARDO_TRANSMISION_MS = 20_000
+
 
 def build_topic(fila) -> str:
     """Topico del sensor que emite esta lectura.
@@ -92,17 +97,19 @@ def build_payload(fila) -> dict:
     milisegundos, que es lo que declara el esquema Avro. Se mantiene en ISO aqui
     porque hace legible el trafico al depurar con `mosquitto_sub`.
 
-    `sim_publish_ts` se sella AL CONSTRUIR EL MENSAJE, no al leer el dataset: es
-    el instante real de emision y el origen de tiempo del KPI de latencia del
-    Objetivo 1. Por eso esta funcion vive en el productor y no en el modulo que
-    interpreta los datos: lo que hace no es leer una fila, es emitirla.
+    `sim_publish_ts` se sella AL CONSTRUIR EL MENSAJE, no al leer el dataset:
+    representa el instante de emision del dispositivo y es el origen de tiempo del
+    KPI de latencia del Objetivo 1. Por eso esta funcion vive en el productor y no
+    en el modulo que interpreta los datos: lo que hace no es leer una fila, es
+    emitirla. Se antedata `RETARDO_TRANSMISION_MS` para incluir el trayecto
+    dispositivo -> broker.
     """
     return {
         "building_id": str(fila.building_id),
         "meter_type": str(fila.meter_type),
         "timestamp": fila.timestamp.isoformat(),
         "meter_reading": float(fila.meter_reading),
-        "sim_publish_ts": int(time.time() * 1000),
+        "sim_publish_ts": int(time.time() * 1000) - RETARDO_TRANSMISION_MS,
     }
 
 
