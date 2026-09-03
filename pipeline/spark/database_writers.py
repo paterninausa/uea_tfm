@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # de emitir, asi que un evento reenviado tras una reconexion trae una distinta
 # siendo el mismo evento. Comparar filas enteras marcaria esas reentregas
 # legitimas como colisiones.
-COLUMNAS_INSTRUMENTACION = ("sim_publish_ts", "ingested_at", "max_sim_publish_ts")
+COLUMNAS_INSTRUMENTACION = ("sim_publish_ts", "ingested_at")
 
 
 def _deduplicar(filas: list, columnas: list[str], claves: list[str]) -> tuple[list, list]:

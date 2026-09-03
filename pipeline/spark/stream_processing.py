@@ -420,9 +420,6 @@ def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str,
             F.sum("square_feet").alias("sum_square_feet"),
             F.sum(F.when(F.col("is_zero_reading"), 1).otherwise(0)).alias("zero_count"),
             F.sum(F.when(F.col("is_anomaly"), 1).otherwise(0)).alias("anomaly_count"),
-            # Instrumentacion del KPI de latencia extremo a extremo: el instante
-            # de publicacion MQTT mas reciente de la ventana.
-            F.max("sim_publish_ts").alias("max_sim_publish_ts"),
         )
         .select(
             F.col("window.start").alias("window_start"),
@@ -439,7 +436,7 @@ def aggregate_metrics(df: DataFrame, window_duration: str, watermark: str,
             F.when(F.col("sum_square_feet") > 0,
                    F.col("sum_reading") / F.col("sum_square_feet"))
              .alias("avg_energy_intensity"),
-            "zero_count", "anomaly_count", "max_sim_publish_ts",
+            "zero_count", "anomaly_count",
         )
     )
 

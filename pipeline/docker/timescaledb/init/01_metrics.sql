@@ -40,10 +40,7 @@ CREATE TABLE IF NOT EXISTS telemetry_metrics (
     zero_count            BIGINT           NOT NULL,
     anomaly_count         BIGINT           NOT NULL,
 
-    -- Instrumentacion del KPI de latencia extremo a extremo (Objetivo 1).
-    -- Se persisten las dos marcas y no solo su diferencia, para poder recalcular
-    -- el KPI a posteriori sobre las filas ya escritas.
-    max_sim_publish_ts    TIMESTAMPTZ,
+    -- Instante en que la fila se escribio o actualizo, asignado por la base.
     ingested_at           TIMESTAMPTZ      NOT NULL DEFAULT now(),
 
     -- Una ventana solo puede tener una fila por combinacion de claves. Es lo que
@@ -66,6 +63,12 @@ SELECT create_hypertable(
 -- tipo de contador y rango temporal.
 CREATE INDEX IF NOT EXISTS idx_metrics_site_meter_time
     ON telemetry_metrics (site_id, meter_type, window_start DESC);
+
+-- max_sim_publish_ts (la marca de publicacion mas reciente de la ventana) se
+-- retiro: solo medía la latencia de disponibilidad del agregado, que no forma
+-- parte del KPI final por estar acotada por la cadencia del sensor. El DROP
+-- hace que un volumen ya existente tambien la pierda.
+ALTER TABLE telemetry_metrics DROP COLUMN IF EXISTS max_sim_publish_ts;
 
 COMMENT ON TABLE telemetry_metrics IS
     'Agregados por ventana de 1h sobre event time. Escribe Spark, consume Grafana.';
