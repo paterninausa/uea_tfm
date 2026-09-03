@@ -13,7 +13,7 @@ El proyecto se desarrolló a lo largo de tres meses, entre junio y agosto de 202
     Búsqueda y adaptación de la fuente de datos; establecimiento de tareas y objetivos & Jun. 2026 & 5 & \texttt{prepare\_ashrae.py}, objetivos y KPIs \\ \hline
     Selección de herramientas y diseño de la arquitectura & Jun. 2026 & 5 & Documento de diseño \\ \hline
     Desarrollo técnico y pruebas iniciales de la sección de procesamiento & Jun.--Jul. 2026 & 80 & Artefactos en \texttt{bridge/}, \texttt{common/}, \texttt{docker/}, \texttt{schemas/}, \texttt{simulator/} y \texttt{spark/} \\ \hline
-    Validación, pruebas y ajustes de la sección de procesamiento & Jul. 2026 & 100 & Informe de resultados: pérdida de mensajes (0,0000\,\%), latencia de ingesta p50/p95 (0,766 / 1,277 s), soporte de carga (652 sensores concurrentes, sin pérdida de mensajes), tiempo de recuperación ante fallo (4,1 s TimescaleDB / 5,1 s PostgreSQL) \\ \hline
+    Validación, pruebas y ajustes de la sección de procesamiento & Jul. 2026 & 100 & Informe de resultados: pérdida de mensajes, latencia de persistencia p50/p95, soporte de carga, tiempo de recuperación ante fallo \\ \hline
     Creación, pruebas y ajustes de la sección de visualización & Jul.--Ago. 2026 & 30 & Artefactos en \texttt{grafana/} y \texttt{powerbi/} \\ \hline
     Creación y prueba de scripts auxiliares & Ago. 2026 & 5 & Artefactos en \texttt{tools/} y \texttt{setup.sh} \\ \hline
     Redacción de la memoria & Jun.--Ago. 2026 & 75 & Este documento \\ \hline
@@ -365,7 +365,6 @@ Cada fila de \texttt{telemetry\_metrics} corresponde a una ventana de una hora p
     \texttt{avg\_energy\_intensity} & Se calcula dividiendo \texttt{sum\_reading} entre \texttt{sum\_square\_feet} \\ \hline
     \texttt{zero\_count} & Cuántas lecturas de la ventana fueron cero \\ \hline
     \texttt{anomaly\_count} & Cuántas lecturas de la ventana se marcaron como anómalas \\ \hline
-    \texttt{max\_sim\_publish\_ts} & La marca de publicación más reciente entre las lecturas de la ventana, para el KPI de latencia \\ \hline
     \texttt{ingested\_at} & Instante en que la fila se escribió o actualizó en la base de datos, asignada por la propia base de datos \\ \hline
   \end{tabular}
   \caption{Columnas de \texttt{telemetry\_metrics}.}
@@ -422,7 +421,7 @@ Las columnas de \texttt{telemetry\_events} no son agregaciones; conforman práct
     \texttt{meter\_type} & Tipo de medidor; segundo componente de la clave del evento \\ \hline
     \texttt{event\_time} & Instante de la lectura; tercer componente de la clave del evento \\ \hline
     \texttt{meter\_reading} & La medición de consumo \\ \hline
-    \texttt{sim\_publish\_ts} & Instante de publicación del evento para del KPI de latencia \\ \hline
+    \texttt{sim\_publish\_ts} & Instante de publicación del evento por el simulador \texttt{mqtt\_simulator.py} \\ \hline
     \texttt{ingested\_at} & Instante en que la fila se escribió o actualizó en la base de datos, asignado por la propia base de datos \\ \hline
   \end{tabular}
   \caption{Columnas de \texttt{telemetry\_events}.}
@@ -584,7 +583,7 @@ Todas las mediciones de este capítulo se obtuvieron con el simulador MQTT acele
 
 Por ello, \texttt{mqtt\_simulator.py} con la opción \texttt{-{}-acelerar 2000}, se encarga de que cada medidor publique cada 1,8 segundos en vez de cada hora (3600 segundos / 2000 = 1.8), y la velocidad del parque completo asciende a 362 eventos por segundo (Tabla~\ref{tab:acelerar-simulador}). Este script se encarga de que los 652 medidores, que en el conjunto de datos miden todos en la hora en punto no publiquen a la vez, haciendo que el parque entregue un flujo sostenido en lugar de ráfagas de 652 eventos.
 
-\subsection{Objetivo 1: Garantizar la ingesta fiable de telemetría en tiempo real}
+\subsection{Objetivo 1: Garantizar la persistencia de telemetría rápida y fiable}
 
 \begin{table}[H]
   \centering
@@ -592,20 +591,20 @@ Por ello, \texttt{mqtt\_simulator.py} con la opción \texttt{-{}-acelerar 2000},
     \hline
     \textbf{Indicador} & \textbf{Resultado} & \textbf{Objetivo} \\ \hline
     Eventos publicados / persistidos & 50.000 / 50.000 & — \\ \hline
-    Latencia de ingesta (mediana) & 0,715 s & — \\ \hline
-    \textbf{Latencia de ingesta (p95)} & \textbf{1,173 s} & < 2 s \\ \hline
-    Latencia de ingesta (máxima) & 1,819 s & — \\ \hline
+    Latencia de persistencia (mediana) & 20,715 s & — \\ \hline
+    \textbf{Latencia de persistencia (p95)} & \textbf{21,175 s} & < 25 s \\ \hline
+    Latencia de persistencia (máxima) & 22,260 s & — \\ \hline
     \textbf{Tasa de pérdida} & \textbf{0,0000\,\%} & < 0,1\,\% \\ \hline
   \end{tabular}
-  \caption{Resultado del Objetivo 1: ingesta fiable.}
+  \caption{Resultado del Objetivo 1: persistencia de telemetría rápida y fiable.}
   \label{tab:resultado-obj1}
 \end{table}
 
-Los valores de la Tabla~\ref{tab:resultado-obj1} se obtuvieron sobre \texttt{telemetry\_events} en PostgreSQL (Tabla~\ref{tab:columnas-telemetry-events}) y los \textit{offsets} del tópico \texttt{iot.telemetry.raw} de Kafka, tras publicar 50.000 eventos.
+Los valores de la Tabla~\ref{tab:resultado-obj1} se obtuvieron sobre \texttt{telemetry\_events} en PostgreSQL y los \textit{offsets} del tópico \texttt{iot.telemetry.raw} de Kafka, tras publicar 50.000 eventos.
 
 Los eventos \textbf{publicados} por el bridge se calcularon como la suma de todos los (\textit{offset} final - \textit{offset} inicial) de todas las particiones del tópico de Kafka (debe recordarse que gracias a acks=all los mensajes en las particiones de Kafka son exactamente los que publicó el bridge). Los eventos \textbf{persistidos} son el recuento de filas de la tabla \texttt{telemetry\_events}. La \textbf{tasa de pérdida} es el porcentaje de eventos publicados que no llegó a persistirse, es decir (publicados - persistidos) / publicados.
 
-La \textbf{latencia de ingesta} de cada evento es la diferencia, en segundos, entre \texttt{ingested\_at} y \texttt{sim\_publish\_ts}. Sobre esa diferencia se calcularon la \textbf{mediana}, el \textbf{percentil 95} y el valor \textbf{máximo} para las 50.000 filas.
+La \textbf{latencia de persistencia} de cada evento es el tiempo transcurrido desde \texttt{sim\_publish\_ts} (publicación) hasta \texttt{ingested\_at} (persistencia), en segundos (Tabla~\ref{tab:columnas-telemetry-events}). Sobre esa diferencia se calcularon la \textbf{mediana}, el \textbf{percentil 95} y el valor \textbf{máximo} para las 50.000 filas.
 
 \subsection{Objetivo 2: Garantizar la gobernanza del esquema de datos}
 
@@ -636,8 +635,8 @@ La ausencia de fallos de deserialización del lado de Spark se sostiene sobre el
   \begin{tabular}{|p{3.5cm}|c|c|c|c|c|}
     \hline
     \textbf{Flujo} & \textbf{Lotes} & \textbf{Mediana} & \textbf{p95} & \textbf{Máxima} & \textbf{Objetivo} \\ \hline
-    Eventos individuales (sumidero analítico) & 142 & 262 ms & \textbf{385 ms} & 1.428 ms & < 1 s \\ \hline
-    Métricas agregadas (sumidero operacional) & 142 & 525 ms & \textbf{747 ms} & 1.887 ms & < 1 s \\ \hline
+    Eventos individuales (sumidero analítico) & 142 & 262 ms & \textbf{385 ms} & 1.428 ms & < 2 s \\ \hline
+    Métricas agregadas (sumidero operacional) & 142 & 525 ms & \textbf{747 ms} & 1.887 ms & < 2 s \\ \hline
   \end{tabular}
   \caption{Resultado del Objetivo 3: latencia de micro-lote.}
   \label{tab:resultado-obj3}
