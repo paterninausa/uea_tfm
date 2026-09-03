@@ -12,12 +12,17 @@ Que hace, en orden:
   1. Comprueba que bridge y job de Spark estan en marcha; sin ellos la prueba no
      mide nada.
   2. Lanza el simulador a una tasa fija y espera a ver flujo llegando al sumidero.
-  3. MATA el contenedor elegido (`docker kill`, no `stop`: un fallo real no avisa
-     con un SIGTERM ordenado).
-  4. Lo deja caido el tiempo indicado y lo vuelve a levantar.
-  5. Cronometra cuanto tarda el flujo en restablecerse ---desde la orden de
-     reinicio, con lo que Docker tarda en arrancar el contenedor incluido---,
-     contando filas nuevas en la base de datos.
+  3. Provoca el fallo del contenedor elegido, de una de dos formas (`--fallo`):
+       kill (por defecto): `docker kill` + reinicio manual con `docker compose
+         start`. Es el PEOR CASO: `docker kill` no dispara `restart:
+         unless-stopped`, asi que alguien tiene que levantar el servicio.
+       oom: baja el limite de memoria hasta forzar un OOM-kill del proceso
+         principal. Un OOM SI es un fallo genuino, asi que `restart:
+         unless-stopped` rearranca el contenedor SOLO, sin intervencion.
+  4. (solo kill) Lo deja caido el tiempo indicado y lo vuelve a levantar.
+  5. Cronometra cuanto tarda el flujo en restablecerse contando filas nuevas en
+     la base de datos: con kill, desde la orden de reinicio (con el arranque del
+     contenedor incluido); con oom, desde el propio OOM.
   6. Compara lo publicado con lo persistido para verificar que no se perdio nada.
 
 INFORMA DE LO QUE PASE, incluido que no se recupere. Un servicio cuyo fallo
@@ -26,7 +31,7 @@ trabajo es afirmar una recuperacion que no se ha observado.
 
 Uso:
     python failover_test.py --target mosquitto
-    python failover_test.py --target kafka --downtime 20
+    python failover_test.py --target postgres --fallo oom
 """
 
 import argparse
@@ -85,6 +90,53 @@ def estado_contenedor(servicio: str) -> str:
             datos = json.loads(linea)
             return datos.get("Health") or datos.get("State") or "desconocido"
     return "ausente"
+
+
+def contenedor_id(servicio: str) -> str:
+    r = subprocess.run(["docker", "compose", "-f", str(COMPOSE), "ps", "-q", servicio],
+                       capture_output=True, text=True)
+    cid = r.stdout.strip()
+    if not cid:
+        raise RuntimeError(f"no se encuentra el contenedor del servicio '{servicio}'")
+    return cid
+
+
+def _update_memoria(cid: str, valor: str, reintentos: int = 50) -> bool:
+    """`docker update --memory`, con reintentos: puede rechazar el contenedor
+    mientras esta entre intentos de la politica de reinicio."""
+    for _ in range(reintentos):
+        r = subprocess.run(
+            ["docker", "update", "--memory", valor, "--memory-swap", valor, cid],
+            capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            return True
+        time.sleep(0.3)
+    return False
+
+
+# Por debajo del RSS de todos los servicios salvo Mosquitto (que usa ~3 MiB, por
+# debajo del minimo de 6 MB que admite Docker). Fuerza el OOM-kill del proceso 1.
+MEM_OOM = "6m"
+
+
+def forzar_oom(cid: str, timeout: float = 30.0) -> bool:
+    """Baja el limite de memoria hasta que el kernel mata el proceso principal.
+
+    A diferencia de `docker kill`, un OOM es un fallo genuino y no una parada
+    intencionada: la politica `restart: unless-stopped` SI rearranca el contenedor
+    sola, sin `docker compose start`. El llamador debe devolver el limite despues,
+    o el rearranque vuelve a caer en OOM.
+    """
+    _update_memoria(cid, MEM_OOM)
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        r = subprocess.run(["docker", "inspect", "--format", "{{.State.OOMKilled}}", cid],
+                           capture_output=True, text=True)
+        if r.stdout.strip() == "true":
+            return True
+        time.sleep(0.3)
+    return False
 
 
 def procesos_ausentes() -> list[str]:
@@ -162,6 +214,11 @@ def run(args: argparse.Namespace) -> int:
     logger.info("Se observara el flujo en %s.%s, que es el camino que corta un fallo de %s",
                 cual_bd, tabla, args.target)
 
+    if args.fallo == "oom" and args.target == "mosquitto":
+        logger.error("--fallo oom no sirve para mosquitto: usa ~3 MiB, por debajo del "
+                     "minimo de 6 MB que admite `docker update --memory`. Usa --fallo kill.")
+        return 1
+
     faltan = procesos_ausentes()
     if faltan:
         logger.error("Estos procesos deben estar en marcha para que la prueba mida algo:")
@@ -169,6 +226,8 @@ def run(args: argparse.Namespace) -> int:
             logger.error("  - %s", f)
         logger.error("Arranca el bridge y el job de Spark en otras terminales y repite")
         return 1
+
+    recrear_al_final = False  # lo pone a True el modo oom si tuvo que meter un limite de memoria
 
     logger.info("Lanzando el simulador con speedup x%g en segundo plano...", args.speedup)
     simulador = subprocess.Popen(
@@ -195,23 +254,43 @@ def run(args: argparse.Namespace) -> int:
         # se declara "flujo restablecido" en cuanto la base vuelve a responder,
         # aunque no haya llegado ni una fila nueva.
         filas_antes_del_fallo = contar(props, tabla)
-        logger.info("--- MATANDO %s (filas antes: %s) ---", args.target,
-                    f"{filas_antes_del_fallo:,}")
-        compose("kill", args.target)
-        instante_fallo = time.monotonic()
-        logger.info("Estado de %s: %s", args.target, estado_contenedor(args.target))
 
-        time.sleep(args.downtime)
-        filas_durante = contar(props, tabla)
-        logger.info("Filas tras %g s caido: %s", args.downtime,
-                    f"{filas_durante:,}" if filas_durante >= 0 else "(base de datos caida)")
-
-        logger.info("--- LEVANTANDO %s ---", args.target)
-        # El cronometro de recuperacion arranca ANTES de la orden de reinicio:
-        # asi la cifra incluye lo que Docker tarda en volver a poner en pie el
-        # contenedor, no solo lo que tarda el flujo en reanudarse despues.
-        instante_reinicio = time.monotonic()
-        compose("start", args.target)
+        if args.fallo == "kill":
+            logger.info("--- MATANDO %s con docker kill (filas antes: %s) ---",
+                        args.target, f"{filas_antes_del_fallo:,}")
+            compose("kill", args.target)
+            instante_fallo = time.monotonic()
+            logger.info("Estado de %s: %s", args.target, estado_contenedor(args.target))
+            time.sleep(args.downtime)
+            filas_durante = contar(props, tabla)
+            logger.info("Filas tras %g s caido: %s", args.downtime,
+                        f"{filas_durante:,}" if filas_durante >= 0 else "(base de datos caida)")
+            logger.info("--- LEVANTANDO %s a mano ---", args.target)
+            # El cronometro de recuperacion arranca ANTES de la orden de reinicio:
+            # la cifra incluye lo que Docker tarda en volver a poner en pie el
+            # contenedor, no solo lo que tarda el flujo en reanudarse despues.
+            instante_reinicio = time.monotonic()
+            compose("start", args.target)
+        else:  # oom
+            cid = contenedor_id(args.target)
+            logger.info("--- FORZANDO OOM de %s (limite -> %s; filas antes: %s) ---",
+                        args.target, MEM_OOM, f"{filas_antes_del_fallo:,}")
+            if not forzar_oom(cid):
+                logger.error("No se consiguio forzar el OOM de %s en el plazo", args.target)
+                return 1
+            instante_fallo = time.monotonic()
+            filas_durante = contar(props, tabla)
+            # No hay `docker compose start`: `restart: unless-stopped` rearranca
+            # solo. Se sube el limite a 2g para que el rearranque no vuelva a caer
+            # en OOM; al final se recrea el contenedor para dejarlo como lo pide
+            # docker-compose.yml (un `docker update` no toca su config).
+            recrear_al_final = True
+            logger.info("OOM confirmado; subiendo el limite de memoria a 2g para que "
+                        "el rearranque automatico prospere")
+            instante_reinicio = time.monotonic()
+            if not _update_memoria(cid, "2g"):
+                logger.error("No se pudo subir el limite de memoria de %s", args.target)
+                return 1
 
         # La referencia es el ULTIMO RECUENTO VALIDO, no el de durante la caida.
         # Cuando el servicio tumbado es la propia base testigo, `contar` devuelve
@@ -226,12 +305,16 @@ def run(args: argparse.Namespace) -> int:
         total = time.monotonic() - instante_fallo
 
         if recuperacion is None:
-            logger.error("EL FLUJO NO SE RESTABLECIO en %g s tras levantar %s",
+            logger.error("EL FLUJO NO SE RESTABLECIO en %g s tras el fallo de %s",
                          args.timeout, args.target)
-        else:
+        elif args.fallo == "kill":
             logger.info("Flujo restablecido %.1f s despues de ordenar el reinicio "
                         "(incluye el arranque del contenedor; %.1f s desde el fallo)",
                         recuperacion, total)
+        else:
+            logger.info("Flujo restablecido %.1f s despues del OOM, con `restart: "
+                        "unless-stopped` rearrancando el contenedor sin intervencion",
+                        recuperacion)
 
     finally:
         logger.info("Deteniendo el simulador...")
@@ -240,6 +323,11 @@ def run(args: argparse.Namespace) -> int:
             simulador.wait(timeout=30)
         except subprocess.TimeoutExpired:
             simulador.kill()
+        if recrear_al_final:
+            logger.info("Recreando %s para quitar el limite de memoria del test...",
+                        args.target)
+            subprocess.run(["docker", "compose", "-f", str(COMPOSE), "up", "-d",
+                            "--force-recreate", "--no-deps", args.target], check=False)
 
     # Drenaje: al pipeline aun le quedan mensajes en vuelo cuando el productor
     # para. Sin esta espera, la comparacion final contaria como perdido lo que
@@ -250,9 +338,10 @@ def run(args: argparse.Namespace) -> int:
 
     resultado = {
         "servicio": args.target,
+        "modo": args.fallo,
         "tabla_testigo": f"{cual_bd}.{tabla}",
         "instante": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "downtime_s": args.downtime,
+        "downtime_s": args.downtime if args.fallo == "kill" else None,
         "recuperacion_s": round(recuperacion, 1) if recuperacion is not None else None,
         "desde_el_fallo_s": round(total, 1),
         "filas_antes": filas_inicio,
@@ -276,6 +365,11 @@ def parse_args() -> argparse.Namespace:
     anadir_argumentos_bd(p)
     p.add_argument("--target", default="mosquitto", choices=OBJETIVOS,
                    help="Servicio que se va a tumbar")
+    p.add_argument("--fallo", default="kill", choices=("kill", "oom"),
+                   help="kill: docker kill + reinicio manual (peor caso, el que va a la "
+                        "memoria). oom: fuerza un OOM-kill, que `restart: unless-stopped` "
+                        "rearranca solo (demuestra la auto-recuperacion). oom no sirve para "
+                        "mosquitto (usa ~3 MiB, por debajo del minimo de 6 MB de docker)")
     p.add_argument("--acelerar", dest="speedup", metavar="FACTOR", type=float, default=1000.0,
                    help="Aceleracion del reloj durante la prueba. Con los 652 sensores, "
                         "x1000 son unos 181 ev/s: suficiente para ver el flujo cortarse y "

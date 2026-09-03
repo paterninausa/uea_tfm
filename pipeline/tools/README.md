@@ -151,24 +151,38 @@ anterior a la de publicacion): la medicion no es fiable y hay que repetirla.
 
 ## failover_test.py
 
-Lanza el simulador, mata un contenedor con `docker kill` —no `stop`: un fallo
-real no avisa con un SIGTERM ordenado—, lo levanta y cronometra cuanto tarda el
-flujo en restablecerse contando filas nuevas en la base de datos. El cronometro
-arranca en la orden de reinicio, así que la cifra **incluye lo que Docker tarda
-en volver a poner en pie el contenedor**. Se mide sobre datos persistidos y no
-sobre el estado del contenedor porque que Docker diga `healthy` solo significa
-que el proceso responde, no que el pipeline haya vuelto a mover datos de un
-extremo al otro.
+Lanza el simulador, provoca el fallo de un contenedor, y cronometra cuanto tarda
+el flujo en restablecerse contando filas nuevas en la base de datos. Se mide
+sobre datos persistidos y no sobre el estado del contenedor porque que Docker
+diga `healthy` solo significa que el proceso responde, no que el pipeline haya
+vuelto a mover datos de un extremo al otro.
 
 ```bash
 python pipeline/tools/failover_test.py --target mosquitto --downtime 15
+python pipeline/tools/failover_test.py --target postgres --fallo oom
 ```
 
-Objetivos disponibles: `mosquitto`, `kafka`, `timescaledb`, `postgres` y
-`bridge` (contenedor desde que dejo de correr en el host). Exige que el bridge
-y el job de Spark esten en marcha, y **informa de lo que pase, incluido que no
-se recupere**: un servicio cuyo fallo detiene el pipeline es un
-resultado publicable; afirmar una recuperacion que no se ha observado, no.
+`--target`: `mosquitto`, `kafka`, `timescaledb`, `postgres` o `bridge` (los
+cuatro contenedores de infraestructura mas el bridge, contenedor desde que dejo
+de correr en el host).
+
+`--fallo` decide como cae el servicio:
+
+- **`kill`** (por defecto): `docker kill` + `docker compose start` manual tras
+  `--downtime` segundos. Es el **peor caso**: `docker kill` no dispara
+  `restart: unless-stopped`, asi que alguien tiene que levantar el servicio. El
+  cronometro arranca en la orden de reinicio, con el arranque del contenedor
+  incluido. Es el modo cuyas cifras van a la memoria.
+- **`oom`**: baja el limite de memoria hasta forzar un OOM-kill del proceso
+  principal. Un OOM **si** es un fallo genuino, asi que `restart:
+  unless-stopped` rearranca el contenedor **solo**, sin intervencion; el
+  cronometro va desde el OOM. Deja el limite de memoria puesto, asi que al
+  terminar recrea el contenedor. No sirve para `mosquitto` (usa ~3 MiB, por
+  debajo del minimo de 6 MB de `docker update`).
+
+Exige que el bridge y el job de Spark esten en marcha, y **informa de lo que
+pase, incluido que no se recupere**: un servicio cuyo fallo detiene el pipeline
+es un resultado publicable; afirmar una recuperacion que no se ha observado, no.
 
 ### Resultados medidos
 
