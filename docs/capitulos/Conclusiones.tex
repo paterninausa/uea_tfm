@@ -9,8 +9,8 @@ Se probó la madurez y capacidad de las herramientas de código abierto para imp
 Con la debida consideración de las limitaciones en este proyecto, se lograron cumplir los diversos objetivos a lo largo de su desarrollo:
 
 \begin{enumerate}
-  \item \textbf{Persistencia de telemetría rápida y fiable.} El 95~\% de la telemetría validada se persistió en un tiempo inferior a los 25~segundos, con 0~\% de mensajes perdidos durante el procesamiento.
-  \item \textbf{Gobernanza del esquema de datos.} El 100~\% de los eventos ingeridos se validaron contra el esquema Avro registrado, sin ningún fallo de deserialización ni mensajes erróneamente desviados al tópico de inválidos.
+  \item \textbf{Persistencia de telemetría rápida y fiable.} El p95 de la telemetría validada se persistió en un tiempo inferior a los 25~segundos, con 0~\% de mensajes perdidos durante el procesamiento.
+  \item \textbf{Gobernanza del esquema de datos.} El 100~\% de los eventos ingeridos se validaron contra el esquema Avro registrado, sin fallos de deserialización ni mensajes erróneamente desviados al tópico de inválidos.
   \item \textbf{Procesamiento en flujo con baja latencia.} Los micro-lotes de Spark Structured Streaming se procesaron por debajo de los 2~segundos, a una tasa estable sin incremento de tiempo.
   \item \textbf{Visualización diferenciada operacional y analítica.} Se diseñaron e implementaron los dashboards de Grafana y las páginas de Power BI con las visualizaciones del consumo energético, la eficiencia operativa, la detección de anomalías y el análisis histórico.
   \item \textbf{Resiliencia del sistema.} Se comprobó la capacidad de auto recuperación de los componentes del sistema en menos de 60~segundos con 0~\% de pérdida de datos.

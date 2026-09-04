@@ -30,31 +30,31 @@ Las tareas del proyecto se desarrollarán como una serie de objetivos acompañad
 
 \subsection{Objetivo 1: Garantizar la persistencia de telemetría rápida y fiable}
 
-\textbf{KPI}: tiempo inferior a 25 segundos entre la publicación del evento y su persistencia final, para el 95\,\% de los mensajes MQTT validados, con una tasa de pérdida inferior al 0.1\,\%.
+\textbf{KPI}: tiempo inferior a 25 segundos entre la publicación de evento y su persistencia final, para el percentil 95 de los mensajes MQTT validados, con una tasa de pérdida inferior al 0.1\,\%.
 
-\textbf{Acciones}: instrumentar el simulador MQTT y desplegar Mosquitto como broker MQTT con un servicio de bridge MQTT-Kafka; implementar los servicios de Kafka, Spark Structured Streaming y el doble sumidero operacional / analítico; medir la latencia máxima desde la publicación de los datos (este KPI incluye un estimado del tiempo de transmisión entre el dispositivo IoT y el broker Mosquitto, que en el caso de los dispositivos NBIoT puede llegar a tardar hasta 20 segundos en sitios de mala cobertura).
+\textbf{Acciones}: instrumentar el simulador MQTT y desplegar Mosquitto como broker MQTT con un servicio de bridge MQTT-Kafka; implementar los servicios de Kafka, Spark Structured Streaming y el doble sumidero operacional / analítico; medir las latencias desde la publicación de los datos (este KPI incluye un estimado del tiempo de transmisión entre el dispositivo IoT y el broker Mosquitto, que en el caso de los dispositivos NBIoT puede llegar a tardar hasta 20 segundos en sitios de mala cobertura).
 
 \subsection{Objetivo 2: Garantizar la gobernanza del esquema de datos}
 
-\textbf{KPI}: el 100\,\% de los eventos ingeridos se validan correctamente contra el esquema Avro registrado con 0\,\% de fallos de deserialización.
+\textbf{KPI}: 100\,\% de eventos validados correctamente contra el esquema Avro registrado (sin eventos invalidados por error), y 0\,\% de fallos de deserialización.
 
-\textbf{Acciones}: definir el esquema Avro inicial de telemetría; configurar las reglas de compatibilidad de esquema en Apicurio; diseñar y ejecutar una prueba verificando que no se interrumpe el flujo ni se pierden mensajes.
+\textbf{Acciones}: definir el esquema Avro inicial de telemetría; configurar las reglas de compatibilidad de esquema en Apicurio; diseñar y ejecutar una prueba verificando que no se interrumpe el flujo ni se pierden mensajes por error de validación o deserialización.
 
 \subsection{Objetivo 3: Procesar y enriquecer los datos en flujo con baja latencia}
 
-\textbf{KPI}: cada micro-lote de Spark Structured Streaming se procesa en menos de 2 segundos sin acumular retraso entre micro-lotes sucesivos.
+\textbf{KPI}: procesamiento de los micro-lotes de Spark Structured Streaming con una latencia estable menor a 2 segundos.
 
-\textbf{Acciones}: implementar el proceso de Spark Structured Streaming (DataFrame API) con ventanas de agregación temporal y \textit{watermarking} para el tratamiento de datos tardíos; medir la máxima duración de procesamiento de cada consulta a Kafka.
+\textbf{Acciones}: implementar el proceso de Spark Structured Streaming (DataFrame API) con ventanas de agregación temporal y \textit{watermarking} para el tratamiento de datos tardíos; medir tiempos de procesamiento de las consultas a Kafka.
 
 \subsection{Objetivo 4: Ofrecer visualización diferenciada operacional y analítica}
 
-\textbf{KPI}: visualización mediante dashboards de Grafana y páginas de Power BI que muestren datos con una latencia menor o igual a 5 segundos cubriendo consumo energético, eficiencia operativa, detección de anomalías y análisis histórico.
+\textbf{KPI}: visualización de datos con una latencia menor o igual a 5 segundos mediante dashboards de Grafana y páginas de Power BI que muestren consumo energético, eficiencia operativa, detección de anomalías y análisis histórico.
 
 \textbf{Acciones}: implementar los dashboards operacionales de Grafana sobre los datos de TimescaleDB; implementar las páginas analíticas de Power BI sobre los datos en PostgreSQL; definir y calcular los datos requeridos por los tipos de análisis; validar la latencia de actualización de las visualizaciones.
 
 \subsection{Objetivo 5: Validar la resiliencia del sistema}
 
-\textbf{KPI}: ante el fallo de un servicio individual, el sistema se recupera en menos de 60 segundos sin pérdida de datos.
+\textbf{KPI}: los componentes del pipeline se recuperan automáticamente en menos de 60 segundos ante un fallo, sin pérdida de datos.
 
 \textbf{Acciones}: simular la caída de un servicio (por ejemplo, el broker de mensajería o una de las bases de datos) y medir el tiempo de recuperación y la tasa de pérdida de datos.
 
