@@ -120,8 +120,11 @@ suscripcion normal). El `--client-id` de cada replica se deriva de su hostname
 mutuamente, y por eso el default fijo `tfm-bridge` anterior impedia el escalado;
 el `--client-id` explicito se sigue respetando. Verificado con `--scale
 bridge=3` y 15.000 eventos: reparto 5.000 / 5.000 / 5.000, 15.000 en
-`iot.telemetry.raw` (sin duplicacion), 0 en la DLQ, 0 perdidos. Aun no cableado:
-`tools/failover_test.py --target bridge` asume una sola instancia.
+`iot.telemetry.raw` (sin duplicacion), 0 en la DLQ, 0 perdidos.
+`tools/failover_test.py --target bridge --fallo oom` soporta replicas: tumba
+UNA, el flujo no se detiene porque las demas cubren su parte (tasa de perdida
+0 en la prueba), y al terminar repone el numero de replicas. `--fallo kill`
+sigue apuntando al servicio entero (tumba las N a la vez).
 
 ## Uso
 

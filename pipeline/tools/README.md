@@ -183,6 +183,13 @@ de correr en el host).
   terminar recrea el contenedor. No sirve para `mosquitto` (usa ~3 MiB, por
   debajo del minimo de 6 MB de `docker update`).
 
+Con `--target bridge` y el bridge escalado (`docker compose up -d --scale
+bridge=N`), `--fallo oom` tumba **una** replica: el flujo no se detiene porque
+las otras N-1 cubren su parte, y lo que se mide es la tasa de perdida (0 en la
+prueba de 3 replicas). Al terminar, el `--force-recreate` repone las N replicas.
+`--fallo kill` con el bridge escalado apunta al servicio entero (tumba las N),
+que es otro escenario. El JSON de salida incluye `replicas_objetivo`.
+
 Exige que el bridge y el job de Spark esten en marcha, y **informa de lo que
 pase, incluido que no se recupere**: un servicio cuyo fallo detiene el pipeline
 es un resultado publicable; afirmar una recuperacion que no se ha observado, no.
