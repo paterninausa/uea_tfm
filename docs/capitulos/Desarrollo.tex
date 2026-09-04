@@ -580,9 +580,9 @@ El diseño modular del sistema permite incorporar nuevos sumideros, consultas de
 
 Los resultados conseguidos en el desarrollo del proyecto confirman el cumplimiento de los objetivos planteados en el Capítulo~\ref{chap:objetivos}. El sistema ingiere, gobierna, procesa y visualiza los datos de telemetría dentro de los KPIs fijados, y se recupera de la interrupción de cualquiera de sus servicios sin pérdida de datos.
 
-Todas las mediciones de este capítulo se obtuvieron con el simulador MQTT acelerado, no con el ritmo real del parque de medidores (652 medidores / 3600 segundos = 0,18 eventos por segundo). Reproducir la cadencia horaria real habría exigido semanas de ejecución continua para acumular una muestra representativa de cada KPI.
+Todas las mediciones de este capítulo se obtuvieron con el simulador MQTT acelerado, no con el ritmo real del parque de medidores (652 medidores / 3600 segundos = 0,18 eventos por segundo). Reproducir la cadencia horaria real habría exigido semanas de ejecución continua para obtener comprobación de la correcta ingesta, validación y persistencia de los datos procesados.
 
-Por ello, \texttt{mqtt\_simulator.py} con la opción \texttt{-{}-acelerar 2000}, se encarga de que cada medidor publique cada 1,8 segundos en vez de cada hora (3600 segundos / 2000 = 1.8), y la velocidad del parque completo asciende a 362 eventos por segundo (Tabla~\ref{tab:acelerar-simulador}). Este script se encarga de que los 652 medidores, que en el conjunto de datos miden todos en la hora en punto no publiquen a la vez, haciendo que el parque entregue un flujo sostenido en lugar de ráfagas de 652 eventos.
+Por ello, \texttt{mqtt\_simulator.py} con la opción \texttt{-{}-acelerar 2000}, se encargó de que cada medidor publicara cada 1,8 segundos en vez de cada hora (3600 segundos / 2000 = 1.8), y la velocidad del parque completo ascendió a 362 eventos por segundo (Tabla~\ref{tab:acelerar-simulador}). Este script se encargó de que los 652 medidores, que en el conjunto de datos miden todos en la hora en punto no publicaran a la vez, haciendo que el parque entregara un flujo sostenido en lugar de ráfagas de 652 eventos.
 
 \subsection{Objetivo 1: Garantizar la persistencia de telemetría rápida y fiable}
 
