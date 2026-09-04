@@ -32,7 +32,8 @@ constancia" (FAULT_HANDLING.md)- pero que el bridge SI guarda integro en el
 adivinar cual evento corresponde a cual motivo.
 
 Uso:
-    python faulty_simulator.py
+    python faulty_simulator.py                              # --limite 10000 --fallas 6 (defecto)
+    python faulty_simulator.py --limite 10000 --fallas 300   # 1 invalido cada ~33 eventos
     python faulty_simulator.py --limite 5000 --acelerar 1000
 """
 
