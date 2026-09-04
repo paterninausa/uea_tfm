@@ -165,6 +165,15 @@ python pipeline/tools/failover_test.py --target mosquitto --downtime 15
 python pipeline/tools/failover_test.py --target postgres --fallo oom
 ```
 
+Con el bridge escalado (`docker compose -f pipeline/docker-compose.yml up -d
+--scale bridge=3`), la misma orden sobre `--target bridge --fallo oom` tumba
+una sola replica en vez de todo el servicio:
+
+```bash
+docker compose -f pipeline/docker-compose.yml up -d --scale bridge=3
+python pipeline/tools/failover_test.py --target bridge --fallo oom
+```
+
 `--target`: `mosquitto`, `kafka`, `timescaledb`, `postgres` o `bridge` (los
 cuatro contenedores de infraestructura mas el bridge, contenedor desde que dejo
 de correr en el host).
@@ -183,12 +192,14 @@ de correr en el host).
   terminar recrea el contenedor. No sirve para `mosquitto` (usa ~3 MiB, por
   debajo del minimo de 6 MB de `docker update`).
 
-Con `--target bridge` y el bridge escalado (`docker compose up -d --scale
-bridge=N`), `--fallo oom` tumba **una** replica: el flujo no se detiene porque
-las otras N-1 cubren su parte, y lo que se mide es la tasa de perdida (0 en la
-prueba de 3 replicas). Al terminar, el `--force-recreate` repone las N replicas.
-`--fallo kill` con el bridge escalado apunta al servicio entero (tumba las N),
-que es otro escenario. El JSON de salida incluye `replicas_objetivo`.
+Con el bridge escalado, `--fallo oom` tumba **una** replica: el flujo no se
+detiene porque las otras N-1 cubren su parte, y lo que se mide es la tasa de
+perdida (0 en la prueba de 3 replicas). Al terminar, el `--force-recreate`
+repone las N replicas —es limpieza del limite de memoria que dejo `docker
+update`, no la recuperacion: esa ya ocurrio sola, via `restart:
+unless-stopped`—. `--fallo kill` con el bridge escalado apunta en cambio al
+servicio entero (tumba las N a la vez), que es otro escenario. El JSON de
+salida incluye `replicas_objetivo`.
 
 Exige que el bridge y el job de Spark esten en marcha, y **informa de lo que
 pase, incluido que no se recupere**: un servicio cuyo fallo detiene el pipeline

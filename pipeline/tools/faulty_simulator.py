@@ -6,12 +6,6 @@ para ejercitar la ruta real de validacion del bridge
 Cada evento publicado -real o invalido- lleva EXACTAMENTE los mismos campos
 que publica el simulador real (`build_payload()` en `mqtt_simulator.py`):
 `building_id`, `meter_type`, `timestamp`, `meter_reading`, `sim_publish_ts`.
-Nada de campos extra para marcar cual es cual: el motivo de rechazo que
-importa es el que registra el propio bridge en la DLQ (`error`), que ya es
-distinto para cada uno de los seis casos y se ve con `dlq_inspect.py`. Cuando
-una falla consiste en QUITAR un campo (`building_id` ausente), el evento se
-publica con ese campo genuinamente ausente -no se sustituye por ningun valor
-de repuesto.
 
 Uso:
     python faulty_simulator.py --limite 10000 --fallas 300
@@ -28,8 +22,8 @@ from pathlib import Path
 import paho.mqtt.client as mqtt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.logging_setup import configurar_logging  # noqa: E402
-from simulator.simulator_helper import RUTA_TELEMETRIA, preparar  # noqa: E402
+from common.logging_setup import configurar_logging
+from simulator.simulator_helper import RUTA_TELEMETRIA, preparar
 
 logger = logging.getLogger("faulty_simulator")
 
@@ -38,11 +32,7 @@ RUTA_SALIDA = Path(__file__).resolve().parents[1] / "data" / "faulty_events.json
 
 
 # --------------------------------------------------------------------------
-# Los seis casos, cada uno corrompe UN campo de un evento real y por lo demas
-# lo deja intacto -sin anadir ningun campo que no publique tambien el
-# simulador real. Se aplican sobre el dict ya construido (4 campos del
-# contrato, sin sim_publish_ts: eso se sella en el momento de publicar, igual
-# que hace build_payload() en el simulador real).
+# Los seis casos, cada uno corrompe UN campo de un evento real 
 # --------------------------------------------------------------------------
 def _fallo_meter_reading_inf(base: dict) -> dict:
     return dict(base, meter_reading=float("inf"))
@@ -67,8 +57,6 @@ def _fallo_meter_reading_texto(base: dict) -> dict:
 
 
 def _fallo_building_id_numero(base: dict) -> dict:
-    # base["building_id"] ya es str (p.ej. "156"); float() lo vuelve numero
-    # de verdad, no una cadena que parezca numero.
     return dict(base, building_id=float(base["building_id"]))
 
 
@@ -103,11 +91,7 @@ def construir(args: argparse.Namespace) -> list[tuple[dict, str | None]]:
     """Devuelve pares (evento, motivo). `motivo` es None para los eventos
     reales -el marcador vive solo en memoria, en esta tupla, nunca en el
     propio evento que se publica o se guarda."""
-    # preparar() sin limite/ultimas_semanas: solo ordena por tiempo. La COLA
-    # (.tail, no .head) es la que termina en la fecha mas reciente de la
-    # tabla -hoy, tras `prepare_ashrae.py --fecha-final`-, al contrario que
-    # `--limite` en mqtt_simulator.py, que toma el PREFIJO desde el principio
-    # del historico.
+
     df = preparar(args.telemetry).tail(args.limite)
     filas = list(df.itertuples(index=False))
     if not filas:
@@ -122,8 +106,7 @@ def construir(args: argparse.Namespace) -> list[tuple[dict, str | None]]:
     # Posiciones equiespaciadas sobre los eventos reales YA ordenados por
     # tiempo: con --limite 10000 --fallas 300, una posicion cada 10000/300
     # ~= 33 eventos, no elegidas al azar. El motivo se reparte por turno entre
-    # los 6 (round-robin), asi que la cuenta por motivo difiere como mucho en
-    # 1 entre si, sin necesidad de que 6 divida exacto a --fallas.
+    # los 6 (round-robin)
     inserciones: dict[int, list] = {}
     if fallas > 0:
         paso = len(filas) / fallas
@@ -132,9 +115,7 @@ def construir(args: argparse.Namespace) -> list[tuple[dict, str | None]]:
             inserciones.setdefault(idx, []).append(FALLOS[k % len(FALLOS)])
 
     # Cada invalido se inserta JUSTO DESPUES de su vecino real, no se ordena
-    # todo junto al final: un evento con timestamp=None (el motivo
-    # timestamp_nulo) no tiene con que compararse en un sort por tiempo, y
-    # agruparia los 50 al final en vez de esparcirlos como se pide.
+    # todo junto al final
     pares: list[tuple[dict, str | None]] = []
     n_invalidos = 0
     for i, fila in enumerate(filas):
@@ -150,10 +131,7 @@ def construir(args: argparse.Namespace) -> list[tuple[dict, str | None]]:
 
 
 def guardar(pares: list[tuple[dict, str | None]]) -> None:
-    """Sobrescribe pipeline/data/faulty_events.json sin preguntar: es un
-    artefacto de prueba regenerado en cada ejecucion, no la tabla de hechos
-    real (esa nunca se toca). Guarda solo los eventos, sin el motivo: el
-    fichero refleja exactamente lo que se publica."""
+    """Sobrescribe pipeline/data/faulty_events.json."""
     eventos = [evento for evento, _ in pares]
     RUTA_SALIDA.parent.mkdir(parents=True, exist_ok=True)
     RUTA_SALIDA.write_text(json.dumps(eventos, indent=2))
@@ -167,8 +145,7 @@ def guardar(pares: list[tuple[dict, str | None]]) -> None:
 def publicar(pares: list[tuple[dict, str | None]], args: argparse.Namespace) -> None:
     """Reproduce los eventos en orden, con el reloj comprimido por
     --acelerar: el mismo principio que el simulador real (`_programa()`), pero
-    en una sola conexion secuencial -aqui no hace falta modelar 652 sensores
-    concurrentes, solo publicar una muestra con unas pocas anomalias dentro.
+    en una sola conexion secuencial.
     """
     cliente = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=args.client_id)
     cliente.connect(args.broker_host, args.broker_port)
@@ -190,10 +167,7 @@ def publicar(pares: list[tuple[dict, str | None]], args: argparse.Namespace) -> 
             if espera > 0:
                 time.sleep(espera)
 
-        # Copia limpia: exactamente los campos del contrato, ninguno extra.
-        # building_id puede faltar (ese es justo uno de los seis casos); solo
-        # se usa un valor de repuesto para construir el TOPICO MQTT (no forma
-        # parte del payload), porque una ruta necesita algun texto ahi.
+        # Copia limpia: exactamente los campos del contrato
         publicable = dict(evento)
         topico = TOPIC_TEMPLATE.format(
             building_id=publicable.get("building_id", "sin-building-id"),

@@ -22,8 +22,8 @@ from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.connection_args import anadir_argumentos_kafka  # noqa: E402
-from common.logging_setup import configurar_logging  # noqa: E402
+from common.connection_args import anadir_argumentos_kafka
+from common.logging_setup import configurar_logging
 
 logger = logging.getLogger("dlq_inspect")
 

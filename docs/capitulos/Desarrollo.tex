@@ -212,7 +212,7 @@ En el terreno industrial/IIoT el formato más cercano al estándar es Sparkplug 
 \subsection{Broker MQTT (Eclipse Mosquitto)}
 \label{sec:mosquitto}
 
-Mosquitto actúa únicamente como broker de ingesta MQTT: recibe la telemetría publicada por el simulador y la deja disponible para que el bridge la consuma, sin ejecutar ninguna lógica o transformación. Se despliega mediante la imagen oficial de Docker \texttt{eclipse-mosquitto:2.0.22}, con el puerto \texttt{1883} (MQTT, el que usa el simulador) y el \texttt{9001} (solo para inspección manual del tráfico durante el desarrollo del proyecto).
+Mosquitto actúa únicamente como broker de ingesta MQTT: recibe la telemetría publicada por el simulador y la deja disponible para que el bridge la consuma, sin ejecutar ninguna lógica o transformación. Se despliega mediante la imagen oficial de Docker \texttt{eclipse-} \texttt{mosquitto:2.0.22}, con el puerto \texttt{1883} (MQTT, el que usa el simulador) y el \texttt{9001} (solo para inspección manual del tráfico durante el desarrollo del proyecto).
 
 La configuración (\texttt{docker/mosquitto/mosquitto.conf}) fija cuatro aspectos relevantes:
 
@@ -343,7 +343,7 @@ compose.yml} a diferencia del resto de componentes del pipeline. Una razón es q
 
 \subsection{TimescaleDB}
 
-TimescaleDB se despliega con la imagen de Docker \texttt{timescale/timescaledb:2.29.1-pg17-oss}. Contiene dos tablas, \texttt{telemetry\_metrics} y \texttt{streaming\_progress}, cuyas credenciales de acceso (usuario y contraseña) se leen de \texttt{pipeline/.env}, el mismo archivo usado por Kafka y PostgreSQL para sus configuraciones de funcionamiento.
+TimescaleDB se despliega con la imagen \texttt{timescale/timescaledb:2.29.1}-\texttt{pg17-oss}. Contiene dos tablas, \texttt{telemetry\_metrics} y \texttt{streaming\_progress}, cuyas credenciales de acceso (usuario y contraseña) se leen de \texttt{pipeline/.env}, el mismo archivo usado por Kafka y PostgreSQL para sus configuraciones de funcionamiento.
 
 Cada fila de \texttt{telemetry\_metrics} corresponde a una ventana de una hora para un emplazamiento, un uso de edificio y un tipo de medidor; sus columnas son las siguientes:
 
@@ -645,7 +645,7 @@ La ausencia de fallos de deserialización del lado de Spark se sostiene sobre el
 
 Los valores de la Tabla~\ref{tab:resultado-obj3} proceden de \texttt{streaming\_progress} de TimescaleDB (Tabla~\ref{tab:columnas-streaming-progress}): la tabla que registra el progreso del procesamiento por flujo, con valores que la propia API de Spark Structured Streaming ya expone por cada micro-lote procesado.
 
-Cada \textbf{flujo} de la tabla es una consulta independiente de Spark sobre Kafka: \texttt{eventos-postgresql} escribe cada evento individual y \texttt{metricas-timescaledb} escribe las métricas agregadas por ventanas. \textbf{Lotes} es el número de micro-lotes procesados en cada consulta; \textbf{Mediana} y \textbf{p95} son los percentiles 50 y 95 de \texttt{duration\_ms}, y \textbf{Máxima} es el máximo tiempo de procesamiento entre todos los micro-lotes.
+Cada \textbf{flujo} de la tabla es una consulta independiente de Spark sobre Kafka: \texttt{eventos-} \texttt{postgresql} escribe cada evento individual y \texttt{metricas-timescaledb} escribe las métricas agregadas por ventanas. \textbf{Lotes} es el número de micro-lotes procesados en cada consulta; \textbf{Mediana} y \textbf{p95} son los percentiles 50 y 95 de \texttt{duration\_ms}, y \textbf{Máxima} es el máximo tiempo de procesamiento entre todos los micro-lotes.
 
 \subsection{Objetivo 4: Ofrecer visualización diferenciada operacional y analítica}
 
@@ -712,7 +712,7 @@ En cuanto a Power BI (sección~\ref{sec:powerbi}), el informe cubre las áreas e
 \subsection{Objetivo 5: Validar la resiliencia del sistema}
 \label{sec:validacion-procesamiento}
 
-Los valores de la Tabla~\ref{tab:resultado-obj5} se obtuvieron con el comando \texttt{python pipeline/tools/failover\_test.py -{}-target <servicio>{} -{}-fallo oom}.
+Los valores de la Tabla~\ref{tab:resultado-obj5} se obtuvieron con el comando \texttt{python failover\_test.py -{}-target <servicio>{} -{}-fallo oom } dentro de la carpeta \texttt{pipeline/tools/}.
 
 Con el pipeline en marcha, el script simula 181 eventos por segundo, espera a ver flujo llegando al sumidero y entonces provoca el fallo del servicio bajando el límite de memoria del contenedor a 6~MB (por debajo de la memoria requerida), de modo que el núcleo mata su proceso principal por falta de memoria. A continuación \texttt{failover\_test} devuelve el límite a 2~GB, y la política \texttt{restart: unless-stopped} declarada en el \textit{docker-compose.yml} vuelve a levantar el contenedor sin intervención. Desde ese instante se cronometra cuánto tarda en aparecer una fila nueva en la tabla afectada por ese fallo concreto: \texttt{telemetry\_metrics} (TimescaleDB) cuando el servicio caído es TimescaleDB, y \texttt{telemetry\_events} (PostgreSQL) en los demás servicios.
 
