@@ -56,7 +56,7 @@ Un unico listener no funciona: el nombre `kafka` no resuelve desde el host, y
 | `apicurio`        | `apicurio/apicurio-registry:3.3.1`    | 8080          | API REST del registro de esquemas |
 | `apicurio-ui`     | `apicurio/apicurio-registry-ui:3.3.1` | 8888          | UI del registro (contenedor aparte en 3.x) |
 | `register-schema` | `bridge/Dockerfile` (otro entrypoint) | --            | Contenedor de un solo uso: registra el contrato Avro y termina. El `bridge` tiene `depends_on: service_completed_successfully` sobre el |
-| `bridge`          | `bridge/Dockerfile`                   | --            | Puente MQTT -> Kafka con validacion Avro y DLQ. No arranca hasta que `register-schema` termina con exito. Sin `container_name` fijo, para poder escalarlo con `--shared-group` |
+| `bridge`          | `bridge/Dockerfile`                   | --            | Puente MQTT -> Kafka con validacion Avro y DLQ. No arranca hasta que `register-schema` termina con exito. Sin `container_name` fijo y con `--shared-group` en el `command`: `up -d --scale bridge=N` reparte el flujo entre N replicas (ver [bridge/README.md](bridge/README.md)) |
 
 Ademas del stack de mensajeria, `docker compose up -d` levanta TimescaleDB
 (5432), PostgreSQL (5433) y Grafana (3000). Solo el job de Spark y el simulador
@@ -155,6 +155,10 @@ Python 3.11 + PySpark 4.2.0):
 - Bridge MQTT→Kafka operativo: 300 eventos con 0% de perdida, latencia
   MQTT→Kafka p95 de 2,2 ms, DLQ funcionando y recuperacion sin perdida tras
   reiniciar el servicio (ver [bridge/README.md](bridge/README.md)).
+
+- Escalado horizontal del bridge verificado: `up -d --scale bridge=3` con
+  15.000 eventos reparte 5.000 / 5.000 / 5.000 entre las replicas (suscripcion
+  compartida MQTT), 15.000 en `iot.telemetry.raw` sin duplicacion, 0 en la DLQ.
 
 - Doble sumidero operativo: job de Spark Structured Streaming escribiendo
   agregados por ventana en TimescaleDB y eventos enriquecidos en PostgreSQL.

@@ -107,6 +107,22 @@ Una cola intermedia anadiria un punto donde perder mensajes ante una caida. Si
 las pruebas de carga del Objetivo 5 muestran que ese hilo se satura, el
 siguiente paso seria un pool de trabajadores.
 
+**Escala horizontalmente con `--shared-group`.** Es el unico componente
+containerizado stateless pensado para `--scale`. `docker compose -f
+pipeline/docker-compose.yml up -d --scale bridge=N` levanta N replicas que se
+**reparten** el flujo MQTT en vez de duplicarlo: con `--shared-group=bridge-pool`
+en el `command` (ya puesto en el compose) la suscripcion es
+`$share/bridge-pool/iot/#` y Mosquitto entrega cada mensaje a una sola replica
+del grupo. Con una sola instancia `--shared-group` es inerte (equivale a una
+suscripcion normal). El `--client-id` de cada replica se deriva de su hostname
+(`tfm-bridge-<hostname>`, unico y estable): con la sesion persistente
+(`clean_session=False`) dos instancias con el mismo id se desconectan
+mutuamente, y por eso el default fijo `tfm-bridge` anterior impedia el escalado;
+el `--client-id` explicito se sigue respetando. Verificado con `--scale
+bridge=3` y 15.000 eventos: reparto 5.000 / 5.000 / 5.000, 15.000 en
+`iot.telemetry.raw` (sin duplicacion), 0 en la DLQ, 0 perdidos. Aun no cableado:
+`tools/failover_test.py --target bridge` asume una sola instancia.
+
 ## Uso
 
 Desde el 3 de septiembre de 2026 el bridge es un **servicio de Compose**: lo
