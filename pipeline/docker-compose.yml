@@ -183,9 +183,11 @@ services:
   # cambia de forma incompatible, register-schema falla y el bridge no arranca.
   #
   # Sin container_name fijo, a diferencia del resto de servicios: es deliberado,
-  # para no impedir levantar una segunda instancia mas adelante (Docker exige
-  # nombres unicos). Preparado para escalar horizontalmente via --shared-group
-  # (suscripcion compartida de MQTT).
+  # para no impedir levantar mas instancias (Docker exige nombres unicos). Con
+  # --shared-group en el `command`, `docker compose up -d --scale bridge=N`
+  # reparte el flujo MQTT entre las N replicas en vez de duplicarlo; con una
+  # sola instancia el comportamiento es identico al de una suscripcion normal.
+  # El --client-id de cada replica se deriva de su hostname (unico y estable).
   bridge:
     build:
       context: .
@@ -210,6 +212,7 @@ services:
       - "--broker-host=mosquitto"
       - "--bootstrap-servers=kafka:9092"
       - "--registry-url=http://apicurio:8080"
+      - "--shared-group=bridge-pool"
     networks: [tfm-net]
 
   # ---------------------------------------------------------------------------

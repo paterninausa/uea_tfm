@@ -26,6 +26,7 @@ import logging
 import math
 import re
 import signal
+import socket
 import sys
 import threading
 import time
@@ -197,6 +198,9 @@ class Bridge:
         self.args = args
         self.stats = Stats()
         self._parada = threading.Event()
+
+        logger.info("Instancia del bridge: client_id=%s, grupo compartido=%s",
+                    args.client_id, args.shared_group or "(ninguno)")
 
         # El esquema se resuelve UNA vez al arrancar: el bridge produce siempre
         # con la version vigente en ese momento. Si se registra una version
@@ -451,10 +455,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--broker-port", type=int, default=1883)
     p.add_argument("--qos", type=int, default=1, choices=[0, 1, 2],
                    help="QoS de la suscripcion MQTT (1 = al menos una vez, por defecto)")
-    p.add_argument("--client-id", default="tfm-bridge",
+    p.add_argument("--client-id", default=None,
                    help="client_id MQTT. Debe ser estable Y UNICO por instancia: la sesion "
                         "persistente se asocia a el, y dos instancias con el mismo client_id "
-                        "hacen que el broker desconecte la mas antigua al conectar la nueva")
+                        "hacen que el broker desconecte la mas antigua al conectar la nueva. "
+                        "Por defecto se deriva del hostname (tfm-bridge-<hostname>): unico por "
+                        "replica al escalar con `docker compose up -d --scale bridge=N`, y "
+                        "estable mientras esa replica no se recree")
     p.add_argument("--shared-group", default=None,
                    help="Nombre de grupo para suscripcion compartida ($share/<grupo>/...). "
                         "Sin esto, cada instancia recibe una copia de cada mensaje (correcto "
@@ -477,7 +484,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--report-interval", type=float, default=10.0,
                    help="Segundos entre informes de metricas")
     p.add_argument("--verbose", action="store_true")
-    return p.parse_args()
+    args = p.parse_args()
+    if not args.client_id:
+        # Estable (el hostname del contenedor no cambia entre reinicios de esa
+        # replica) y unico (cada replica de `--scale bridge=N` tiene el suyo).
+        args.client_id = f"tfm-bridge-{socket.gethostname()}"
+    return args
 
 
 if __name__ == "__main__":
