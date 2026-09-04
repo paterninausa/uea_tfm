@@ -1,40 +1,20 @@
 """
-Publica una muestra de la tabla de hechos con un puñado de eventos invalidos
-mezclados dentro, para ejercitar la ruta real de validacion del bridge
+Publica una muestra de la tabla de hechos con eventos invalidos
+para ejercitar la ruta real de validacion del bridge
 (Objetivo 2) y dejar constancia en la DLQ.
 
-A diferencia de ensuciar `ashrae_telemetry.parquet`, aqui los eventos
-invalidos se construyen a mano, sin pasar por `build_payload()` de
-`mqtt_simulator.py`: esa funcion castiga con `str()`/`float()` cada campo, asi
-que un `building_id` numerico o un `meter_reading` de texto llegarian
-neutralizados (convertidos de vuelta a un valor valido) o, en el peor caso,
-tumbarian al simulador real con una excepcion que su unico `except
-aiomqtt.MqttError` no cubre. Construyendo el diccionario aqui, sin ese casting,
-los seis casos llegan intactos al bridge.
-
-Cada vez que se ejecuta: toma la COLA cronologica de `--limite` eventos reales
-de `ashrae_telemetry.parquet` -los que terminan en la fecha mas reciente de la
-tabla, que con `prepare_ashrae.py --fecha-final` es hoy o cerca-, le mezcla
-`--fallas` eventos invalidos (repartidos a partes iguales entre los 6 motivos
-de rechazo, cada uno tomado de un evento real con un solo campo corrompido) en
-posiciones equiespaciadas dentro del lote -con `--limite 10000 --fallas 300`,
-uno cada `10000/300 ~= 33` eventos reales-, sobrescribe
-`pipeline/data/faulty_events.json` con el conjunto ordenado por tiempo, y lo
-publica via MQTT contra Mosquitto con las marcas de tiempo comprimidas por
-`--acelerar` (igual principio que el simulador real: dividir el avance del
-reloj de evento por el factor), para que el bridge los reciba, los valide y
-desvie los invalidos a la DLQ.
-
-Los eventos invalidos llevan un campo extra `_origen` (con el motivo) que
-Avro ignora sin mas -"campos adicionales en el payload: se ignoran sin dejar
-constancia" (FAULT_HANDLING.md)- pero que el bridge SI guarda integro en el
-`payload_original` de la DLQ, asi que se ve con `dlq_inspect.py` sin tener que
-adivinar cual evento corresponde a cual motivo.
+Cada evento publicado -real o invalido- lleva EXACTAMENTE los mismos campos
+que publica el simulador real (`build_payload()` en `mqtt_simulator.py`):
+`building_id`, `meter_type`, `timestamp`, `meter_reading`, `sim_publish_ts`.
+Nada de campos extra para marcar cual es cual: el motivo de rechazo que
+importa es el que registra el propio bridge en la DLQ (`error`), que ya es
+distinto para cada uno de los seis casos y se ve con `dlq_inspect.py`. Cuando
+una falla consiste en QUITAR un campo (`building_id` ausente), el evento se
+publica con ese campo genuinamente ausente -no se sustituye por ningun valor
+de repuesto.
 
 Uso:
-    python faulty_simulator.py                              # --limite 10000 --fallas 6 (defecto)
-    python faulty_simulator.py --limite 10000 --fallas 300   # 1 invalido cada ~33 eventos
-    python faulty_simulator.py --limite 5000 --acelerar 1000
+    python faulty_simulator.py --limite 10000 --fallas 300
 """
 
 import argparse
@@ -42,6 +22,7 @@ import json
 import logging
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
@@ -58,56 +39,48 @@ RUTA_SALIDA = Path(__file__).resolve().parents[1] / "data" / "faulty_events.json
 
 # --------------------------------------------------------------------------
 # Los seis casos, cada uno corrompe UN campo de un evento real y por lo demas
-# lo deja intacto. Se aplican sobre el dict ya construido (4 campos del
+# lo deja intacto -sin anadir ningun campo que no publique tambien el
+# simulador real. Se aplican sobre el dict ya construido (4 campos del
 # contrato, sin sim_publish_ts: eso se sella en el momento de publicar, igual
 # que hace build_payload() en el simulador real).
 # --------------------------------------------------------------------------
 def _fallo_meter_reading_inf(base: dict) -> dict:
-    e = dict(base, meter_reading=float("inf"))
-    e["_origen"] = "meter_reading_inf"
-    return e
+    return dict(base, meter_reading=float("inf"))
 
 
 def _fallo_meter_reading_nan(base: dict) -> dict:
-    e = dict(base, meter_reading=float("nan"))
-    e["_origen"] = "meter_reading_nan"
-    return e
+    return dict(base, meter_reading=float("nan"))
 
 
 def _fallo_building_id_ausente(base: dict) -> dict:
     e = dict(base)
     del e["building_id"]
-    e["_origen"] = "building_id_ausente"
     return e
 
 
 def _fallo_timestamp_nulo(base: dict) -> dict:
-    e = dict(base, timestamp=None)
-    e["_origen"] = "timestamp_nulo"
-    return e
+    return dict(base, timestamp=None)
 
 
 def _fallo_meter_reading_texto(base: dict) -> dict:
-    e = dict(base, meter_reading="no-numerico")
-    e["_origen"] = "meter_reading_texto"
-    return e
+    return dict(base, meter_reading="no-numerico")
 
 
 def _fallo_building_id_numero(base: dict) -> dict:
     # base["building_id"] ya es str (p.ej. "156"); float() lo vuelve numero
     # de verdad, no una cadena que parezca numero.
-    e = dict(base, building_id=float(base["building_id"]))
-    e["_origen"] = "building_id_numero"
-    return e
+    return dict(base, building_id=float(base["building_id"]))
 
 
+# (nombre del motivo, funcion). El nombre solo se usa para el log de esta
+# herramienta -nunca viaja en el evento publicado.
 FALLOS = [
-    _fallo_meter_reading_inf,
-    _fallo_meter_reading_nan,
-    _fallo_building_id_ausente,
-    _fallo_timestamp_nulo,
-    _fallo_meter_reading_texto,
-    _fallo_building_id_numero,
+    ("meter_reading_inf", _fallo_meter_reading_inf),
+    ("meter_reading_nan", _fallo_meter_reading_nan),
+    ("building_id_ausente", _fallo_building_id_ausente),
+    ("timestamp_nulo", _fallo_timestamp_nulo),
+    ("meter_reading_texto", _fallo_meter_reading_texto),
+    ("building_id_numero", _fallo_building_id_numero),
 ]
 
 
@@ -126,7 +99,10 @@ def _evento_real(fila) -> dict:
     }
 
 
-def construir(args: argparse.Namespace) -> list[dict]:
+def construir(args: argparse.Namespace) -> list[tuple[dict, str | None]]:
+    """Devuelve pares (evento, motivo). `motivo` es None para los eventos
+    reales -el marcador vive solo en memoria, en esta tupla, nunca en el
+    propio evento que se publica o se guarda."""
     # preparar() sin limite/ultimas_semanas: solo ordena por tiempo. La COLA
     # (.tail, no .head) es la que termina en la fecha mas reciente de la
     # tabla -hoy, tras `prepare_ashrae.py --fecha-final`-, al contrario que
@@ -159,24 +135,26 @@ def construir(args: argparse.Namespace) -> list[dict]:
     # todo junto al final: un evento con timestamp=None (el motivo
     # timestamp_nulo) no tiene con que compararse en un sort por tiempo, y
     # agruparia los 50 al final en vez de esparcirlos como se pide.
-    todos = []
+    pares: list[tuple[dict, str | None]] = []
     n_invalidos = 0
     for i, fila in enumerate(filas):
         base = _evento_real(fila)
-        todos.append(base)
-        for fallo in inserciones.get(i, ()):
-            todos.append(fallo(base))
+        pares.append((base, None))
+        for nombre, fallo in inserciones.get(i, ()):
+            pares.append((fallo(base), nombre))
             n_invalidos += 1
 
     logger.info("Construidos %d eventos reales + %d invalidos (~1 cada %d eventos)",
                len(filas), n_invalidos, round(len(filas) / fallas) if fallas else 0)
-    return todos
+    return pares
 
 
-def guardar(eventos: list[dict]) -> None:
+def guardar(pares: list[tuple[dict, str | None]]) -> None:
     """Sobrescribe pipeline/data/faulty_events.json sin preguntar: es un
     artefacto de prueba regenerado en cada ejecucion, no la tabla de hechos
-    real (esa nunca se toca)."""
+    real (esa nunca se toca). Guarda solo los eventos, sin el motivo: el
+    fichero refleja exactamente lo que se publica."""
+    eventos = [evento for evento, _ in pares]
     RUTA_SALIDA.parent.mkdir(parents=True, exist_ok=True)
     RUTA_SALIDA.write_text(json.dumps(eventos, indent=2))
     logger.info("Guardado %s (%d eventos, %.1f KB)",
@@ -186,7 +164,7 @@ def guardar(eventos: list[dict]) -> None:
 # --------------------------------------------------------------------------
 # Publicacion via MQTT, contra el bridge real
 # --------------------------------------------------------------------------
-def publicar(eventos: list[dict], args: argparse.Namespace) -> None:
+def publicar(pares: list[tuple[dict, str | None]], args: argparse.Namespace) -> None:
     """Reproduce los eventos en orden, con el reloj comprimido por
     --acelerar: el mismo principio que el simulador real (`_programa()`), pero
     en una sola conexion secuencial -aqui no hace falta modelar 652 sensores
@@ -196,17 +174,15 @@ def publicar(eventos: list[dict], args: argparse.Namespace) -> None:
     cliente.connect(args.broker_host, args.broker_port)
     cliente.loop_start()
 
-    # El unico invalido con timestamp=None (construir() los ordena al final,
-    # True > False en la clave de sort) no tiene marca con la que calcular su
+    # El invalido con timestamp=None no tiene marca con la que calcular su
     # instante: se publica sin espera, en cuanto le toca el turno.
-    con_marca = [e for e in eventos if e["timestamp"] is not None]
+    con_marca = [e for e, _ in pares if e["timestamp"] is not None]
     t_sim0 = con_marca[0]["timestamp"] if con_marca else None
 
     publicados, invalidos_publicados = 0, 0
     inicio = time.monotonic()
-    for evento in eventos:
+    for evento, motivo in pares:
         if evento["timestamp"] is not None and t_sim0 is not None:
-            from datetime import datetime
             delta = (datetime.fromisoformat(evento["timestamp"])
                     - datetime.fromisoformat(t_sim0)).total_seconds()
             objetivo = delta / args.acelerar
@@ -214,10 +190,11 @@ def publicar(eventos: list[dict], args: argparse.Namespace) -> None:
             if espera > 0:
                 time.sleep(espera)
 
-        origen = evento.pop("_origen", None)
-        publicable = dict(evento)
+        # Copia limpia: exactamente los campos del contrato, ninguno extra.
         # building_id puede faltar (ese es justo uno de los seis casos); solo
-        # se usa para el topico si esta presente, con un valor de repuesto si no.
+        # se usa un valor de repuesto para construir el TOPICO MQTT (no forma
+        # parte del payload), porque una ruta necesita algun texto ahi.
+        publicable = dict(evento)
         topico = TOPIC_TEMPLATE.format(
             building_id=publicable.get("building_id", "sin-building-id"),
             meter_type=publicable.get("meter_type", "sin-meter-type"))
@@ -225,9 +202,9 @@ def publicar(eventos: list[dict], args: argparse.Namespace) -> None:
 
         cliente.publish(topico, payload=json.dumps(publicable), qos=args.qos)
         publicados += 1
-        if origen:
+        if motivo:
             invalidos_publicados += 1
-            logger.info("  [invalido %s] %s", origen, topico)
+            logger.info("  [invalido %s] %s", motivo, topico)
 
     time.sleep(2)  # margen para que paho vacie el buffer de salida
     cliente.loop_stop()
@@ -238,9 +215,9 @@ def publicar(eventos: list[dict], args: argparse.Namespace) -> None:
 
 # --------------------------------------------------------------------------
 def run(args: argparse.Namespace) -> int:
-    eventos = construir(args)
-    guardar(eventos)
-    publicar(eventos, args)
+    pares = construir(args)
+    guardar(pares)
+    publicar(pares, args)
     return 0
 
 
