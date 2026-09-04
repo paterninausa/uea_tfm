@@ -1,21 +1,21 @@
 \chapter{RESUMEN DEL PROYECTO}
-Este capítulo es un resumen, y no debe incluir el detalle. Existen capítulos específicos para añadir detalle de cada apartado. por tanto, únicamente se hace un resumen del trabajo completo, siguiendo la estructura marcada por las secciones de este capítulo.
-
-Ocupa un máximo de 1 página.
 
 \section{Contexto y justificación}
-Resumen del por qué del proyecto y del contexto en el que se desarrolla. Está relacionado con el capítulo 2.
+
+Junto al aumento exponencial de sensores y dispositivos conectados a internet, existen retos lejos de ser solventados causados por la gran variedad de protocolos, formatos y estándares de los fabricantes de estos dispositivos. El volumen de datos generado por el Internet de las Cosas (IoT) impone requisitos que deben ser satisfechos por arquitecturas capaces de procesar y analizar datos en tiempo real. Sobre la arquitectura Kappa se encuentran multitud de publicaciones, tutoriales y documentación de todo calibre que no llegan a ofrecer una implementación extremo a extremo de esta arquitectura para procesar y analizar datos por flujos. La mayoría de los recursos formativos y de referencia dependen en algún punto de servicios gestionados o plataformas propietarias, dificultando una experiencia de aprendizaje completa basada en herramientas de código abierto.
 
 \section{Planteamiento del problema}
-Resumen del planteamiento del problema que pretendemos solucionar con nuestro proyecto. Se busca una pregunta motriz a la que el trabajo pretende dar respuesta. Aquí se puede hablar del estado del arte o antecedentes de dicho problema.
 
-Indica si el proyecto se ha desarrollado para resolver un problema específico empresarial, o para investigar en una cuestión específica del ámbito científico-técnico, y/o incluye de innovación.
+El problema que aborda el presente proyecto es la falta de una implementación de referencia, de código abierto y containerizada, de una arquitectura Kappa para IoT que integre bridging MQTT-Kafka, gobernanza de esquemas mediante Avro/Apicurio, y una estrategia de doble sumidero para consumo operacional y analítico. Por tanto, se propone contribuir a llenar vacíos de información detectados durante la investigación del estado del arte sobre arquitecturas públicas y de código abierto con un proyecto que tiene carácter académico y científico-técnico; no responde a un encargo empresarial y su aporte de innovación está en integrar en una sola arquitectura todos los elementos antes mencionados.
 
 \section{Objetivos del proyecto}
-Incluye aquí solo un resumen de objetivos. En el capítulo correspondiente a objetivos se detallan tanto el general como los específicos.
+
+El objetivo general es diseñar, desarrollar y validar un sistema desacoplado de microservicios para la ingesta, el procesamiento y el análisis operacional de datos IoT. Para cubrir ese alcance se plantean las tareas de analizar el estado del arte y las herramientas de código abierto disponibles, implementar un simulador de dispositivos IoT, implementar la arquitectura de microservicios containerizada; con servicios de ingesta sobre protocolo estándar, de gobernanza y validación de esquemas, de agregación y transformación, y de almacenamiento para series temporales y para consumo analítico, e implementar los servicios de visualización interactiva. Cada tarea se concreta en uno de cinco objetivos: persistencia de telemetría rápida y fiable, gobernanza del esquema de datos, procesamiento en flujo con baja latencia, visualización diferenciada operacional y analítica, y resiliencia del sistema, cada uno acompañado de un indicador clave de rendimiento (KPI) verificable.
 
 \section{Resultados obtenidos}
-Incluye el resumen de los resultados obtenidos al final de tu proyecto. En el capítulo correspondiente a resultados se detallan estos resultados.
+
+Los cinco objetivos se cumplieron dentro de los umbrales fijados por sus KPIs. La telemetría validada se persiste dentro del tiempo objetivo y con una tasa de pérdida nula; la totalidad de los eventos ingeridos se valida contra el esquema Avro registrado sin fallos de deserialización; cada micro-lote de procesamiento se resuelve por debajo del límite de latencia y sin acumular retraso; la visualización se ofrece mediante tres \textit{dashboards} de Grafana y tres páginas de Power BI que cubren el consumo energético, la eficiencia operativa, la detección de anomalías y el análisis histórico; y el sistema se recupera de la caída de cualquiera de sus servicios por debajo del tiempo objetivo y sin pérdida de datos. El resultado es la implementación completa, containerizada y reproducible de una arquitectura Kappa para IoT construida íntegramente con herramientas de código abierto, disponible para su adopción y adaptación en proyectos similares de monitorización energética.
 
 \section{Estructura de la memoria}
-Describe muy brevemente los capítulos y su contenido, con tus propias palabras.
+
+\textbf{Antecedentes y estado del arte} sitúa el crecimiento de los datos IoT, compara las arquitecturas Lambda y Kappa, revisa el ecosistema de herramientas de código abierto por capas y sus retos abiertos, y formula el planteamiento del problema. \textbf{Objetivos} define el alcance, las tareas a desarrollar y los objetivos con sus KPIs y acciones. \textbf{Ética y compromiso social} recoge la relación del trabajo con la igualdad de género y con los Objetivos de Desarrollo Sostenible. \textbf{Desarrollo del proyecto} describe la planificación, la arquitectura y las herramientas empleadas, la preparación de los datos, cada componente del \textit{pipeline}, los recursos y el presupuesto, y presenta los resultados obtenidos por objetivo. \textbf{Ejecución y validación del sistema} documenta los modos de arranque automático y manual y las herramientas de medición y de prueba de fallos. \textbf{Discusión} expone las limitaciones del proyecto y el impacto del resultado. \textbf{Conclusiones} valora el cumplimiento de los objetivos y sus KPIs. \textbf{Futuras líneas de trabajo} plantea la evolución de la orquestación del sistema. Cierran la memoria las referencias y los anexos.

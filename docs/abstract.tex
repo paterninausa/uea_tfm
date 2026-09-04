@@ -1,21 +1,12 @@
-\chapter*{RESUMEN} \label{chp:abstract}
-El resumen tiene entre 150-250 palabras. Resumir consiste en ofrecer información sobre cómo, dónde, cuándo y por qué se aplica el proyecto. Se realiza al finalizar el trabajo.
+\chapter*{RESUMEN}
+\label{chp:abstract}
 
-Debe incluir:
-\begin{itemize}
-    \item Resumen del problema planteado y las aportaciones más importantes del proyecto al respecto
-    \item Indica si procede si el proyecto se realizó en colaboración con una empresa, indicando nombre (siempre que haya autorización expresa por la empresa), y el sector industrial o empresarial
-    \item Principales resultados del proyecto (diseño de un sistema para…, desarrollo e implementación de una solución para…, análisis de…, modelo de…)
-    \item Resume las conclusiones más importantes del trabajo realizado
-    \item El resumen NO
-    \item Da una información genérica
-    \item Se refiere a datos aportados en el texto del proyecto.
-\end{itemize}
+Las referencias disponibles sobre arquitecturas Kappa aplicadas al Internet de las Cosas (IoT) tienen mayoritariamente un carácter demostrativo y dependen en algún punto de servicios gestionados o plataformas propietarias; ninguna implementación de código abierto revisada integra a la vez un puente MQTT-Kafka propio, la gobernanza de esquemas mediante Avro y Apicurio, y una estrategia de doble sumidero que separe el consumo operacional del analítico. Este trabajo aborda esa carencia con el diseño, el desarrollo y la validación de un sistema escalable de microservicios, containerizado y basado en herramientas de código abierto, que ingiere, gobierna, procesa y visualiza telemetría de consumo energético de edificios en tiempo real. La solución implementa un simulador de dispositivos, un broker MQTT ligero con un microservicio de bridging hacia Kafka, la validación de cada evento contra un esquema Avro registrado, el procesamiento en flujo con Spark Structured Streaming y agregación por ventanas, y un doble sumidero hacia TimescaleDB para la explotación operacional en Grafana y hacia PostgreSQL para el análisis en Power BI. Cinco objetivos, cada uno con un indicador clave de rendimiento verificable, se cumplieron dentro de los umbrales fijados, incluida la recuperación ante el fallo de cualquier servicio sin pérdida de datos. El resultado queda disponible como implementación de referencia pública y reproducible.
 
-\textbf{Palabras clave}: hasta un máximo de 6 conceptos (un concepto puede conllevar una o más palabras). Incluye tecnologías que hayas utilizado, conceptos relevantes del ámbito científico-técnico, y conceptos de la industria (algunos ejemplos: machine learning, Big Data, Smart City, visión artificial, social media, Twitter, computación afectiva, transformación digital, GDPR, DevOps, EEG, …)
+\textbf{Palabras clave}: arquitectura Kappa, Internet de las Cosas, procesamiento de flujos, gobernanza de esquemas, Apache Kafka, código abierto
 
 \chapter*{ABSTRACT}
 
-Resumen en inglés.
+Most available references on Kappa architectures applied to the Internet of Things (IoT) are largely demonstrative and, at some point in the chain, depend on managed services or proprietary platforms; none of the reviewed open-source implementations combines a purpose-built MQTT-to-Kafka bridge, schema governance through Avro and Apicurio, and a dual-sink strategy that separates operational from analytical consumption. This work addresses that gap by designing, developing and validating a scalable microservices system, containerized and based on open-source tools, that ingests, governs, processes and visualizes building energy-consumption telemetry in real time. The solution implements a device simulator, a lightweight MQTT broker with a bridging microservice to Kafka, validation of every event against a registered Avro schema, stream processing with Spark Structured Streaming and windowed aggregation, and a dual sink to TimescaleDB for operational exploitation in Grafana and to PostgreSQL for analysis in Power BI. Five objectives, each with a verifiable key performance indicator, were met within the defined thresholds, including recovery from the failure of any service without data loss. The outcome is available as a public, reproducible reference implementation.
 
-\textbf{Keywords}: Palabras clave en inglés
+\textbf{Keywords}: Kappa architecture, Internet of Things, stream processing, schema governance, Apache Kafka, open source
