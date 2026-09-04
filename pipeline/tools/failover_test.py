@@ -19,6 +19,10 @@ Que hace, en orden:
        oom: baja el limite de memoria hasta forzar un OOM-kill del proceso
          principal. Un OOM SI es un fallo genuino, asi que `restart:
          unless-stopped` rearranca el contenedor SOLO, sin intervencion.
+         Si el servicio esta escalado (`--scale bridge=N`), `oom` tumba UNA
+         replica: el flujo no se detiene (las demas cubren) y lo que se mide
+         es la tasa de perdida; al terminar se restaura el numero de replicas.
+         `kill`, en cambio, apunta al servicio entero (tumba las N).
   4. (solo kill) Lo deja caido el tiempo indicado y lo vuelve a levantar.
   5. Cronometra cuanto tarda el flujo en restablecerse contando filas nuevas en
      la base de datos: con kill, desde la orden de reinicio (con el arranque del
@@ -95,13 +99,25 @@ def estado_contenedor(servicio: str) -> str:
     return "ausente"
 
 
-def contenedor_id(servicio: str) -> str:
+def _ids_contenedor(servicio: str) -> list[str]:
     r = subprocess.run(["docker", "compose", "-f", str(COMPOSE), "ps", "-q", servicio],
                        capture_output=True, text=True)
-    cid = r.stdout.strip()
-    if not cid:
+    return r.stdout.split()
+
+
+def contenedor_id(servicio: str) -> str:
+    """ID de UNA instancia del servicio. Si esta escalado (`--scale servicio=N`)
+    hay varias; se devuelve la primera. Para una prueba de fallo de un servicio
+    stateless da igual cual, y tumbar SOLO una es justo lo que interesa medir:
+    que las demas replicas cubren el hueco sin perdida."""
+    ids = _ids_contenedor(servicio)
+    if not ids:
         raise RuntimeError(f"no se encuentra el contenedor del servicio '{servicio}'")
-    return cid
+    return ids[0]
+
+
+def num_replicas(servicio: str) -> int:
+    return len(_ids_contenedor(servicio))
 
 
 def _update_memoria(cid: str, valor: str, reintentos: int = 50) -> bool:
@@ -248,7 +264,11 @@ def run(args: argparse.Namespace) -> int:
         logger.error("Arranca el bridge y el job de Spark en otras terminales y repite")
         return 1
 
-    recrear_al_final = False  # lo pone a True el modo oom si tuvo que meter un limite de memoria
+    # NO es un paso de recuperacion: el contenedor OOM ya se repuso solo via
+    # `restart: unless-stopped` antes de llegar aqui. Esto es limpieza al final
+    # del test, para quitar el limite de memoria que dejo `docker update`.
+    limpiar_memoria_al_final = False
+    replicas_objetivo = num_replicas(args.target)  # >1 si se arranco con `--scale <target>=N`
 
     logger.info("Lanzando el simulador con speedup x%g en segundo plano...", args.speedup)
     simulador = subprocess.Popen(
@@ -300,6 +320,12 @@ def run(args: argparse.Namespace) -> int:
             compose("start", args.target)
         else:  # oom
             cid = contenedor_id(args.target)
+            if replicas_objetivo > 1:
+                logger.info("El servicio %s tiene %d replicas; se hace OOM de UNA "
+                            "(%s). El flujo no deberia detenerse: las otras %d cubren "
+                            "su parte y la caida se mide como tasa de perdida, no como "
+                            "tiempo de parada.", args.target, replicas_objetivo, cid[:12],
+                            replicas_objetivo - 1)
             logger.info("--- FORZANDO OOM de %s (limite -> %s; filas antes: %s) ---",
                         args.target, MEM_OOM, f"{filas_antes_del_fallo:,}")
             if not forzar_oom(cid):
@@ -308,10 +334,12 @@ def run(args: argparse.Namespace) -> int:
             instante_fallo = time.monotonic()
             filas_durante = contar(props, tabla)
             # No hay `docker compose start`: `restart: unless-stopped` rearranca
-            # solo. Se sube el limite a 2g para que el rearranque no vuelva a caer
-            # en OOM; al final se recrea el contenedor para dejarlo como lo pide
-            # docker-compose.yml (un `docker update` no toca su config).
-            recrear_al_final = True
+            # solo, y para cuando termine este test ya estara `running` de nuevo
+            # (eso ES la recuperacion). Se sube el limite a 2g para que ese
+            # rearranque no vuelva a caer en OOM; el `docker update` deja un
+            # ajuste de runtime que `docker-compose.yml` no declara, y ese
+            # sobrante es lo que se limpia al final con --force-recreate.
+            limpiar_memoria_al_final = True
             logger.info("OOM confirmado; subiendo el limite de memoria a 2g para que "
                         "el rearranque automatico prospere")
             instante_reinicio = time.monotonic()
@@ -374,6 +402,7 @@ def run(args: argparse.Namespace) -> int:
 
     resultado = {
         "servicio": args.target,
+        "replicas_objetivo": replicas_objetivo,
         "modo": args.fallo,
         "tabla_testigo": f"{cual_bd}.{tabla}",
         "instante": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -400,14 +429,24 @@ def run(args: argparse.Namespace) -> int:
     logger.info("Objetivo: recuperacion < 60 s sin perdida de datos")
     logger.info("Guardado en %s", RESULTADO)
 
-    # El recrear va AL FINAL, despues de medir: `--force-recreate` reinicia el
-    # contenedor otra vez, y si el servicio caido es Kafka, leer sus offsets
-    # mientras rehace la recuperacion de segmentos da una cifra sin sentido.
-    if recrear_al_final:
-        logger.info("Recreando %s para quitar el limite de memoria del test...",
+    # Este paso va AL FINAL, despues de medir, y no forma parte de la
+    # recuperacion (esa ya ocurrio sola). Es limpieza: `--force-recreate`
+    # reconstruye el contenedor con la configuracion de docker-compose.yml,
+    # sin el limite de memoria que dejo `docker update`. Si el servicio caido
+    # fuera Kafka ademas importaria el orden -leer sus offsets mientras rehace
+    # la recuperacion de segmentos daria una cifra sin sentido-, pero por ahora
+    # solo `--fallo oom` (nunca sobre Kafka) llega aqui.
+    if limpiar_memoria_al_final:
+        logger.info("Limpiando el limite de memoria de %s (--force-recreate; el "
+                    "contenedor ya se habia repuesto solo, esto no es recuperacion)...",
                     args.target)
-        subprocess.run(["docker", "compose", "-f", str(COMPOSE), "up", "-d",
-                        "--force-recreate", "--no-deps", args.target], check=False)
+        cmd = ["docker", "compose", "-f", str(COMPOSE), "up", "-d",
+               "--force-recreate", "--no-deps"]
+        # Sin --scale, `up` dejaria el servicio escalado en 1 replica.
+        if replicas_objetivo > 1:
+            cmd += ["--scale", f"{args.target}={replicas_objetivo}"]
+        cmd.append(args.target)
+        subprocess.run(cmd, check=False)
 
     return 0 if recuperacion is not None and recuperacion < 60 else 1
 
