@@ -37,20 +37,20 @@ from pathlib import Path
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.apicurio import (  # noqa: E402
+from common.apicurio import (
     DEFAULT_REGISTRY_URL,
     DEFAULT_SUBJECT,
     latest_schema,
     schema_registry_client,
 )
-from common.connection_args import (  # noqa: E402
+from common.connection_args import (
     POSTGRES,
     TIMESCALE,
     anadir_argumentos_bd,
     anadir_argumentos_kafka,
     props_bd,
 )
-from common.logging_setup import DIRECTORIO_LOGS, configurar_logging  # noqa: E402
+from common.logging_setup import DIRECTORIO_LOGS, configurar_logging
 
 logger = logging.getLogger("kpi_report")
 

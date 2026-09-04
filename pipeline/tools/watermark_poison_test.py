@@ -80,20 +80,20 @@ from fastavro import parse_schema, schemaless_writer
 from kafka import KafkaProducer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.apicurio import (  # noqa: E402
+from common.apicurio import (
     encode_header,
     latest_schema,
     schema_registry_client,
 )
-from common.connection_args import (  # noqa: E402
+from common.connection_args import (
     POSTGRES,
     TIMESCALE,
     anadir_argumentos_bd,
     anadir_argumentos_kafka,
     props_bd,
 )
-from common.logging_setup import DIRECTORIO_LOGS, configurar_logging  # noqa: E402
-from common.stop_event import evento_de_parada  # noqa: E402
+from common.logging_setup import DIRECTORIO_LOGS, configurar_logging
+from common.stop_event import evento_de_parada
 
 logger = logging.getLogger("watermark_poison_test")
 

@@ -34,9 +34,9 @@ from pathlib import Path
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.apicurio import DEFAULT_REGISTRY_URL, ccompat_url  # noqa: E402
-from common.apicurio import DEFAULT_SUBJECT as SUBJECT  # noqa: E402
-from common.logging_setup import configurar_logging  # noqa: E402
+from common.apicurio import DEFAULT_REGISTRY_URL, ccompat_url
+from common.apicurio import DEFAULT_SUBJECT as SUBJECT
+from common.logging_setup import configurar_logging
 from fastavro import parse_schema
 
 logger = logging.getLogger("register_schema")

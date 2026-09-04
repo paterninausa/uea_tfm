@@ -34,7 +34,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.connection_args import (  # noqa: E402
+from common.connection_args import (
     NUM_PARTITIONS,
     POSTGRES,
     REPLICATION_FACTOR,
@@ -43,7 +43,7 @@ from common.connection_args import (  # noqa: E402
     anadir_argumentos_kafka,
     props_bd,
 )
-from common.logging_setup import configurar_logging  # noqa: E402
+from common.logging_setup import configurar_logging
 
 logger = logging.getLogger("reset_state")
 

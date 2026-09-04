@@ -41,15 +41,15 @@ from kafka import KafkaProducer
 from kafka.errors import KafkaError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.apicurio import (  # noqa: E402
+from common.apicurio import (
     DEFAULT_REGISTRY_URL,
     DEFAULT_SUBJECT,
     SchemaRegistryError,
     latest_schema,
     schema_registry_client,
 )
-from common.connection_args import TOPIC_DLQ, TOPIC_RAW  # noqa: E402
-from common.logging_setup import configurar_logging  # noqa: E402
+from common.connection_args import TOPIC_DLQ, TOPIC_RAW
+from common.logging_setup import configurar_logging
 
 logger = logging.getLogger("bridge")
 

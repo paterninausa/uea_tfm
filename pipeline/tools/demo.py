@@ -38,7 +38,7 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RAIZ))
-from common.logging_setup import DIRECTORIO_LOGS, configurar_logging  # noqa: E402
+from common.logging_setup import DIRECTORIO_LOGS, configurar_logging
 
 logger = logging.getLogger("demo")
 
