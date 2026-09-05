@@ -28,13 +28,13 @@ Para cubrir el alcance descrito, se plantean las siguientes tareas:
 
 Las tareas del proyecto se desarrollarán como una serie de objetivos acompañados de un indicador clave de rendimiento (KPI) que permite verificar su cumplimiento, y de las acciones necesarias para alcanzarlo. Los valores numéricos de cada KPI se han fijado a partir de rangos razonables de la práctica de ingeniería y de la literatura revisada en el estado del arte; se validarán y se recalibrarán de ser necesario a partir de las pruebas realizadas.
 
-\subsection{Objetivo 1: Garantizar la persistencia de telemetría rápida y fiable}
+\subsection{Objetivo 1: Comprobar la persistencia de telemetría rápida y fiable}
 
 \textbf{KPI}: tiempo inferior a 25 segundos entre la publicación de evento y su persistencia final, para el percentil 95 de los mensajes MQTT validados, con una tasa de pérdida inferior al 0.1\,\%.
 
 \textbf{Acciones}: instrumentar el simulador MQTT y desplegar Mosquitto como broker MQTT con un servicio de bridge MQTT-Kafka; implementar los servicios de Kafka, Spark Structured Streaming y el doble sumidero operacional / analítico; medir las latencias desde la publicación de los datos (este KPI incluye un estimado del tiempo de transmisión entre el dispositivo IoT y el broker Mosquitto, que en el caso de los dispositivos NBIoT puede llegar a tardar hasta 20 segundos en sitios de mala cobertura).
 
-\subsection{Objetivo 2: Garantizar la gobernanza del esquema de datos}
+\subsection{Objetivo 2: Implementar la gobernanza del esquema de datos}
 
 \textbf{KPI}: 100\,\% de eventos validados correctamente contra el esquema Avro registrado (sin eventos invalidados por error), y 0\,\% de fallos de deserialización.
 

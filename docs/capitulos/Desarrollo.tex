@@ -165,7 +165,7 @@ Para la preparación de los datos usados en este proyecto, el script \texttt{pre
     \item \textbf{Filtrado por emplazamiento}: conserva únicamente los edificios cuyo \texttt{site\_id} pertenece al subconjunto elegido (2, 3 y 5), descartando el resto mediante una unión provisional con la tabla de metadatos que actúa a la vez de filtro.
     \item \textbf{Decodificación del tipo de medidor}: traduce el código numérico original (\texttt{0}, \texttt{1} y \texttt{3}) a su nombre (\texttt{electricity}, \texttt{chilledwater}, \texttt{hotwater}) usando la correspondencia declarada en la documentación de la competición.
     \item \textbf{Separación en tres tablas}: divide el resultado en la tabla de hechos, la tabla de dimensión y hace el cálculo de la tabla de cuartiles por sensor descritas en la sección~\ref{sec:fuente-datos} (Tablas~\ref{tab:variables-hechos}, \ref{tab:variables-dimension} y \ref{tab:variables-baseline}), cada una almacenada en un fichero Parquet independiente.
-    \item \textbf{Verificación de la clave natural}: comprueba, en cada ejecución, que \texttt{(building\_id, meter\_type, timestamp)} identifica de forma única cada fila de la tabla de hechos; esta unicidad es la que garantiza la idempotencia del reprocesamiento de la arquitectura Kappa.
+    \item \textbf{Verificación de la clave natural}: comprueba, en cada ejecución, que \texttt{(building\_id, meter\_type, timestamp)} identifica de forma única cada fila de la tabla de hechos; esta unicidad es la que asegura la idempotencia del reprocesamiento de la arquitectura Kappa.
     \item \textbf{Reubicación temporal}: desplaza todos los timestamps del dataset original usando un único offset (\texttt{-{}-fecha-final AAAA-MM-DD}) en el script Python, para que la última lectura caiga en la fecha indicada simplificando el análisis de los datos. Al ser un offset constante se conserva la cadencia y los ciclos diarios y estacionales del dataset original, y se exige una fecha presente o anterior para que ningún evento quede situado en el futuro.
 \end{itemize}
 
@@ -247,7 +247,7 @@ Del lado de Kafka, el bridge se configura con \texttt{acks=`all'}, el nivel de c
   \item Con \texttt{acks=`all'}, Kafka espera a que todas las réplicas en sincronía también tengan el mensaje, y solo entonces envía la confirmación al bridge.
 \end{itemize}
 
-De esta forma se garantiza que los mensajes publicados por el bridge no se dan por confirmados hasta que ya están almacenados en todas las réplicas, evitando una potencial pérdida de mensajes ante una caída de un broker de Kafka.
+De esta forma se asegura que los mensajes publicados por el bridge no se dan por confirmados hasta que ya están almacenados en todas las réplicas, evitando una potencial pérdida de mensajes ante una caída de un broker de Kafka.
 
 Ante el posible escenario de una caída del microservicio de bridge, la sesión persistente de Mosquitto con QoS 1 y \texttt{max\_queued\_messages 10000} retiene los mensajes hasta la reconexión del microservicio para continuar con la validación, serialización y publicación en Kafka.
 
@@ -590,7 +590,7 @@ El simulador MQTT se ejecutó en modo acelerado, ya que el ritmo real del parque
 
 Por ello, \texttt{mqtt\_simulator.py} con la opción \texttt{-{}-acelerar 2000}, se encargó de que cada medidor publicara cada 1,8 segundos en vez de cada hora (3600 segundos / 2000 = 1.8), y la velocidad del parque completo ascendió a 362 eventos por segundo (Tabla~\ref{tab:acelerar-simulador}). Este script se encargó de que los 652 medidores no publicaran los eventos a la misma hora en punto como está originalmente en el dataset, haciendo que el parque entregara un flujo sostenido en lugar de ráfagas de 652 eventos.
 
-\subsection{Objetivo 1: Garantizar la persistencia de telemetría rápida y fiable}
+\subsection{Objetivo 1: Comprobar la persistencia de telemetría rápida y fiable}
 
 \begin{table}[H]
   \centering
@@ -613,7 +613,7 @@ Los eventos \textbf{publicados} por el simulador se calcularon como la suma de t
 
 La \textbf{latencia de persistencia} de cada evento es el tiempo transcurrido desde \texttt{sim\_publish\_ts} (publicación) hasta \texttt{ingested\_at} (persistencia), en segundos (Tabla~\ref{tab:columnas-telemetry-events}). Sobre esa diferencia se calcularon la \textbf{mediana}, el \textbf{percentil 95} y el valor \textbf{máximo} para las 50.000 filas.
 
-\subsection{Objetivo 2: Garantizar la gobernanza del esquema de datos}
+\subsection{Objetivo 2: Implementar la gobernanza del esquema de datos}
 
 \begin{table}[H]
   \centering
