@@ -143,29 +143,29 @@ def guardar(pares: list[tuple[dict, str | None]]) -> None:
 # Publicacion via MQTT, contra el bridge real
 # --------------------------------------------------------------------------
 def publicar(pares: list[tuple[dict, str | None]], args: argparse.Namespace) -> None:
-    """Reproduce los eventos en orden, con el reloj comprimido por
-    --acelerar: el mismo principio que el simulador real (`_programa()`), pero
-    en una sola conexion secuencial.
+    """Publica los eventos como un flujo continuo, espaciados a intervalos
+    iguales en vez de respetar sus timestamps originales: el dataset trae
+    lecturas horarias y la mayoria de los sensores comparten la misma hora,
+    asi que seguir el timestamp real produce rafagas (todos a la vez) con
+    pausas entre horas. El total de tiempo que abarcan los eventos (de la
+    marca mas antigua a la mas reciente), comprimido por --acelerar, se
+    reparte a partes iguales entre todos los eventos del lote.
     """
     cliente = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=args.client_id)
     cliente.connect(args.broker_host, args.broker_port)
     cliente.loop_start()
 
-    # El invalido con timestamp=None no tiene marca con la que calcular su
-    # instante: se publica sin espera, en cuanto le toca el turno.
-    con_marca = [e for e, _ in pares if e["timestamp"] is not None]
-    t_sim0 = con_marca[0]["timestamp"] if con_marca else None
+    marcas = [datetime.fromisoformat(e["timestamp"]) for e, _ in pares if e["timestamp"] is not None]
+    duracion_original = (max(marcas) - min(marcas)).total_seconds() if len(marcas) >= 2 else 0.0
+    duracion = duracion_original / args.acelerar
+    intervalo = duracion / (len(pares) - 1) if len(pares) > 1 else 0.0
 
     publicados, invalidos_publicados = 0, 0
     inicio = time.monotonic()
-    for evento, motivo in pares:
-        if evento["timestamp"] is not None and t_sim0 is not None:
-            delta = (datetime.fromisoformat(evento["timestamp"])
-                    - datetime.fromisoformat(t_sim0)).total_seconds()
-            objetivo = delta / args.acelerar
-            espera = inicio + objetivo - time.monotonic()
-            if espera > 0:
-                time.sleep(espera)
+    for i, (evento, motivo) in enumerate(pares):
+        espera = inicio + i * intervalo - time.monotonic()
+        if espera > 0:
+            time.sleep(espera)
 
         # Copia limpia: exactamente los campos del contrato
         publicable = dict(evento)
@@ -183,8 +183,9 @@ def publicar(pares: list[tuple[dict, str | None]], args: argparse.Namespace) -> 
     time.sleep(2)  # margen para que paho vacie el buffer de salida
     cliente.loop_stop()
     cliente.disconnect()
-    logger.info("Publicados %d eventos (%d invalidos) en %.1f s",
-               publicados, invalidos_publicados, time.monotonic() - inicio)
+    transcurrido = time.monotonic() - inicio
+    logger.info("Publicados %d eventos (%d invalidos) en %.1f s (%.1f ev/s)",
+               publicados, invalidos_publicados, transcurrido, publicados / transcurrido)
 
 
 # --------------------------------------------------------------------------
