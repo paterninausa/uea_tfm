@@ -33,7 +33,7 @@ La opción \texttt{-{}-semanas N} reproduce las últimas \texttt{N} semanas del 
 
 Este script sirve para \textbf{demostrar} el sistema en funcionamiento, no para medir: las cifras de los KPIs se toman con el procedimiento manual de la siguiente sección.
 
-\section{Modo manual}
+\section{Arranque manual (emisión de KPIs)}
 \label{sec:ejec-manual}
 
 El arranque manual sigue cinco pasos, en este orden:
@@ -75,7 +75,19 @@ python pipeline/tools/kpi_report.py
   }
 \end{enumerate}
 
-El job de Spark debe estar procesando \textbf{antes} de que el simulador publique. Si se invierte el orden, los eventos esperan en Kafka a que aparezca quien los consuma y esa espera se contabiliza como latencia de ingesta, falseando la medición.
+El job de Spark debe estar procesando \textbf{antes} de que el simulador publique. Si se altera el orden, los tópicos en Kafka esperan a que aparezca quien los consuma y esa espera incrementa la latencia de persistencia, alterando la medición.
+
+\section{Escalado horizontal del bridge}
+
+La siguiente variación del paso 1 del arranque manual (sección~\ref{sec:ejec-manual}) permite la replicación del bridge en \texttt{N} instancias:
+
+{\footnotesize
+\begin{verbatim}
+docker compose -f pipeline/docker-compose.yml up -d --scale bridge=N
+\end{verbatim}
+}
+
+Mosquitto se encarga de repartir los mensajes entre las réplicas del bridge. El comando \texttt{failover\_test.py -{}-target bridge -{}-fallo oom } provoca la caída de una sola, haciendo que las demás asuman la carga de la réplica caída. Una vez que \texttt{failover\_test.py} repone la memoria por defecto, la política de reinicio en \texttt{docker-compose.yml} restablece el bridge a \texttt{N} replicas.
 
 \section{Herramientas de validación}
 \label{sec:ejec-herramientas}
@@ -108,3 +120,32 @@ Las mediciones de los KPIs se obtuvieron mediante tres scripts que residen en \t
 \end{itemize}
 
 Los servicios \texttt{mosquitto} y \texttt{kafka} no admiten \texttt{-{}-fallo oom}: Mosquitto usa unos 3~MB, insuficiente para un fallo por memoria, y en Kafka un fallo de este tipo deja la JVM en bucle de reinicios.
+
+\subsection{Inyección de errores durante la publicación de eventos MQTT}
+
+El script \texttt{pipeline/tools/faulty\_simulator.py} publica una mezcla de eventos reales y eventos inválidos para ejercitar la ruta de validación descrita en la sección~\ref{sec:bridge-mqtt-kafka} y dejar constancia de los rechazos en \texttt{iot.telemetry.dlq}.
+
+{\footnotesize
+\begin{verbatim}
+python pipeline/tools/faulty_simulator.py                              # 10.000 eventos, 6 inválidos
+python pipeline/tools/faulty_simulator.py --limite 20000 --fallas 300  # 20.000 eventos, 300 inválidos
+\end{verbatim}
+}
+
+\texttt{-{}-limite} fija cuántos eventos reales se toman del dataset original (10.000 por defecto), y \texttt{-{}-fallas} cuántos eventos inválidos se reparten a partes iguales entre seis motivos de rechazo por el bridge, en posiciones equiespaciadas dentro del lote. 
+
+Los seis motivos de rechazo introducidos son:
+
+\begin{itemize}
+  \item \texttt{meter\_reading} con valor infinito.
+  \item \texttt{meter\_reading} con valor \texttt{NaN}.
+  \item \texttt{meter\_reading} con valor no numérico.
+  \item \texttt{building\_id} ausente del evento.
+  \item \texttt{building\_id} como número en vez de cadena de texto.
+  \item \texttt{timestamp} con valor nulo.
+\end{itemize}
+
+Al igual que con \texttt{mqtt\_simulator.py}, cada hora de eventos del dataset es publicada en 1.8 segundos.
+
+\subsection{Visualización de los eventos rechazados por el bridge}
+

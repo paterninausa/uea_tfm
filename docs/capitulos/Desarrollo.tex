@@ -41,14 +41,20 @@ El simulador (\texttt{mqtt\_simulator.py}) publica telemetría hacia Eclipse Mos
 
 La naturaleza de Kafka es de un log persistente de bytes crudos, ajeno a la estructura interna de los mensajes almacenados y distribuidos. Es por ello que el bridge, en la escritura, y Spark Structured Streaming, en la lectura, son quienes dialogan directamente con Apicurio para serializar y deserializar las cadenas de bytes almacenadas y distribuidas por Kafka.
 
-Spark Structured Streaming consume cada mensaje mediante dos consultas independientes sobre el mismo flujo de Kafka; en una de ellas enriquece los mensajes y agrega métricas por ventana temporal hacia TimescaleDB para el consumo operacional en Grafana, y en la otra consulta guarda los mensajes hacia PostgreSQL para el consumo analítico con Power BI. Al tratarse de consultas independientes, cada una mantiene su propio \textit{checkpoint} y su propia tolerancia a fallos, de modo que la caída de una consulta no interrumpe a la otra (sección~\ref{sec:validacion-procesamiento}).
+Spark Structured Streaming consume cada mensaje mediante dos consultas independientes sobre el mismo flujo de Kafka; en una de ellas enriquece los mensajes y agrega métricas por ventana temporal hacia TimescaleDB para el consumo operacional en Grafana, y en la otra consulta guarda los mensajes hacia PostgreSQL para el consumo analítico con Power BI. Al tratarse de consultas independientes, cada una mantiene su propio \textit{checkpoint} y su propia tolerancia a fallos, de modo que la caída de una consulta no interrumpe a la otra.
 
-\subsection{Fuente de datos y variables utilizadas}
+\subsection{Fuente de datos utilizada}
 \label{sec:fuente-datos}
 
-Los datos para este proyecto provienen de la competición Kaggle ASHRAE -- Great Energy Predictor III \cite{ashrae2019}, un subconjunto del proyecto Building Data Genome 2 que registra el consumo energético por hora de 1.449 edificios reales en 16 emplazamientos desde el 2016-01-01 00:00h hasta el 2016-12-31 23:00h, con errores de medición y problemas de calidad (no hay datos sintéticos).
+Los datos para este proyecto provienen de la competición Kaggle ASHRAE -- Great Energy Predictor III \cite{ashrae2019}, un subconjunto del proyecto Building Data Genome 2 que registra el consumo energético por hora de 1.449 edificios reales en 16 emplazamientos desde el 2016-01-01 00:00h hasta el 2016-12-31 23:00h, con errores de medición (no hay datos sintéticos).
 
-El script de preparación (\texttt{prepare\_ashrae.py}) reduce el dataset original a un subconjunto de tres emplazamientos (identificados como 2, 3 y 5 con un total de 652 medidores y 5.682.185 lecturas de consumo), produciendo tres tablas Parquet: una tabla de hechos con la lectura de cada medidor (Tabla~\ref{tab:variables-hechos}), una tabla de dimensión con los atributos de cada edificio (Tabla~\ref{tab:variables-dimension}), y una tabla con el cálculo de los cuartiles según el histórico completo de medición de cada dispositivo (Tabla~\ref{tab:variables-baseline}).
+El script de preparación (\texttt{prepare\_ashrae.py}) reduce el dataset original a un subconjunto de tres emplazamientos (identificados como 2, 3 y 5 con un total de 652 medidores y 5.682.185 lecturas de consumo), produciendo tres tablas Parquet:
+
+\begin{itemize}
+  \item Una tabla de hechos con la lectura de cada medidor (Tabla~\ref{tab:variables-hechos}).
+  \item Una tabla de dimensión con los atributos de cada edificio (Tabla~\ref{tab:variables-dimension}).
+  \item Una tabla con el cálculo de los cuartiles según el histórico completo de medición de cada dispositivo (Tabla~\ref{tab:variables-baseline}).
+\end{itemize}
 
 \begin{table}[H]
   \centering
@@ -60,7 +66,7 @@ El script de preparación (\texttt{prepare\_ashrae.py}) reduce el dataset origin
     \texttt{timestamp} & Instante en que se leyó el consumo; usado para el agregado por ventanas y el cálculo de `cierre de la ventana' ante mensajes tardíos \\ \hline
     \texttt{meter\_reading} & Medición del consumo en kWh; usado para la detección de calidad, anomalías y métricas agregadas en los análisis \\ \hline
   \end{tabular}
-  \caption{Variables de la tabla de hechos (\texttt{ashrae\_telemetry.parquet}) empleadas.}
+  \caption{Columnas de la tabla de hechos (\texttt{ashrae\_telemetry.parquet}).}
   \label{tab:variables-hechos}
 \end{table}
 
@@ -76,7 +82,7 @@ El script de preparación (\texttt{prepare\_ashrae.py}) reduce el dataset origin
     \texttt{year\_built} & Año de construcción; dejado para análisis futuros \\ \hline
     \texttt{floor\_count} & Número de plantas; dejado para análisis futuros \\ \hline
   \end{tabular}
-  \caption{Variables de la tabla de dimensión (\texttt{ashrae\_buildings.parquet}) empleadas.}
+  \caption{Columnas de la tabla de dimensión (\texttt{ashrae\_buildings.parquet}).}
   \label{tab:variables-dimension}
 \end{table}
 
@@ -90,7 +96,7 @@ El script de preparación (\texttt{prepare\_ashrae.py}) reduce el dataset origin
     \texttt{baseline\_p75} & Percentil 75 histórico del medidor, usado para la detección de picos atípicos \\ \hline
     \texttt{baseline\_iqr} & Rango intercuartílico histórico del medidor \\ \hline
   \end{tabular}
-  \caption{Variables de la línea base por sensor (\texttt{ashrae\_sensor\_baseline.parquet}) empleadas.}
+  \caption{Columnas de la línea base por sensor (\texttt{ashrae\_sensor\_baseline.parquet}).}
   \label{tab:variables-baseline}
 \end{table}
 
@@ -229,7 +235,7 @@ El archivo \texttt{docker-compose.yml} comprueba el estado del contenedor con \t
 \subsection{Bridge MQTT \(\to\) Kafka}
 \label{sec:bridge-mqtt-kafka}
 
-El bridge (\texttt{mqtt\_kafka\_bridge.py}) se suscribe a los mensajes \texttt{iot/\#} en Mosquitto, valida cada mensaje contra el esquema Avro vigente en Apicurio Registry, lo serializa a una cadena de bytes y lo publica en Kafka. Los mensajes que no superen la validación no se descartan: se desvían al tópico de mensajes inválidos de Kafka (\texttt{iot.telemetry.dlq}) junto con el motivo del rechazo, el tópico MQTT de origen (por ejemplo \texttt{iot/346/electricity/telemetry}), y un timestamp de cuando fue procesado por el bridge.
+El bridge (\texttt{mqtt\_kafka\_bridge.py}) se suscribe a los mensajes \texttt{iot/\#} en Mosquitto, valida cada mensaje contra el esquema Avro vigente en Apicurio Registry, lo serializa a una cadena de bytes y lo publica en Kafka. Los mensajes que no superen la validación no se descartan: se desvían al tópico de mensajes inválidos de Kafka (\texttt{iot.telemetry.dlq}) junto con el motivo del rechazo, el tópico MQTT de origen (por ejemplo \texttt{iot/346/electricity/telemetry}), y un timestamp de cuando fue procesado por el bridge. DLQ significa \textit{Dead Letter Queue}, un patrón estándar de sistemas de mensajería: en vez de descartar en silencio un mensaje que no se puede procesar, se desvía a una cola/tópico aparte con el motivo del rechazo, para que quede como evidencia y sea reprocesable posteriormente (G. Hohpe y B. Woolf \cite{hohpewoolf2003}).
 
 Un mensaje es enviado a \texttt{iot.telemetry.dlq} por dos vías distintas: si no encaja en el esquema Avro (por un campo ausente, tipo de dato incorrecto, o un tipo de medidor que no esté entre los declarados en el esquema), o si no supera una validación adicional implementada en el propio bridge (como una fecha futura que dañaría el watermark de Spark, o una lectura negativa o no finita). El mensaje que se guarde en el tópico de inválidos de Kafka estará en su formato original para su posterior análisis o reprocesamiento.
 
@@ -248,7 +254,7 @@ Ante el posible escenario de una caída del microservicio de bridge, la sesión 
 La clave con la que el bridge publica cada mensaje en Kafka es el propio sensor (\texttt{building\_id:
 meter\_type}), tal como se describió en la Tabla~\ref{tab:variables-hechos}.
 
-Para asegurar la futura escalabilidad del bridge, está disponible el argumento \texttt{-{}-shared-group} que hace pedirle al broker Mosquitto que reparta los mensajes entre varias instancias del bridge en vez de duplicarlos para cada instancia por separado, por lo que este argumento permite escalar el bridge horizontalmente. Esto está pensado específicamente para su despliegue como contenedor en \texttt{docker-compose.yml}.
+El bridge escala horizontalmente: el \texttt{command} declarado en \texttt{docker-compose.yml} incluye el argumento \texttt{``-{}-shared-group=bridge-pool''}, que le pide al broker Mosquitto que reparta los mensajes entre las instancias del bridge en vez de duplicarlos para cada instancia por separado. De esta forma \texttt{docker compose up -d -{}-scale bridge=N } levanta N réplicas que se reparten el flujo.
 
 \subsection{Registro de esquemas (Apicurio Registry)}
 
@@ -578,11 +584,11 @@ El diseño modular del sistema permite incorporar nuevos sumideros, consultas de
 \section{Resultados del proyecto}
 \label{chap:resultados}
 
-Los resultados conseguidos en el desarrollo del proyecto confirman el cumplimiento de los objetivos planteados en el Capítulo~\ref{chap:objetivos}. El sistema ingiere, gobierna, procesa y visualiza los datos de telemetría dentro de los KPIs fijados, y se recupera de la interrupción de cualquiera de sus servicios sin pérdida de datos.
+Los resultados conseguidos en el desarrollo del proyecto confirman el cumplimiento de los objetivos planteados en el Capítulo~\ref{chap:objetivos}. Debe aclararse que todas las mediciones se realizaron con instancias únicas para cada servicio, haciendo que la interrupción y recuperación sin pérdida de datos de la sección~\ref{sec:validacion-procesamiento} sucedan bajo una condición más adversa.
 
-Todas las mediciones de este capítulo se obtuvieron con el simulador MQTT acelerado, no con el ritmo real del parque de medidores (652 medidores / 3600 segundos = 0,18 eventos por segundo). Reproducir la cadencia horaria real habría exigido semanas de ejecución continua para obtener comprobación de la correcta ingesta, validación y persistencia de los datos procesados.
+El simulador MQTT se ejecutó en modo acelerado, ya que el ritmo real del parque de medidores (652 medidores / 3600 segundos = 0,18 eventos por segundo) habría exigido semanas de ejecución continua para obtener comprobación de la correcta ingesta, validación y persistencia de los datos procesados.
 
-Por ello, \texttt{mqtt\_simulator.py} con la opción \texttt{-{}-acelerar 2000}, se encargó de que cada medidor publicara cada 1,8 segundos en vez de cada hora (3600 segundos / 2000 = 1.8), y la velocidad del parque completo ascendió a 362 eventos por segundo (Tabla~\ref{tab:acelerar-simulador}). Este script se encargó de que los 652 medidores, que en el conjunto de datos miden todos en la hora en punto no publicaran a la vez, haciendo que el parque entregara un flujo sostenido en lugar de ráfagas de 652 eventos.
+Por ello, \texttt{mqtt\_simulator.py} con la opción \texttt{-{}-acelerar 2000}, se encargó de que cada medidor publicara cada 1,8 segundos en vez de cada hora (3600 segundos / 2000 = 1.8), y la velocidad del parque completo ascendió a 362 eventos por segundo (Tabla~\ref{tab:acelerar-simulador}). Este script se encargó de que los 652 medidores no publicaran los eventos a la misma hora en punto como está originalmente en el dataset, haciendo que el parque entregara un flujo sostenido en lugar de ráfagas de 652 eventos.
 
 \subsection{Objetivo 1: Garantizar la persistencia de telemetría rápida y fiable}
 
@@ -595,7 +601,7 @@ Por ello, \texttt{mqtt\_simulator.py} con la opción \texttt{-{}-acelerar 2000},
     Latencia de persistencia (mediana) & 20,715 s & — \\ \hline
     \textbf{Latencia de persistencia (p95)} & \textbf{21,175 s} & < 25 s \\ \hline
     Latencia de persistencia (máxima) & 22,260 s & — \\ \hline
-    \textbf{Tasa de pérdida} & \textbf{0,0000\,\%} & < 0,1\,\% \\ \hline
+    \textbf{Tasa de pérdida} & \textbf{0,0\,\%} & < 0,1\,\% \\ \hline
   \end{tabular}
   \caption{Resultado del Objetivo 1: persistencia de telemetría rápida y fiable.}
   \label{tab:resultado-obj1}
@@ -614,10 +620,10 @@ La \textbf{latencia de persistencia} de cada evento es el tiempo transcurrido de
   \begin{tabular}{|p{6cm}|c|c|}
     \hline
     \textbf{Indicador} & \textbf{Resultado} & \textbf{Objetivo} \\ \hline
-    Eventos validados contra \texttt{es.uea.tfm.iot.TelemetryEvent} & 100,0000\,\% & 100\,\% \\ \hline
+    Eventos validados contra \texttt{es.uea.tfm.iot.TelemetryEvent} & 100\,\% & 100\,\% \\ \hline
     Eventos con error de validación (DLQ) & 0 & 0 \\ \hline
   \end{tabular}
-  \caption{Resultado del Objetivo 2: gobernanza del esquema.}
+  \caption{Resultado del Objetivo 2: gobernanza del esquema de datos.}
   \label{tab:resultado-obj2}
 \end{table}
 
@@ -625,7 +631,7 @@ Los valores de la Tabla~\ref{tab:resultado-obj2} se obtuvieron de Apicurio Regis
 
 \texttt{es.uea.tfm.iot.TelemetryEvent} es el nombre completo del esquema Avro contra el que se valida toda la telemetría del pipeline. Los \textbf{eventos validados} son los mensajes presentes en el tópico \texttt{iot.telemetry.raw}, contados por el mismo método de \textit{offsets} descrito para los eventos publicados del Objetivo~1, y los \textbf{eventos con error de validación} son los eventos del tópico de descartes \texttt{iot.telemetry.dlq} contados también de la misma forma. Todo mensaje que llega a \texttt{iot.telemetry.raw} lo hizo porque el bridge consiguió serializarlo contra el esquema registrado sin error; el que no encaja en el esquema o que no supera las validaciones del propio bridge, se desvía a \texttt{iot.telemetry.dlq} con su motivo de rechazo.
 
-Se contaron 50.000 mensajes en \texttt{iot.telemetry.raw} y ninguno en \texttt{iot.telemetry.dlq}, de ahí el 100,0000\,\%. 
+Se contaron 50.000 mensajes en \texttt{iot.telemetry.raw} y ninguno en \texttt{iot.telemetry.dlq}, de ahí el 100\,\%. 
 
 La ausencia de fallos de deserialización del lado de Spark se sostiene sobre el resultado del Objetivo~1: las 50.000 filas persistidas implican que Spark deserializó los 50.000 mensajes contra el esquema correspondiente a su \texttt{schema\_id} sin una sola excepción, ya que un \texttt{schema\_id} no reconocido habría detenido el proceso.
 
@@ -639,7 +645,7 @@ La ausencia de fallos de deserialización del lado de Spark se sostiene sobre el
     Eventos individuales (sumidero analítico) & 142 & 262 ms & \textbf{385 ms} & 1.428 ms & < 2 s \\ \hline
     Métricas agregadas (sumidero operacional) & 142 & 525 ms & \textbf{747 ms} & 1.887 ms & < 2 s \\ \hline
   \end{tabular}
-  \caption{Resultado del Objetivo 3: latencia de micro-lote.}
+  \caption{Resultado del Objetivo 3: latencia de micro-lotes de Spark.}
   \label{tab:resultado-obj3}
 \end{table}
 
@@ -658,7 +664,7 @@ Cada \textbf{flujo} de la tabla es una consulta independiente de Spark sobre Kaf
     2. Consumo energético & 7 & 7 días & 30 s & --- \\ \hline
     3. Calidad y anomalías & 6 & 7 días & 30 s & --- \\ \hline
   \end{tabular}
-  \caption{Resultado del Objetivo 4: configuración de los dashboards de Grafana (sección~\ref{sec:grafana}).}
+  \caption{Resultado del Objetivo 4: configuración de los dashboards de Grafana.}
   \label{tab:resultado-obj4-grafana}
 \end{table}
 
@@ -722,14 +728,14 @@ El fallo por OOM no puede forzarse sobre Mosquitto porque consume solo 3~MB. Par
   \centering
   \begin{tabular}{|l|c|c|c|c|}
     \hline
-    \textbf{Servicio interrumpido} & \textbf{Fallo} & \textbf{Recuperación} & \textbf{Tasa de pérdida} & \textbf{Objetivo} \\ \hline
-    TimescaleDB & OOM & \textbf{3,3 s} & \textbf{0,0000\,\%} & < 60 s \\ \hline
-    Mosquitto & \texttt{docker kill} & \textbf{8,3 s} & \textbf{0,0000\,\%} & < 60 s \\ \hline
-    Kafka & \texttt{docker kill} & \textbf{14,4 s} & \textbf{0,0000\,\%} & < 60 s \\ \hline
-    PostgreSQL & OOM & \textbf{2,4 s} & \textbf{0,0000\,\%} & < 60 s \\ \hline
-    Bridge & OOM & \textbf{1,2 s} & \textbf{0,0000\,\%} & < 60 s \\ \hline
+    \textbf{Servicio interrumpido} & \texttt{-{}-fallo} & \textbf{Recuperación} & \textbf{Tasa de pérdida} & \textbf{Objetivo} \\ \hline
+    TimescaleDB & \texttt{oom} & 3,3 s & 0,0\,\% & < 60 s \\ \hline
+    Mosquitto & \texttt{kill} & 8,3 s & 0,0\,\% & < 60 s \\ \hline
+    Kafka & \texttt{kill} & 14,4 s & 0,0\,\% & < 60 s \\ \hline
+    PostgreSQL & \texttt{oom} & 2,4 s & 0,0\,\% & < 60 s \\ \hline
+    Bridge & \texttt{oom} & 1,2 s & 0,0\,\% & < 60 s \\ \hline
   \end{tabular}
-  \caption{Resultado del Objetivo 5: recuperación ante fallo de un servicio individual.}
+  \caption{Resultado del Objetivo 5: pruebas de resiliencia del sistema.}
   \label{tab:resultado-obj5}
 \end{table}
 
