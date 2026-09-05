@@ -92,18 +92,20 @@ Mosquitto se encarga de repartir los mensajes entre las réplicas del bridge. El
 \section{Herramientas de validación}
 \label{sec:ejec-herramientas}
 
-Las mediciones de los KPIs se obtuvieron mediante tres scripts que residen en \texttt{pipeline/tools/}.
+Las validaciones del pipeline se obtuvieron mediante cinco scripts que residen en \texttt{pipeline/tools/}.
 
 \begin{table}[H]
   \centering
-  \begin{tabular}{|p{3.3cm}|p{7.3cm}|p{4cm}|}
+  \begin{tabular}{|p{3.8cm}|p{7.3cm}|p{4cm}|}
     \hline
     \textbf{Herramienta} & \textbf{Función} & \textbf{Salida} \\ \hline
     \texttt{reset\_state.py} & Deja el sistema en estado limpio: borra los \textit{checkpoints} de Spark, recrea los tópicos de Kafka y vacía las tablas de los sumideros. & --- \\ \hline
     \texttt{kpi\_report.py} & Interroga PostgreSQL, TimescaleDB, Apicurio y Grafana y emite el cuadro de los KPIs 1 a 5 en Markdown. & \texttt{pipeline/logs/} \texttt{informe\_kpi.md} \\ \hline
     \texttt{failover\_test.py} & Lanza el simulador, provoca el fallo de un servicio, mide el tiempo de recuperación y la tasa de pérdida. & \texttt{pipeline/logs/} \texttt{ultimo\_failover.json} \\ \hline
+    \texttt{faulty\_simulator.py} & Publica una mezcla de eventos reales e inválidos para ejercitar la validación del esquema Avro. & \texttt{pipeline/data/} \texttt{faulty\_events.json} \\ \hline
+    \texttt{dlq\_inspect.py} & Lee el tópico \texttt{iot.telemetry.dlq} y muestra el motivo, el tópico de origen MQTT y el payload de cada evento rechazado. & --- \\ \hline
   \end{tabular}
-  \caption{Herramientas de validación de KPIs.}
+  \caption{Herramientas de validación del pipeline.}
   \label{tab:herramientas-validacion}
 \end{table}
 
@@ -127,8 +129,10 @@ El script \texttt{pipeline/tools/faulty\_simulator.py} publica una mezcla de eve
 
 {\footnotesize
 \begin{verbatim}
-python pipeline/tools/faulty_simulator.py                              # 10.000 eventos, 6 inválidos
-python pipeline/tools/faulty_simulator.py --limite 20000 --fallas 300  # 20.000 eventos, 300 inválidos
+python pipeline/tools/faulty_simulator.py                              # 10.000 eventos, 
+                                                                       #   6 inválidos
+python pipeline/tools/faulty_simulator.py --limite 20000 --fallas 300  # 20.000 eventos, 
+                                                                       #   300 inválidos
 \end{verbatim}
 }
 
@@ -145,7 +149,39 @@ Los seis motivos de rechazo introducidos son:
   \item \texttt{timestamp} con valor nulo.
 \end{itemize}
 
-Al igual que con \texttt{mqtt\_simulator.py}, cada hora de eventos del dataset es publicada en 1.8 segundos.
+De una forma similar a \texttt{mqtt\_simulator.py} se publican 370 eventos por segundo en su opción por defecto.
 
 \subsection{Visualización de los eventos rechazados por el bridge}
 
+El script \texttt{pipeline/tools/dlq\_inspect.py} lee el tópico de Kafka \texttt{iot.telemetry.dlq} e imprime en pantalla, por cada evento rechazado, el motivo, el tópico MQTT de origen y el payload original.
+
+{\footnotesize
+\begin{verbatim}
+python pipeline/tools/dlq_inspect.py                     # toda la DLQ
+python pipeline/tools/dlq_inspect.py --desde AAAA-MM-DD  # solo lo rechazado desde esa fecha
+\end{verbatim}
+}
+
+\texttt{-{}-desde} filtra desde el instante en que el bridge procesó el rechazo, no por el \textit{timestamp} original del evento.
+
+Cada entrada muestra:
+
+\begin{itemize}
+  \item El \textit{offset} del mensaje dentro de su partición en \texttt{iot.telemetry.dlq}.
+  \item La fecha y hora del rechazo, en UTC.
+  \item El tópico MQTT de origen, por ejemplo \texttt{iot/346/electricity/telemetry}.
+  \item El motivo del rechazo: la excepción de Python y su mensaje.
+  \item El payload original sin alterar, disponible para su reprocesamiento.
+\end{itemize}
+
+Un ejemplo de como se vería en pantalla un evento rechazado por el bridge es el siguiente:
+
+{\footnotesize
+\begin{verbatim}
+[0] 2026-09-05T13:17:22Z | topico=iot/222/chilledwater/telemetry
+    motivo=ValueError: meter_reading no finito (inf)
+    payload: {"building_id": "222", "meter_type": "chilledwater",
+              "timestamp": "2026-09-03T00:00:00",
+              "meter_reading": Infinity, "sim_publish_ts": 1788614242721}
+\end{verbatim}
+}
